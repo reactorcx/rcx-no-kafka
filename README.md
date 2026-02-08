@@ -19,6 +19,8 @@ __Please check a [CHANGELOG](CHANGELOG.md) for backward incompatible changes in 
   * [Keyed Messages](#keyed-messages)
   * [Batching (grouping) produce requests](#batching-grouping-produce-requests)
   * [Custom Partitioner](#custom-partitioner)
+  * [Idempotent Producer](#idempotent-producer)
+  * [Transactional Producer](#transactional-producer)
   * [Producer options](#producer-options)
 * [Simple Consumer](#simpleconsumer)
   * [Simple Consumer options](#simpleconsumer-options)
@@ -179,7 +181,68 @@ return producer.init().then(function(){
 });
 ```
 
+### Idempotent Producer
+
+Ensures exactly-once delivery semantics per partition. Requires Kafka 0.11+.
+
+```javascript
+var producer = new Kafka.Producer({
+    idempotent: true
+});
+
+return producer.init().then(function () {
+    // Producer automatically obtains a producer ID from the broker.
+    // requiredAcks is forced to -1 (all replicas).
+    // Sequence numbers are tracked per topic:partition.
+    return producer.send({
+        topic: 'kafka-test-topic',
+        partition: 0,
+        message: { value: 'exactly-once message' }
+    });
+});
+```
+
+### Transactional Producer
+
+Enables atomic writes across multiple partitions. Requires Kafka 0.11+ with transactions enabled.
+
+```javascript
+var producer = new Kafka.Producer({
+    transactionalId: 'my-transactional-id'
+    // idempotent is automatically forced to true
+});
+
+return producer.init().then(function () {
+    producer.beginTransaction();
+
+    return producer.send({
+        topic: 'topic-a',
+        partition: 0,
+        message: { value: 'msg-1' }
+    })
+    .then(function () {
+        return producer.send({
+            topic: 'topic-b',
+            partition: 0,
+            message: { value: 'msg-2' }
+        });
+    })
+    .then(function () {
+        // commit atomically (or use abortTransaction() to discard)
+        return producer.commitTransaction();
+    });
+});
+```
+
+Transaction methods:
+* `beginTransaction()` - start a new transaction (synchronous)
+* `commitTransaction()` - commit the current transaction (returns Promise)
+* `abortTransaction()` - abort the current transaction (returns Promise)
+* `sendOffsets(offsets)` - commit consumer offsets as part of the transaction (returns Promise)
+
 ### Producer options:
+* `idempotent` - enable idempotent producer for exactly-once delivery, defaults to `false`. Forces `requiredAcks` to -1. Requires Kafka 0.11+
+* `transactionalId` - unique identifier for transactional producer. Setting this implies `idempotent: true`. Requires Kafka 0.11+ with transactions enabled
 * `requiredAcks` - require acknoledgments for produce request. If it is 0 the server will not send any response.  If it is 1 (default), the server will wait the data is written to the local log before sending a response. If it is -1 the server will block until the message is committed by all in sync replicas before sending a response. For any number > 1 the server will block waiting for this number of acknowledgements to occur (but the server will never wait for more acknowledgements than there are in-sync replicas).
 * `timeout` - timeout in ms for produce request
 * `clientId` - ID of this client, defaults to 'no-kafka-client'
@@ -291,6 +354,7 @@ consumer.fetchOffset([
 ```
 
 ### SimpleConsumer options
+* `isolationLevel` - controls visibility of transactional messages. `0` (default) for `read_uncommitted`, `1` for `read_committed`. Requires Kafka 0.11+
 * `groupId` - group ID for comitting and fetching offsets. Defaults to 'no-kafka-group-v0'
 * `maxWaitTime` - maximum amount of time in milliseconds to block waiting if insufficient data is available at the time the fetch request is issued, defaults to 100ms
 * `idleTimeout` - timeout between fetch calls, defaults to 1000ms
@@ -374,6 +438,7 @@ You can also write your own assignment strategy by inheriting from Kafka.Default
 
 ### GroupConsumer options
 
+* `isolationLevel` - controls visibility of transactional messages. `0` (default) for `read_uncommitted`, `1` for `read_committed`. Requires Kafka 0.11+
 * `groupId` - group ID for comitting and fetching offsets. Defaults to 'no-kafka-group-v0.9'
 * `maxWaitTime` - maximum amount of time in milliseconds to block waiting if insufficient data is available at the time the fetch request is issued, defaults to 100ms
 * `idleTimeout` - timeout between fetch calls, defaults to 1000ms

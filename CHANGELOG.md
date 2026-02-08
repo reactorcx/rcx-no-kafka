@@ -7,6 +7,18 @@
 - Message timestamps and headers for Kafka 0.11+ brokers
 - CRC-32C (Castagnoli) checksums for Record Batch v2
 
+### Added (Idempotent & Transactional Producer)
+- Idempotent producer (`idempotent: true`) for exactly-once delivery per partition
+- Transactional producer (`transactionalId: '...'`) for atomic writes across partitions
+- Transaction lifecycle methods: `beginTransaction()`, `commitTransaction()`, `abortTransaction()`, `sendOffsets()`
+- Consumer `isolationLevel` option (`0` = read_uncommitted, `1` = read_committed)
+- InitProducerId protocol (apiKey 22)
+- FindCoordinator v1 protocol (coordinatorType 0=group, 1=transaction)
+- Transaction protocols: AddPartitionsToTxn (24), AddOffsetsToTxn (25), EndTxn (26), TxnOffsetCommit (28)
+
+### Fixed
+- RecordBatch write incorrectly treated `producerId=0` as falsy due to `|| -1` bug
+
 ### Changed
 - Snappy now requires `snappy` v7+ for Node.js 18+ compatibility
 - Consumer `maxBytes` operates at the RecordBatch level (Kafka always returns at least one complete batch)
