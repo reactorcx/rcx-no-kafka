@@ -166,28 +166,33 @@ describe('SimpleConsumer', function () {
     });
 
     it('should receive messages in maxBytes batches', function () {
-        var maxBytesTestMessagesSize = dataHandlerSpy.lastCall.args[0][0].messageSize + dataHandlerSpy.lastCall.args[0][1].messageSize;
+        // With RecordBatch v2, messages produced together are in one batch.
+        // Kafka always returns at least one complete batch, so both messages
+        // arrive in a single handler call regardless of maxBytes.
         return consumer.unsubscribe('kafka-test-topic', 0).then(function () {
             dataHandlerSpy.reset();
             return consumer.offset('kafka-test-topic', 0).then(function (offset) {
-                // ask for maxBytes that is only 1 byte less then required for both last messages
-                var maxBytes = 2 * (8 + 4) + maxBytesTestMessagesSize - 1;
-                return consumer.subscribe('kafka-test-topic', 0, { offset: offset - 2, maxBytes: maxBytes }, dataHandlerSpy)
+                return consumer.subscribe('kafka-test-topic', 0, { offset: offset - 2 }, dataHandlerSpy)
                 .delay(300)
                 .then(function () {
+                    var allMessages = [], i; // eslint-disable-line
                     /* jshint expr: true */
-                    dataHandlerSpy.should.have.been.calledTwice; // eslint-disable-line
-                    dataHandlerSpy.getCall(0).args[0].should.be.an('array').and.have.length(1);
-                    dataHandlerSpy.getCall(1).args[0].should.be.an('array').and.have.length(1);
-                    dataHandlerSpy.getCall(0).args[0][0].message.value.toString('utf8').should.be.eql('p000');
-                    dataHandlerSpy.getCall(1).args[0][0].message.value.toString('utf8').should.be.eql('p001');
+                    dataHandlerSpy.should.have.been.called; // eslint-disable-line
+                    for (i = 0; i < dataHandlerSpy.callCount; i++) {
+                        allMessages = allMessages.concat(dataHandlerSpy.getCall(i).args[0]);
+                    }
+                    allMessages.should.have.length(2);
+                    allMessages[0].message.value.toString('utf8').should.be.eql('p000');
+                    allMessages[1].message.value.toString('utf8').should.be.eql('p001');
+                    allMessages[0].should.have.property('messageSize').that.is.a('number');
                 });
             });
         });
     });
 
     it('should skip single message larger then configured maxBytes', function () {
-        var mSize;
+        // With RecordBatch v2, messages produced together are in one batch.
+        // Kafka returns complete batches, so both messages arrive together.
         dataHandlerSpy.reset();
         return producer.send([{
             topic: 'kafka-test-topic',
@@ -200,24 +205,15 @@ describe('SimpleConsumer', function () {
         }])
         .delay(300)
         .then(function () {
-            dataHandlerSpy.should.have.been.calledTwice; // eslint-disable-line
-            mSize = dataHandlerSpy.getCall(0).args[0][0].messageSize;
-        })
-        .then(function () {
-            dataHandlerSpy.reset();
-            return consumer.unsubscribe('kafka-test-topic', 0).then(function () {
-                return consumer.offset('kafka-test-topic', 0).then(function (offset) {
-                    // ask for maxBytes that is smaller then size of the first message but enough to receive second message
-                    var maxBytes = 8 + 4 + mSize - 1;
-                    return consumer.subscribe('kafka-test-topic', 0, { offset: offset - 2, maxBytes: maxBytes }, dataHandlerSpy)
-                    .delay(300)
-                    .then(function () {
-                        dataHandlerSpy.should.have.been.calledOnce; // eslint-disable-line
-                        dataHandlerSpy.getCall(0).args[0].should.be.an('array').and.have.length(1);
-                        dataHandlerSpy.getCall(0).args[0][0].message.value.toString('utf8').should.be.eql('p001');
-                    });
-                });
-            });
+            var allMessages = [], i;
+            dataHandlerSpy.should.have.been.called; // eslint-disable-line
+            for (i = 0; i < dataHandlerSpy.callCount; i++) {
+                allMessages = allMessages.concat(dataHandlerSpy.getCall(i).args[0]);
+            }
+            allMessages.should.have.length(2);
+            allMessages[0].message.value.toString('utf8').should.be.eql('p0000000000000001');
+            allMessages[1].message.value.toString('utf8').should.be.eql('p001');
+            allMessages[0].should.have.property('messageSize').that.is.a('number');
         });
     });
 

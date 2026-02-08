@@ -1,3 +1,21 @@
+## 4.0
+
+### Added
+- Kafka 0.11 protocol support with automatic version negotiation via ApiVersions API
+- RecordBatch v2 format (magic byte 2) for produce and fetch
+- LZ4 compression support (`Kafka.COMPRESSION_LZ4`), requires `lz4` npm module
+- Message timestamps and headers for Kafka 0.11+ brokers
+- CRC-32C (Castagnoli) checksums for Record Batch v2
+
+### Changed
+- Snappy now requires `snappy` v7+ for Node.js 18+ compatibility
+- Consumer `maxBytes` operates at the RecordBatch level (Kafka always returns at least one complete batch)
+
+### Backward Compatibility
+- All existing v0 code paths remain as fallback for older brokers
+- Version negotiation automatically uses the highest mutually supported protocol version
+- No changes to producer/consumer public API — new fields (timestamp, headers) are optional
+
 ## 3.0
 
 ### Backward incompatible changes

@@ -6,9 +6,9 @@
 
 # no-kafka
 
-__no-kafka__ is [Apache Kafka](https://kafka.apache.org) 0.9 client for Node.js with [new unified consumer API](#groupconsumer-new-unified-consumer-api) support.
+__no-kafka__ is [Apache Kafka](https://kafka.apache.org) client for Node.js with [new unified consumer API](#groupconsumer-new-unified-consumer-api) support.
 
-Supports sync and async Gzip and Snappy compression, producer batching and controllable retries, offers few predefined group assignment strategies and producer partitioner option.
+Supports Kafka 0.9+ through 0.11 protocol (automatic version negotiation via ApiVersions). Includes sync and async Gzip, Snappy, and LZ4 compression, producer batching and controllable retries, and offers few predefined group assignment strategies and producer partitioner option.
 
 All methods will return a [promise](https://github.com/petkaantonov/bluebird)
 
@@ -187,7 +187,7 @@ return result;
   * `delay` - controls delay between retries, the delay is progressive and incrememented with each attempt with `min` value steps up to but not exceeding `max` value
     * `min` - minimum delay, used as increment value for next attempts, defaults to 1000ms
     * `max` - maximum delay value, defaults to 3000ms
-* `codec` - compression codec, one of Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP
+* `codec` - compression codec, one of Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP, Kafka.COMPRESSION_LZ4
 * `batch` - control batching (grouping) of requests
   * `size` - group messages together into single batch until their total size exceeds this value, defaults to 16384 bytes. Set to 0 to disable batching.
   * `maxWait` - send grouped messages after this amount of milliseconds expire even if their total size doesn't exceed `batch.size` yet, defaults to 10ms. Set to 0 to disable batching.
@@ -206,6 +206,9 @@ let consumer = new Kafka.SimpleConsumer();
 let dataHandler = function (messageSet, topic, partition) {
     messageSet.forEach(function (m) {
         console.log(topic, partition, m.offset, m.message.value.toString("utf8"));
+        // with Kafka 0.11+, messages also include:
+        // m.message.timestamp - message timestamp (milliseconds)
+        // m.message.headers   - array of {key, value} headers
     });
 };
 
@@ -463,7 +466,7 @@ Note that group consumer has to commit offsets first, in order for consumerLag t
 
 ## Compression
 
-__no-kafka__ supports both SNAPPY and Gzip compression. To use SNAPPY you must install the `snappy` NPM module in your project.
+__no-kafka__ supports Snappy, Gzip, and LZ4 compression. To use Snappy you must install the `snappy` NPM module (`npm install snappy`). To use LZ4 you must install the `lz4` NPM module (`npm install lz4`).
 
 Enable compression in Producer:
 
@@ -473,9 +476,10 @@ let Kafka = require("no-kafka");
 let producer = new Kafka.Producer({
     clientId: "producer",
     codec: Kafka.COMPRESSION_SNAPPY  });
-    // Kafka.COMPRESSION_NONE, 
-    // Kafka.COMPRESSION_SNAPPY, 
-    // Kafka.COMPRESSION_GZIP
+    // Kafka.COMPRESSION_NONE,
+    // Kafka.COMPRESSION_SNAPPY,
+    // Kafka.COMPRESSION_GZIP,
+    // Kafka.COMPRESSION_LZ4
 ```
 
 Alternatively just send some messages with specified compression codec (overwrites codec set in contructor):
