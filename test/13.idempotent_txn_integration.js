@@ -6,7 +6,7 @@
 // with transaction support enabled (transaction.state.log.replication.factor=1 for single-node)
 // kafka-topics.sh --zookeeper 127.0.0.1:2181/kafka0.11 --create --topic kafka-test-topic --partitions 3 --replication-factor 1
 
-var Promise = require('bluebird');
+var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
 var _       = require('lodash');
 
@@ -103,7 +103,7 @@ describe('Idempotent Producer Integration', function () {
                 message: { value: 'idempotent-consume-test' }
             });
         })
-        .delay(500)
+        .then(promiseUtils.delayChain(500))
         .then(function () {
             var lastArgs, msg;
             dataHandlerSpy.should.have.been.called; // eslint-disable-line
@@ -218,7 +218,7 @@ describe('Transactional Producer Integration', function () {
             // verify message is visible
             return consumer.subscribe('kafka-test-topic', 0, { offset: startOffset }, dataHandlerSpy);
         })
-        .delay(500)
+        .then(promiseUtils.delayChain(500))
         .then(function () {
             var allMessages = [];
             var i, found;
@@ -348,7 +348,7 @@ describe('Consumer Isolation Level Integration', function () {
             readUncommittedConsumer.subscribe('kafka-test-topic', 0, spy0),
             readCommittedConsumer.subscribe('kafka-test-topic', 0, spy1)
         ])
-        .delay(500)
+        .then(promiseUtils.delayChain(500))
         .then(function () {
             // both should subscribe without error — fetch may or may not have data
             return Promise.all([

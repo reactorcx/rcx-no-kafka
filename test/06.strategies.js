@@ -2,7 +2,7 @@
 
 /* global describe, it, before, sinon, after  */
 
-var Promise = require('bluebird');
+var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
 var _       = require('lodash');
 
@@ -33,7 +33,7 @@ describe('Weighted Round Robin Assignment', function () {
     ];
 
     before(function () {
-        return Promise.map(consumers, function (consumer, ind) {
+        return Promise.all(consumers.map(function (consumer, ind) {
             return consumer.init({
                 subscriptions: ['kafka-test-topic'],
                 metadata: {
@@ -42,13 +42,13 @@ describe('Weighted Round Robin Assignment', function () {
                 strategy: new Kafka.WeightedRoundRobinAssignmentStrategy(),
                 handler: function () {}
             });
-        }).delay(200);
+        })).then(promiseUtils.delayChain(200));
     });
 
     after(function () {
-        return Promise.map(consumers, function (c) {
+        return Promise.all(consumers.map(function (c) {
             return c.end();
-        });
+        }));
     });
 
     it('should split partitions according to consumer weight', function () {
@@ -79,7 +79,7 @@ describe('Consistent Assignment', function () {
     ];
 
     before(function () {
-        return Promise.map(consumers, function (consumer, ind) {
+        return Promise.all(consumers.map(function (consumer, ind) {
             return consumer.init({
                 subscriptions: ['kafka-test-topic'],
                 metadata: {
@@ -89,13 +89,13 @@ describe('Consistent Assignment', function () {
                 strategy: new Kafka.ConsistentAssignmentStrategy(),
                 handler: function () {}
             });
-        }).delay(200);
+        })).then(promiseUtils.delayChain(200));
     });
 
     after(function () {
-        return Promise.map(consumers, function (c) {
+        return Promise.all(consumers.map(function (c) {
             return c.end();
-        });
+        }));
     });
 
     it('should split partitions according to consumer weight', function () {

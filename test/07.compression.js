@@ -3,7 +3,7 @@
 /* global describe, it, before, sinon, after  */
 
 var crc32   = require('buffer-crc32');
-var Promise = require('bluebird');
+var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
 
 describe('Compression', function () {
@@ -43,7 +43,7 @@ describe('Compression', function () {
                     partition: 0,
                     message: { value: 'p01' }
                 }, { codec: Kafka.COMPRESSION_SNAPPY }),
-                Promise.delay(20).then(function () {
+                promiseUtils.delay(20).then(function () {
                     return producer.send({
                         topic: 'kafka-test-topic',
                         partition: 0,
@@ -59,7 +59,7 @@ describe('Compression', function () {
             .then(function () {
                 return consumer.subscribe('kafka-test-topic', 0, { offset: offset }, dataHandlerSpy);
             })
-            .delay(300)
+            .then(promiseUtils.delayChain(300))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(3);
@@ -85,7 +85,7 @@ describe('Compression', function () {
                 partition: 0,
                 message: { value: buf }
             }, { codec: Kafka.COMPRESSION_SNAPPY })
-            .delay(300)
+            .then(promiseUtils.delayChain(300))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -107,7 +107,7 @@ describe('Compression', function () {
                     partition: 0,
                     message: { value: 'p00' }
                 }, { codec: Kafka.COMPRESSION_GZIP })
-                .delay(200)
+                .then(promiseUtils.delayChain(200))
                 .then(function () {
                     dataHandlerSpy.should.have.been.called; // eslint-disable-line
                     dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -129,7 +129,7 @@ describe('Compression', function () {
                 partition: 0,
                 message: { value: 'p00' }
             }, { codec: Kafka.COMPRESSION_LZ4 })
-            .delay(200)
+            .then(promiseUtils.delayChain(200))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -153,7 +153,7 @@ describe('Compression', function () {
                 partition: 0,
                 message: { value: buf }
             }, { codec: Kafka.COMPRESSION_LZ4 })
-            .delay(300)
+            .then(promiseUtils.delayChain(300))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -174,7 +174,7 @@ describe('Compression', function () {
                 partition: 0,
                 message: { value: 'p00' }
             }, { codec: 30 })
-            .delay(200)
+            .then(promiseUtils.delayChain(200))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -225,7 +225,7 @@ describe('Compression', function () {
                     partition: 0,
                     message: { value: 'p01' }
                 }, { codec: Kafka.COMPRESSION_SNAPPY }),
-                Promise.delay(20).then(function () {
+                promiseUtils.delay(20).then(function () {
                     return producer.send({
                         topic: 'kafka-test-topic',
                         partition: 0,
@@ -242,7 +242,7 @@ describe('Compression', function () {
                 dataHandlerSpy.reset();
                 return consumer.subscribe('kafka-test-topic', 0, { offset: offset }, dataHandlerSpy);
             })
-            .delay(200)
+            .then(promiseUtils.delayChain(200))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(3);
@@ -268,7 +268,7 @@ describe('Compression', function () {
                 partition: 0,
                 message: { value: buf }
             }, { codec: Kafka.COMPRESSION_SNAPPY })
-            .delay(300)
+            .then(promiseUtils.delayChain(300))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -290,7 +290,7 @@ describe('Compression', function () {
                 partition: 0,
                 message: { value: 'p00' }
             }, { codec: Kafka.COMPRESSION_GZIP })
-            .delay(200)
+            .then(promiseUtils.delayChain(200))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -314,7 +314,7 @@ describe('Compression', function () {
                 partition: 0,
                 message: { value: buf }
             }, { codec: Kafka.COMPRESSION_GZIP })
-            .delay(300)
+            .then(promiseUtils.delayChain(300))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -336,7 +336,7 @@ describe('Compression', function () {
                 partition: 0,
                 message: { value: 'p00' }
             }, { codec: Kafka.COMPRESSION_LZ4 })
-            .delay(200)
+            .then(promiseUtils.delayChain(200))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -360,7 +360,7 @@ describe('Compression', function () {
                 partition: 0,
                 message: { value: buf }
             }, { codec: Kafka.COMPRESSION_LZ4 })
-            .delay(300)
+            .then(promiseUtils.delayChain(300))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -381,7 +381,7 @@ describe('Compression', function () {
                 partition: 0,
                 message: { value: 'p00' }
             }, { codec: 30 })
-            .delay(200)
+            .then(promiseUtils.delayChain(200))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);

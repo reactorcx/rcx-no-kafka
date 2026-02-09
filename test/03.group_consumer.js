@@ -4,7 +4,7 @@
 
 // kafka-topics.sh --zookeeper 127.0.0.1:2181/kafka0.9 --create --topic kafka-test-topic --partitions 3 --replication-factor 1
 
-var Promise = require('bluebird');
+var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
 var _       = require('lodash');
 
@@ -30,9 +30,9 @@ var dataHandlerSpies;
 
 function dataHandlerFactory(consumer) {
     return sinon.spy(function (messageSet, topic, partition) {
-        return Promise.each(messageSet, function (m) {
-            return consumer.commitOffset({ topic: topic, partition: partition, offset: m.offset });
-        });
+        return messageSet.reduce(function (p, m) {
+            return p.then(function () { return consumer.commitOffset({ topic: topic, partition: partition, offset: m.offset }); });
+        }, Promise.resolve());
     });
 }
 
@@ -50,15 +50,15 @@ describe('GroupConsumer', function () {
             consumers[0].init({
                 subscriptions: ['kafka-test-topic'],
                 handler: dataHandlerSpies[0]
-            }).delay(200) // let it consume previous messages in a topic (if any)
+            }).then(promiseUtils.delayChain(200)) // let it consume previous messages in a topic (if any)
         ]);
     });
 
     after(function () {
         return Promise.all([
-            Promise.map(consumers, function (c) {
+            Promise.all(consumers.map(function (c) {
                 return c.end();
-            }),
+            })),
             producer.end()
         ]);
     });
@@ -81,7 +81,7 @@ describe('GroupConsumer', function () {
             partition: 0,
             message: { value: 'p00' }
         })
-        .delay(200)
+        .then(promiseUtils.delayChain(200))
         .then(function () {
             /* jshint expr: true */
             dataHandlerSpies[0].should.have.been.called; //eslint-disable-line
@@ -159,7 +159,8 @@ describe('GroupConsumer', function () {
             consumers[0].offset('kafka-test-topic', 0),
             consumers[0].offset('kafka-test-topic', 1),
             consumers[0].offset('kafka-test-topic', 2),
-        ]).spread(function (offset0, offset1, offset2) {
+        ]).then(function (r) {
+            var offset0 = r[0], offset1 = r[1], offset2 = r[2];
             offset0.should.be.a('number').and.be.gt(0);
             offset1.should.be.a('number').and.be.gt(0);
             offset2.should.be.a('number').and.be.gt(0);
@@ -185,7 +186,7 @@ describe('GroupConsumer', function () {
                 handler: dataHandlerSpies[2]
             }),
         ])
-        .delay(1000) // give some time to rebalance group
+        .then(promiseUtils.delayChain(1000)) // give some time to rebalance group
         .then(function () {
             dataHandlerSpies[0].reset();
             return producer.send([
@@ -205,7 +206,7 @@ describe('GroupConsumer', function () {
                     message: { value: 'p02' }
                 }
             ])
-            .delay(400)
+            .then(promiseUtils.delayChain(400))
             .then(function () {
                 /* jshint expr: true */
                 dataHandlerSpies[0].should.have.been.calledOnce; //eslint-disable-line

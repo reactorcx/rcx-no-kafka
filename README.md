@@ -10,7 +10,7 @@ __no-kafka__ is [Apache Kafka](https://kafka.apache.org) client for Node.js with
 
 Supports Kafka 0.9+ through 2.1 protocol (automatic version negotiation via ApiVersions). Includes sync and async Gzip, Snappy, and LZ4 compression, producer batching and controllable retries, and offers few predefined group assignment strategies and producer partitioner option.
 
-All methods will return a [promise](https://github.com/petkaantonov/bluebird)
+All methods will return a [Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise)
 
 __Please check a [CHANGELOG](CHANGELOG.md) for backward incompatible changes in version 3.x__
 
@@ -378,15 +378,16 @@ Specify an assignment strategy (or use __no-kafka__ built-in consistent or round
 Example:
 
 ```javascript
-var Promise = require('bluebird');
 var consumer = new Kafka.GroupConsumer();
 
 var dataHandler = function (messageSet, topic, partition) {
-    return Promise.each(messageSet, function (m){
-        console.log(topic, partition, m.offset, m.message.value.toString('utf8'));
-        // commit offset
-        return consumer.commitOffset({topic: topic, partition: partition, offset: m.offset, metadata: 'optional'});
-    });
+    return messageSet.reduce(function (p, m) {
+        return p.then(function () {
+            console.log(topic, partition, m.offset, m.message.value.toString('utf8'));
+            // commit offset
+            return consumer.commitOffset({topic: topic, partition: partition, offset: m.offset, metadata: 'optional'});
+        });
+    }, Promise.resolve());
 };
 
 var strategies = [{

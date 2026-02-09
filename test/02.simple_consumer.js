@@ -4,7 +4,7 @@
 
 // kafka-topics.sh --zookeeper 127.0.0.1:2181/kafka0.9 --create --topic kafka-test-topic --partitions 3 --replication-factor 1
 
-var Promise = require('bluebird');
+var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
 var _       = require('lodash');
 
@@ -47,7 +47,7 @@ describe('SimpleConsumer', function () {
                 message: { value: 'p00' }
             });
         })
-        .delay(500)
+        .then(promiseUtils.delayChain(500))
         .then(function () {
             /* jshint expr: true */
             dataHandlerSpy.should.have.been.called; // eslint-disable-line
@@ -75,7 +75,7 @@ describe('SimpleConsumer', function () {
                 value: 'p00'
             }
         })
-        .delay(500)
+        .then(promiseUtils.delayChain(500))
         .then(function () {
             /* jshint expr: true */
             dataHandlerSpy.should.have.been.called; // eslint-disable-line
@@ -102,7 +102,7 @@ describe('SimpleConsumer', function () {
             partition: 0,
             message: { value: '人人生而自由，在尊嚴和權利上一律平等。' }
         })
-        .delay(500)
+        .then(promiseUtils.delayChain(500))
         .then(function () {
             /* jshint expr: true */
             dataHandlerSpy.should.have.been.called; // eslint-disable-line
@@ -131,7 +131,7 @@ describe('SimpleConsumer', function () {
             .then(function () {
                 consumer.subscriptions['kafka-test-topic:0'].offset.should.be.eql(offset + 200);
             })
-            .delay(300)
+            .then(promiseUtils.delayChain(300))
             .then(function () {
                 consumer.subscriptions['kafka-test-topic:0'].offset.should.be.eql(offset);
             });
@@ -154,7 +154,7 @@ describe('SimpleConsumer', function () {
         .then(function () {
             return consumer.offset('kafka-test-topic', 0).then(function (offset) {
                 return consumer.subscribe('kafka-test-topic', 0, { offset: offset - 2 }, dataHandlerSpy)
-                .delay(200) // consumer sleep timeout
+                .then(promiseUtils.delayChain(200)) // consumer sleep timeout
                 .then(function () {
                     dataHandlerSpy.should.have.been.called; // eslint-disable-line
                     dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(2);
@@ -173,7 +173,7 @@ describe('SimpleConsumer', function () {
             dataHandlerSpy.reset();
             return consumer.offset('kafka-test-topic', 0).then(function (offset) {
                 return consumer.subscribe('kafka-test-topic', 0, { offset: offset - 2 }, dataHandlerSpy)
-                .delay(300)
+                .then(promiseUtils.delayChain(300))
                 .then(function () {
                     var allMessages = [], i; // eslint-disable-line
                     /* jshint expr: true */
@@ -203,7 +203,7 @@ describe('SimpleConsumer', function () {
             partition: 0,
             message: { value: 'p001' }
         }])
-        .delay(300)
+        .then(promiseUtils.delayChain(300))
         .then(function () {
             var allMessages = [], i;
             dataHandlerSpy.should.have.been.called; // eslint-disable-line
@@ -372,7 +372,7 @@ describe('SimpleConsumer', function () {
                 message: { value: 'p00' }
             });
         })
-        .delay(200)
+        .then(promiseUtils.delayChain(200))
         .then(function () {
             spy.should.have.been.called; // eslint-disable-line
         });
@@ -389,7 +389,7 @@ describe('SimpleConsumer', function () {
                 message: { value: 'p00' }
             });
         })
-        .delay(200)
+        .then(promiseUtils.delayChain(200))
         .then(function () {
             spy.should.have.been.called; // eslint-disable-line
         });

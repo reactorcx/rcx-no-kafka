@@ -5,7 +5,7 @@
 // kafka-topics.sh --zookeeper 127.0.0.1:2181/kafka0.9 --create --topic kafka-test-topic --partitions 3 --replication-factor 1
 
 var util    = require('util');
-var Promise = require('bluebird');
+var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
 
 var DefaultPartitioner = Kafka.DefaultPartitioner;
@@ -225,7 +225,7 @@ describe('Producer', function () {
             clientId: 'producer'
         });
         _producer.partitioner.partition = function dummySyncPartitioner(/*topicName, partitions, message*/) {
-            return Promise.delay(100).then(function () {
+            return promiseUtils.delay(100).then(function () {
                 return 2;
             });
         };
@@ -422,7 +422,7 @@ describe('Producer', function () {
                     value: '12345'
                 }
             })
-            .delay(100)
+            .then(promiseUtils.delayChain(100))
             .then(function () {
                 return _producer.send({
                     topic: 'kafka-test-topic',

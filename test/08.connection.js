@@ -4,7 +4,7 @@
 
 var path = require('path');
 var fs = require('fs');
-var Promise = require('bluebird');
+var promiseUtils = require('../lib/promise-utils');
 var crc32   = require('buffer-crc32');
 var Kafka   = require('../lib/index');
 
@@ -41,7 +41,7 @@ describe('Connection', function () {
             partition: 0,
             message: { value: buf }
         })
-        .delay(300)
+        .then(promiseUtils.delayChain(300))
         .then(function () {
             dataHandlerSpy.should.have.been.called; // eslint-disable-line
             dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);

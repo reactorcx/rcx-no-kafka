@@ -5,7 +5,7 @@
 // kafka-topics.sh --zookeeper 127.0.0.1:2181/kafka0.11 --create --topic kafka-test-topic --partitions 3 --replication-factor 1
 // These tests require a Kafka v0.11+ broker at localhost:9092
 
-var Promise = require('bluebird');
+var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
 var _       = require('lodash');
 
@@ -85,7 +85,7 @@ describe('v0.11 Integration', function () {
                     }
                 });
             })
-            .delay(500)
+            .then(promiseUtils.delayChain(500))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length.gte(1);
@@ -129,7 +129,7 @@ describe('v0.11 Integration', function () {
                     }
                 });
             })
-            .delay(500)
+            .then(promiseUtils.delayChain(500))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -166,7 +166,7 @@ describe('v0.11 Integration', function () {
                     }
                 });
             })
-            .delay(500)
+            .then(promiseUtils.delayChain(500))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -202,7 +202,7 @@ describe('v0.11 Integration', function () {
                     }
                 });
             })
-            .delay(500)
+            .then(promiseUtils.delayChain(500))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -235,7 +235,7 @@ describe('v0.11 Integration', function () {
                     }
                 });
             })
-            .delay(500)
+            .then(promiseUtils.delayChain(500))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -274,7 +274,7 @@ describe('v0.11 Integration', function () {
                     }
                 ]);
             })
-            .delay(500)
+            .then(promiseUtils.delayChain(500))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 // all 3 messages should arrive (may come in one or more calls)
@@ -308,7 +308,7 @@ describe('v0.11 Integration', function () {
                     }
                 });
             })
-            .delay(500)
+            .then(promiseUtils.delayChain(500))
             .then(function () {
                 dataHandlerSpy.should.have.been.called; // eslint-disable-line
                 dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
