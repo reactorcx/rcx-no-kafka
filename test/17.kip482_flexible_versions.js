@@ -243,7 +243,7 @@ describe('KIP-482 Flexible Versions Infrastructure', function () {
     /////////////////////////////
 
     describe('FlexibleRequestHeader', function () {
-        it('should encode apiKey, apiVersion, correlationId, compactString clientId, and empty tags', function () {
+        it('should encode apiKey, apiVersion, correlationId, string clientId, and empty tags', function () {
             var encoded = protocol.write().FlexibleRequestHeader({
                 apiKey: 3,
                 apiVersion: 9,
@@ -262,15 +262,17 @@ describe('KIP-482 Flexible Versions Infrastructure', function () {
             encoded[5].should.equal(0x00);
             encoded[6].should.equal(0x00);
             encoded[7].should.equal(0x2A);
-            // compactNullableString "test": UVarint(5) = 0x05, then "test"
-            encoded[8].should.equal(0x05);
-            encoded[9].should.equal(0x74); // 't'
-            encoded[10].should.equal(0x65); // 'e'
-            encoded[11].should.equal(0x73); // 's'
-            encoded[12].should.equal(0x74); // 't'
+            // Regular string "test": Int16BE(4) = 0x00, 0x04, then "test"
+            // (clientId is NOT compact in header v2 — Kafka spec has flexibleVersions: "none" for ClientId)
+            encoded[8].should.equal(0x00);
+            encoded[9].should.equal(0x04);
+            encoded[10].should.equal(0x74); // 't'
+            encoded[11].should.equal(0x65); // 'e'
+            encoded[12].should.equal(0x73); // 's'
+            encoded[13].should.equal(0x74); // 't'
             // TaggedFields: UVarint(0) = 0x00
-            encoded[13].should.equal(0x00);
-            encoded.length.should.equal(14);
+            encoded[14].should.equal(0x00);
+            encoded.length.should.equal(15);
         });
 
         it('should encode null clientId', function () {
@@ -281,10 +283,11 @@ describe('KIP-482 Flexible Versions Infrastructure', function () {
                 clientId: null
             }).result;
 
-            // 2 + 2 + 4 + 1 (null compact string) + 1 (empty tags) = 10
-            encoded.length.should.equal(10);
-            encoded[8].should.equal(0x00); // null compactNullableString
-            encoded[9].should.equal(0x00); // empty TaggedFields
+            // 2 + 2 + 4 + 2 (null string Int16(-1)) + 1 (empty tags) = 11
+            encoded.length.should.equal(11);
+            encoded[8].should.equal(0xFF); // null string: Int16BE(-1) high byte
+            encoded[9].should.equal(0xFF); // null string: Int16BE(-1) low byte
+            encoded[10].should.equal(0x00); // empty TaggedFields
         });
     });
 

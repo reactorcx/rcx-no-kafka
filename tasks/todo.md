@@ -95,3 +95,59 @@ Added KIP-482 flexible versions infrastructure — the encoding primitives neede
 - **334 passing**, 2 failing (pre-existing SSL failures on port 9093)
 - ESLint: clean
 - All existing tests unaffected (backward compatible)
+
+---
+
+# KIP-482: Flexible Version API Bumps
+
+## Todo
+
+- [x] **1** InitProducerId v2 (init_producer_id.js + client.js)
+- [x] **2** Heartbeat v4 (group_membership.js + client.js)
+- [x] **3** ListGroups v3 (admin.js + client.js)
+- [x] **4** FindCoordinator v3 (group_membership.js + client.js)
+- [x] **5** OffsetCommit v8 (offset_commit_fetch.js + client.js)
+- [x] **6** OffsetFetch v6 (offset_commit_fetch.js + client.js)
+- [x] **7** LeaveGroup v4 (group_membership.js + client.js)
+- [x] **8** SyncGroup v4 (group_membership.js + client.js)
+- [x] **9** DescribeGroups v5 (admin.js + client.js)
+- [x] **10** JoinGroup v6 (group_membership.js + client.js)
+- [x] **11** Metadata v9 (metadata.js + client.js)
+- [x] **12** ApiVersions v3 (api_versions.js — protocol only)
+- [x] **13** Unit tests (test/18.kip482_flexible_api_bumps.js)
+- [x] **14** Lint + full test suite
+
+---
+
+## Review
+
+### Summary
+Bumped all 12 APIs to their first flexible version using the KIP-482 infrastructure. Each bump changes the wire encoding: `string`→`compactString`, `array`→`compactArray`, `bytes`→`compactBytes`, `RequestHeader`→`FlexibleRequestHeader`, and `TaggedFields()` appended after every struct-level boundary.
+
+### Critical Bug Found & Fixed
+The FlexibleRequestHeader was incorrectly encoding the `clientId` as a `compactNullableString` (UVarint prefix). By decompiling the Kafka 2.6 broker's `RequestHeaderData.read()` bytecode, we discovered that the Kafka `RequestHeader.json` spec has `flexibleVersions: "none"` for the ClientId field. This means even in header v2, the clientId uses **regular Int16-prefixed string encoding** — only TaggedFields are added at the end. Fixed in `lib/protocol/common.js`.
+
+### Protocol Definitions Added
+
+| File | APIs Added |
+|------|-----------|
+| `lib/protocol/init_producer_id.js` | InitProducerIdRequestV2, InitProducerIdResponseV2 |
+| `lib/protocol/group_membership.js` | FindCoordinatorRequestV3/ResponseV3, JoinConsumerGroupRequestV6/ResponseV6, HeartbeatRequestV4/ResponseV4, SyncConsumerGroupRequestV4/ResponseV4, LeaveGroupRequestV4/ResponseV4 |
+| `lib/protocol/admin.js` | ListGroupsRequestV3/ResponseV3, DescribeGroupRequestV5/ResponseV5 |
+| `lib/protocol/offset_commit_fetch.js` | OffsetCommitRequestV8/ResponseV8, OffsetFetchRequestV6/ResponseV6 |
+| `lib/protocol/metadata.js` | MetadataRequestV9/ResponseV9 (with BrokerV9, PartitionMetadataV9, TopicMetadataV9) |
+| `lib/protocol/api_versions.js` | ApiVersionsRequestV3/ResponseV3 |
+
+### Client Version Bumps (lib/client.js)
+
+All 12 APIs bumped with version-branch logic:
+- Metadata: 8→9, FindCoordinator: 2→3, Heartbeat: 3→4, JoinGroup: 5→6
+- SyncGroup: 3→4, LeaveGroup: 3→4, OffsetCommit: 7→8, OffsetFetch: 5→6
+- ListGroups: 2→3, DescribeGroups: 4→5, InitProducerId: 1→2
+- ApiVersions v3: protocol only (client always sends v0 for bootstrap)
+
+### Test Results
+- **373 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- 32 new unit tests in `test/18.kip482_flexible_api_bumps.js`
+- All existing integration tests pass (broker auto-negotiates to flexible versions)

@@ -1,3 +1,12 @@
+## 4.5
+
+### Added (Kafka 2.6 Protocol Support — KIP-482 Flexible Versions)
+- All 12 APIs bumped to their first flexible version with compact encoding (compactString, compactArray, compactBytes, TaggedFields)
+- Metadata v9, FindCoordinator v3, JoinGroup v6, Heartbeat v4, SyncGroup v4, LeaveGroup v4
+- OffsetCommit v8, OffsetFetch v6, ListGroups v3, DescribeGroups v5, InitProducerId v2
+- ApiVersions v3 protocol definitions (client still sends v0 for bootstrap)
+- Flexible request header v2 with TaggedFields support
+
 ## 4.4
 
 ### Added
