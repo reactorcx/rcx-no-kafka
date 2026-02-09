@@ -1,3 +1,16 @@
+## 4.3
+
+### Added (Kafka 2.4 Protocol Support)
+- Upgraded all APIs to Kafka 2.4 maximum protocol versions with automatic version negotiation
+- Static group membership (KIP-345) — `groupInstanceId` option for GroupConsumer, reduces rebalances on restart
+- Fetch from closest replica / rack awareness (KIP-392) — `rackId` option for consumers, `preferredReadReplica` handling
+- Authorized operations in Metadata v8 and DescribeGroups v3/v4 (KIP-430)
+- Two-phase JoinGroup (KIP-394) — automatic retry with assigned memberId on MemberIdRequired
+- Produce v8, Fetch v11, ListOffsets v5, Metadata v8, InitProducerId v1
+- JoinGroup v5, Heartbeat v3, SyncGroup v3, LeaveGroup v3 (batch leave), OffsetCommit v7, DescribeGroups v4
+- Error codes 68-89 (NonEmptyGroup through ThrottlingQuotaExceeded)
+- FencedLeaderEpoch error recovery in consumers
+
 ## 4.2
 
 ### Added (Kafka 2.1 Protocol Support)

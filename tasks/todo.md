@@ -146,3 +146,87 @@ Migrated the entire no-kafka client library from Bluebird promises to native Jav
 ### Test results
 - **284 passing**, 2 failing (pre-existing SSL failures on port 9093 — not configured in test environment)
 - ESLint: clean
+
+---
+
+# Kafka 2.4 Protocol Upgrade + Rack Awareness
+
+## Phase 1: Error Codes (68-89)
+- [x] **1.1** Add error codes 68-89 to `lib/errors.js`
+
+## Phase 2: Simple Protocol Version Bumps
+- [x] **2.1** Add ProduceRequestV8 to `lib/protocol/produce.js`
+- [x] **2.2** Add OffsetRequestV5 to `lib/protocol/offset.js`
+- [x] **2.3** Add InitProducerIdRequestV1 to `lib/protocol/init_producer_id.js`
+
+## Phase 3: Static Membership (groupInstanceId) Protocol Definitions
+- [x] **3.1** Add JoinConsumerGroupRequest/Response V5 to `lib/protocol/group_membership.js`
+- [x] **3.2** Add HeartbeatRequestV3 to `lib/protocol/group_membership.js`
+- [x] **3.3** Add SyncConsumerGroupRequestV3 to `lib/protocol/group_membership.js`
+- [x] **3.4** Add LeaveGroupRequest/Response V3 to `lib/protocol/group_membership.js`
+- [x] **3.5** Add OffsetCommitRequestV7 to `lib/protocol/offset_commit_fetch.js`
+- [x] **3.6** Add DescribeGroupRequest/Response V3+V4 to `lib/protocol/admin.js`
+
+## Phase 4: Metadata v8 (Authorized Operations)
+- [x] **4.1** Add MetadataRequest/Response V8 to `lib/protocol/metadata.js`
+
+## Phase 5: Fetch v11 + Rack Awareness
+- [x] **5.1** Add FetchRequest/Response V11 to `lib/protocol/fetch.js`
+- [x] **5.2** Update fetchRequest in `lib/client.js` for v11 + rackId
+- [x] **5.3** Store broker rack info from metadata in `lib/client.js`
+- [x] **5.4** Handle preferredReadReplica in `lib/base_consumer.js`
+- [x] **5.5** Handle FencedLeaderEpoch error in `lib/base_consumer.js`
+
+## Phase 6: Client.js Version Bumps + groupInstanceId Plumbing
+- [x] **6.1** Bump produceRequest to v8 in `lib/client.js`
+- [x] **6.2** Bump offsetRequest to v5 in `lib/client.js`
+- [x] **6.3** Bump metadataRequest to v8 in `lib/client.js`
+- [x] **6.4** Add version negotiation to initProducerIdRequest in `lib/client.js`
+- [x] **6.5** Bump joinConsumerGroupRequest to v5 in `lib/client.js`
+- [x] **6.6** Bump heartbeatRequest to v3 in `lib/client.js`
+- [x] **6.7** Bump syncConsumerGroupRequest to v3 in `lib/client.js`
+- [x] **6.8** Bump leaveGroupRequest to v3 in `lib/client.js`
+- [x] **6.9** Bump offsetCommitRequestV2 to v7 in `lib/client.js`
+- [x] **6.10** Bump describeGroupRequest to v4 in `lib/client.js`
+
+## Phase 7: Unit Tests
+- [x] **7.1** Create `test/16.protocol_v24.js` with tests for all new protocol versions
+
+## Phase 8: Integration Verification
+- [x] **8.1** Run `npm test` — 308 passing, 3 failing (1 pre-existing lag timing issue, 2 pre-existing SSL)
+- [x] **8.2** Run `npm run eslint` — clean
+
+---
+
+## Review
+
+### Summary
+Added Kafka 2.2-2.4 protocol support including static group membership (KIP-345), fetch from closest replica / rack awareness (KIP-392), authorized operations in metadata/describe groups (KIP-430), and various simple version bumps.
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/errors.js` | Added 22 error codes (68-89): NonEmptyGroup through ThrottlingQuotaExceeded |
+| `lib/protocol/produce.js` | Added `ProduceRequestV8` (apiVersion 8, same wire format as v7) |
+| `lib/protocol/offset.js` | Added `OffsetRequestV5` (apiVersion 5, same wire format as v4) |
+| `lib/protocol/init_producer_id.js` | Added `InitProducerIdRequestV1` (apiVersion 1, same wire format as v0) |
+| `lib/protocol/group_membership.js` | Added JoinGroup V5, Heartbeat V3, SyncGroup V3, LeaveGroup V3 (all with groupInstanceId support) |
+| `lib/protocol/offset_commit_fetch.js` | Added `OffsetCommitRequestV7` (adds groupInstanceId) |
+| `lib/protocol/admin.js` | Added DescribeGroups V3 (authorizedOperations) and V4 (groupInstanceId per member) |
+| `lib/protocol/metadata.js` | Added Metadata V8 request (authorized ops flags) and response (per-topic + cluster authorized operations) |
+| `lib/protocol/fetch.js` | Added Fetch V11 request (rackId) and response (preferredReadReplica per partition) |
+| `lib/client.js` | Bumped all clientMax values, added v8/v11/v5/v1/v5/v3/v3/v3/v7/v4 branches, stored broker racks, passed rackId/groupInstanceId, handled MemberIdRequired (KIP-394) |
+| `lib/base_consumer.js` | Added preferredReadReplica handling for rack-aware fetch, added FencedLeaderEpoch to error recovery |
+| `lib/group_consumer.js` | Added MemberIdRequired handling for KIP-394 two-phase join |
+
+### New File
+- `test/16.protocol_v24.js` — 24 unit tests covering error codes, simple version bumps, static membership protocols, metadata v8, and fetch v11
+
+### Bug Found During Integration
+- **KIP-394 two-phase join**: With JoinGroup v5+ on Kafka 2.2+ brokers, the broker returns `MemberIdRequired` with an assigned `memberId` on the first join attempt (empty memberId). Fixed by saving the assigned memberId from the error response and retrying.
+- **LeaveGroup v3 null member_id**: The `member_id` field in LeaveGroup v3 members array is non-nullable STRING but could be sent as null when called during cleanup. Fixed by defaulting to empty string.
+
+### Test Results
+- **308 passing**, 3 failing (1 pre-existing consumer lag timing issue from stale topic data, 2 pre-existing SSL tests on port 9093)
+- ESLint: clean

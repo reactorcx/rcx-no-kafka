@@ -8,7 +8,7 @@
 
 __no-kafka__ is [Apache Kafka](https://kafka.apache.org) client for Node.js with [new unified consumer API](#groupconsumer-new-unified-consumer-api) support.
 
-Supports Kafka 0.9+ through 2.1 protocol (automatic version negotiation via ApiVersions). Includes sync and async Gzip, Snappy, and LZ4 compression, producer batching and controllable retries, and offers few predefined group assignment strategies and producer partitioner option.
+Supports Kafka 0.9+ through 2.4 protocol (automatic version negotiation via ApiVersions). Includes sync and async Gzip, Snappy, and LZ4 compression, producer batching and controllable retries, rack-aware fetching, static group membership, and offers few predefined group assignment strategies and producer partitioner option.
 
 All methods will return a [Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise)
 
@@ -367,6 +367,7 @@ consumer.fetchOffset([
   * `max` - maximum delay value, defaults to 1000ms
 * `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
 * `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `false`
+* `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
 * `handlerConcurrency` - specify concurrency level for the consumer handler function, defaults to 10
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms
 * `socketTimeout` - timeout for Kafka connection socket in milliseconds, defaults to 0 (disabled)
@@ -455,6 +456,8 @@ You can also write your own assignment strategy by inheriting from Kafka.Default
 * `retentionTime` - offset retention time in ms, defaults to 1 day (24 * 3600 * 1000)
 * `startingOffset` - starting position (time) when there is no commited offset, defaults to `Kafka.LATEST_OFFSET`
 * `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
+* `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
+* `groupInstanceId` - unique instance identifier for static group membership (KIP-345). When set, the consumer can rejoin the group without triggering a rebalance. Requires Kafka 2.4+
 * `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `false`
 * `handlerConcurrency` - specify concurrency level for the consumer handler function, defaults to 10
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms
