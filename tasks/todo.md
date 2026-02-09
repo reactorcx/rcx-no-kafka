@@ -4,38 +4,44 @@
 
 ---
 
-# Per-Broker API Version Negotiation for Initial Brokers
+# KIP-429: Cooperative/Incremental Rebalancing
 
-## Problem
+## Todo
 
-`initialBrokers` (seed brokers) never get `apiVersionsRequest` called on them. Their `apiVersions` stays `null` forever. This causes:
-
-1. **`metadataRequest()` always uses v0** — The version selection loop checks `initialBrokers[*].apiVersions`, which are always `null`, so `metadataMax` stays 0. Newer metadata features (controllerId, clusterId, rack info, authorized ops) are never used via the initial brokers.
-
-2. **`initProducerIdRequest()` always uses v0** — Same pattern at line 1524: checks initial broker versions, gets `null`, defaults to v0.
-
-Note: `brokerConnections` already get per-broker API versions correctly — `updateMetadata()` calls `apiVersionsRequest` for each new broker connection. `groupCoordinators` and `transactionCoordinators` also get their own `apiVersionsRequest` on creation. The gap is only `initialBrokers`.
-
-## Tasks
-
-- [x] **1** Add `apiVersionsRequest` calls for initial brokers in `init()` — In `lib/client.js`, after creating `initialBrokers` and before `updateMetadata()`, call `apiVersionsRequest` on each initial broker.
-- [x] **2** Add integration test in `test/11.v011_integration.js` verifying initial brokers have API versions populated after `init()`
-- [x] **3** Run full test suite and eslint to verify no regressions
+- [x] **1** Write ownedPartitions in subscription metadata (group_membership.js)
+- [x] **2** Read ownedPartitions from JoinGroup response members (group_membership.js)
+- [x] **3** Add cooperative state tracking to GroupConsumer constructor/init (group_consumer.js)
+- [x] **4** Pass ownedPartitions in JoinGroup request (group_consumer.js)
+- [x] **5** Cooperative assignment filtering in _syncGroup leader logic (group_consumer.js)
+- [x] **6** Incremental _updateSubscriptions for cooperative mode (group_consumer.js)
+- [x] **7** Phase 2 rejoin trigger in _rejoin (group_consumer.js)
+- [x] **8** Tests for cooperative rebalancing (test/03.group_consumer.js)
+- [x] **9** Run full test suite to verify no regressions
+- [x] **10** Review and cleanup
 
 ---
 
 ## Review
 
 ### Summary
-Added API version discovery for initial (seed) brokers during `init()`. Previously, `initialBrokers` never had `apiVersionsRequest` called on them, so their `apiVersions` stayed `null` forever. This meant `metadataRequest()` and `initProducerIdRequest()` always fell back to v0 regardless of broker capabilities.
+Implemented KIP-429 cooperative/incremental rebalancing for the no-kafka consumer group client. This is a client-side-only change — no broker protocol version changes needed.
+
+Key design decisions:
+- Cooperative mode is **opt-in** via `cooperative: true` in strategy config (default remains EAGER)
+- The cooperative filtering logic lives in `GroupConsumer._syncGroup()`, NOT in individual strategies — zero changes to assignment strategy files
+- Subscription metadata v1 adds `ownedPartitions` field so the leader knows what each member currently owns
+- `_updateSubscriptions()` becomes incremental in cooperative mode (add/remove specific partitions instead of clear-all)
+- Two-phase rejoin: phase 1 revokes migrating partitions, phase 2 assigns them to new owners
 
 ### Files Modified
 
 | File | Changes |
 |------|---------|
-| `lib/client.js` | Added `Promise.all(initialBrokers.map(apiVersionsRequest))` step in `init()` before `updateMetadata()` |
-| `test/11.v011_integration.js` | Added test verifying initial brokers have populated `apiVersions` after init |
+| `lib/protocol/group_membership.js` | Write ownedPartitions in subscription metadata v1; read ownedPartitions from JoinGroup response members (both v0 and v5 formats) |
+| `lib/group_consumer.js` | Track owned partitions + cooperative mode flag in constructor; pass ownedPartitions in JoinGroup; cooperative assignment filtering in _syncGroup leader; incremental _updateSubscriptionsCooperative; phase 2 rejoin trigger; rebalance callbacks (onPartitionsRevoked/onPartitionsAssigned) |
+| `test/03.group_consumer.js` | Added `GroupConsumer (cooperative)` describe block with tests for: single consumer cooperative init, two-consumer cooperative rebalance, ownedPartitions tracking |
 
 ### Test Results
-- **314 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- **317 passing**, 2 failing (pre-existing SSL failures on port 9093)
 - ESLint: clean
+- All existing tests unaffected (backward compatible)

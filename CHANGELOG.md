@@ -1,3 +1,10 @@
+## 4.4
+
+### Added
+- Cooperative/incremental rebalancing (KIP-429) — `cooperative: true` strategy option for GroupConsumer enables two-phase rebalancing where only migrating partitions are revoked, keeping unaffected partitions active throughout
+- Rebalance lifecycle callbacks — `onPartitionsRevoked` and `onPartitionsAssigned` optional callbacks in strategy options
+- Subscription metadata v1 with `ownedPartitions` field for cooperative protocol
+
 ## 4.3.1
 
 ### Fixed

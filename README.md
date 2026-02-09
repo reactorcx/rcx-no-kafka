@@ -8,7 +8,7 @@
 
 __no-kafka__ is [Apache Kafka](https://kafka.apache.org) client for Node.js with [new unified consumer API](#groupconsumer-new-unified-consumer-api) support.
 
-Supports Kafka 0.9+ through 2.4 protocol (automatic version negotiation via ApiVersions). Includes sync and async Gzip, Snappy, and LZ4 compression, producer batching and controllable retries, rack-aware fetching, static group membership, and offers few predefined group assignment strategies and producer partitioner option.
+Supports Kafka 0.9+ through 2.4 protocol (automatic version negotiation via ApiVersions). Includes sync and async Gzip, Snappy, LZ4, and Zstd compression, producer batching and controllable retries, rack-aware fetching, static group membership, cooperative/incremental rebalancing (KIP-429), and offers few predefined group assignment strategies and producer partitioner option.
 
 All methods will return a [Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise)
 
@@ -26,6 +26,7 @@ __Please check a [CHANGELOG](CHANGELOG.md) for backward incompatible changes in 
   * [Simple Consumer options](#simpleconsumer-options)
 * [Group Consumer](#groupconsumer-new-unified-consumer-api)
   * [Assignment strategies](#assignment-strategies)
+  * [Cooperative Rebalancing](#cooperative-rebalancing)
   * [Group Consumer options](#groupconsumer-options)
 * [Group Admin](#groupadmin-consumer-groups-api)
 * [Compression](#compression)
@@ -438,6 +439,36 @@ Note that each consumer in a group should have its own and consistent metadata.i
 
 You can also write your own assignment strategy by inheriting from Kafka.DefaultAssignmentStrategy and overwriting `assignment` method.
 
+### Cooperative Rebalancing
+
+By default, when a consumer group rebalances (member joins or leaves), all consumers stop consuming all partitions, rejoin, and get new assignments (eager/stop-the-world mode). With cooperative rebalancing (KIP-429), consumers only revoke partitions that are moving to a different owner, keeping unaffected partitions active throughout the rebalance.
+
+Enable cooperative mode by setting `cooperative: true` in the strategy options:
+
+```javascript
+var consumer = new Kafka.GroupConsumer();
+
+consumer.init({
+    subscriptions: ['kafka-test-topic'],
+    handler: dataHandler,
+    cooperative: true,
+    onPartitionsRevoked: function (partitions) {
+        // optional: called when partitions are revoked from this consumer
+        // partitions is an array of {topic, partition}
+        console.log('Revoked:', partitions);
+    },
+    onPartitionsAssigned: function (partitions) {
+        // optional: called when new partitions are assigned to this consumer
+        // partitions is an array of {topic, partition}
+        console.log('Assigned:', partitions);
+    }
+});
+```
+
+Cooperative rebalancing uses a two-phase approach: in phase 1 the leader identifies which partitions need to move and tells their current owners to give them up. In phase 2, freed partitions are assigned to their new owners. Partitions that are not moving continue being consumed throughout.
+
+This is a client-side-only feature and works with any Kafka broker version supported by no-kafka.
+
 ### GroupConsumer options
 
 * `isolationLevel` - controls visibility of transactional messages. `0` (default) for `read_uncommitted`, `1` for `read_committed`. Requires Kafka 0.11+
@@ -462,6 +493,11 @@ You can also write your own assignment strategy by inheriting from Kafka.Default
 * `handlerConcurrency` - specify concurrency level for the consumer handler function, defaults to 10
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms
 * `socketTimeout` - timeout for Kafka connection socket in milliseconds, defaults to 0 (disabled)
+
+Strategy-level options (passed in the strategy object to `init()`):
+* `cooperative` - boolean, enable cooperative/incremental rebalancing (KIP-429). Defaults to `false` (eager mode)
+* `onPartitionsRevoked` - function, optional callback invoked with an array of `{topic, partition}` when partitions are revoked during a cooperative rebalance
+* `onPartitionsAssigned` - function, optional callback invoked with an array of `{topic, partition}` when new partitions are assigned during a cooperative rebalance
 
 ## GroupAdmin (consumer groups API)
 
