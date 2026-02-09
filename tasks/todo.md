@@ -230,3 +230,43 @@ Added Kafka 2.2-2.4 protocol support including static group membership (KIP-345)
 ### Test Results
 - **308 passing**, 3 failing (1 pre-existing consumer lag timing issue from stale topic data, 2 pre-existing SSL tests on port 9093)
 - ESLint: clean
+
+---
+
+# Zstd Compression Support (Codec 4)
+
+## Tasks
+- [x] **1** Add `zstd-napi` to `optionalDependencies` and `devDependencies` in `package.json`
+- [x] **2** Add Zstd compression/decompression logic to `lib/protocol/misc/compression.js`
+- [x] **3** Export `COMPRESSION_ZSTD = 4` from `lib/index.js` and `types/kafka.d.ts`
+- [x] **4** Add sync + async Zstd tests to `test/07.compression.js`
+- [x] **5** Update README.md documentation
+- [x] **6** Install dependencies and run tests
+- [x] **7** Fix transactional producer test error matching on fresh broker
+
+---
+
+## Review
+
+### Summary
+Added Zstd (Zstandard) compression support as codec 4 (KIP-110). Follows the exact same pattern as LZ4 — purely additive changes with no risk of regression.
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `package.json` | Added `zstd-napi` ^0.0.12 to `optionalDependencies` and `devDependencies` |
+| `lib/protocol/misc/compression.js` | Loaded `zstd-napi` via `requireSafe`, defined `Zstd` object, added `codec === 4` branches to all 4 exported functions |
+| `lib/index.js` | Added `exports.COMPRESSION_ZSTD = 4` |
+| `types/kafka.d.ts` | Added `COMPRESSION_ZSTD = 4` constant and updated `COMPRESSION` type to include `4` |
+| `test/07.compression.js` | Added 4 tests: sync small, sync >32kb, async small, async >32kb |
+| `README.md` | Added Zstd to codec lists and install instructions |
+| `test/13.idempotent_txn_integration.js` | Fixed error matching: `err.code \|\| err.message` instead of `err.message \|\| err.code` |
+
+### Bug Fixed
+- **Transactional producer test fails on fresh broker**: The `before` hook catch block checked `err.message || err.code` to match `CoordinatorNotAvailable`. Since `KafkaError.message` is the description text (always truthy), `err.code` (which holds the error name `'GroupCoordinatorNotAvailable'`) was never reached. Swapped to `err.code || err.message` so the regex matches the error name.
+
+### Test Results
+- All 17 compression tests pass (including 4 new Zstd tests)
+- Full suite: 3 pre-existing failures only (1 consumer lag timing, 2 SSL)
+- ESLint: clean

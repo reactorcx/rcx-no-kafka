@@ -154,7 +154,7 @@ describe('Transactional Producer Integration', function () {
         return Promise.all([
             txnProducer.init().catch(function (err) {
                 // broker may not have transactions configured (__transaction_state topic)
-                if (/CoordinatorNotAvailable|NotCoordinator|GroupCoordinatorNotAvailable/.test(err.message || err.code || '')) {
+                if (/CoordinatorNotAvailable|NotCoordinator|GroupCoordinatorNotAvailable/.test(err.code || err.message || '')) {
                     txnSupported = false;
                     return null;
                 }

@@ -8,8 +8,9 @@ export type OFFSET = -2 | -1;
 export const COMPRESSION_SNAPPY = 2;
 export const COMPRESSION_GZIP = 1;
 export const COMPRESSION_LZ4 = 3;
+export const COMPRESSION_ZSTD = 4;
 export const COMPRESSION_NONE = 0;
-export type COMPRESSION = 0 | 1 | 2 | 3;
+export type COMPRESSION = 0 | 1 | 2 | 3 | 4;
 
 export interface MessageHeader {
     key: string;

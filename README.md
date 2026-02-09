@@ -256,7 +256,7 @@ Transaction methods:
   * `delay` - controls delay between retries, the delay is progressive and incrememented with each attempt with `min` value steps up to but not exceeding `max` value
     * `min` - minimum delay, used as increment value for next attempts, defaults to 1000ms
     * `max` - maximum delay value, defaults to 3000ms
-* `codec` - compression codec, one of Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP, Kafka.COMPRESSION_LZ4
+* `codec` - compression codec, one of Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP, Kafka.COMPRESSION_LZ4, Kafka.COMPRESSION_ZSTD
 * `batch` - control batching (grouping) of requests
   * `size` - group messages together into single batch until their total size exceeds this value, defaults to 16384 bytes. Set to 0 to disable batching.
   * `maxWait` - send grouped messages after this amount of milliseconds expire even if their total size doesn't exceed `batch.size` yet, defaults to 10ms. Set to 0 to disable batching.
@@ -542,7 +542,7 @@ Note that group consumer has to commit offsets first, in order for consumerLag t
 
 ## Compression
 
-__no-kafka__ supports Snappy, Gzip, and LZ4 compression. To use Snappy you must install the `snappy` NPM module (`npm install snappy`). To use LZ4 you must install the `lz4` NPM module (`npm install lz4`).
+__no-kafka__ supports Snappy, Gzip, LZ4, and Zstd compression. To use Snappy you must install the `snappy` NPM module (`npm install snappy`). To use LZ4 you must install the `lz4` NPM module (`npm install lz4`). To use Zstd you must install the `zstd-napi` NPM module (`npm install zstd-napi`).
 
 Enable compression in Producer:
 
@@ -551,7 +551,7 @@ var Kafka = require('no-kafka');
 
 var producer = new Kafka.Producer({
     clientId: 'producer',
-    codec: Kafka.COMPRESSION_SNAPPY // Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP, Kafka.COMPRESSION_LZ4
+    codec: Kafka.COMPRESSION_SNAPPY // Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP, Kafka.COMPRESSION_LZ4, Kafka.COMPRESSION_ZSTD
 });
 ```
 
