@@ -298,8 +298,9 @@ describe('KIP-482 Flexible Versions Infrastructure', function () {
     describe('FLEXIBLE_VERSION_THRESHOLDS', function () {
         it('should have correct thresholds for key APIs', function () {
             var thresholds = globals.FLEXIBLE_VERSION_THRESHOLDS;
-            should.equal(thresholds[0], null);  // Produce: not flexible
-            should.equal(thresholds[1], null);  // Fetch: not flexible
+            thresholds[0].should.equal(9);      // Produce: flexible from v9
+            thresholds[1].should.equal(12);     // Fetch: flexible from v12
+            thresholds[2].should.equal(6);      // ListOffsets: flexible from v6
             thresholds[3].should.equal(9);      // Metadata
             thresholds[10].should.equal(3);     // FindCoordinator
             thresholds[18].should.equal(3);     // ApiVersions

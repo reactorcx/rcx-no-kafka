@@ -186,3 +186,69 @@ Key behaviors added:
 - **376 passing**, 2 failing (pre-existing SSL failures on port 9093)
 - ESLint: clean
 - All existing tests unaffected (backward compatible)
+
+---
+
+# KIP-516: Topic IDs (UUIDs)
+
+## Todo
+
+- [x] **1** Add `uuid` primitive type to `lib/protocol/common.js`
+- [x] **2** Add Metadata v10 request/response to `lib/protocol/metadata.js`
+- [x] **3** Add ListOffsets v6 (first flexible version) to `lib/protocol/offset.js`
+- [x] **4** Add Produce v9 (first flexible version) to `lib/protocol/produce.js`
+- [x] **5** Add Fetch v12 (first flexible version) to `lib/protocol/fetch.js`
+- [x] **6** Add Fetch v13 (topicId-based) to `lib/protocol/fetch.js`
+- [x] **7** Update `FLEXIBLE_VERSION_THRESHOLDS` in `lib/protocol/globals.js`
+- [x] **8** Client integration — topic ID cache + version bumps in `lib/client.js`
+- [x] **9** Tests in `test/20.kip516_topic_ids.js`
+- [x] **10** Lint + full test suite to verify no regressions
+
+---
+
+## Review
+
+### Summary
+Implemented KIP-516 Topic IDs (UUIDs) for the no-kafka client. This adds support for Kafka 2.8+ topic identification via 128-bit UUIDs, including the core Metadata v10 and Fetch v13 protocol changes, plus the prerequisite flexible version bumps for Produce (v9), Fetch (v12), and ListOffsets (v6).
+
+### What was added
+
+**UUID primitive** (`lib/protocol/common.js`):
+- `uuid` type: reads/writes 16 raw bytes, converts to/from standard UUID string format (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`), all-zeros sentinel represents null
+
+**Protocol definitions added**:
+
+| File | APIs Added |
+|------|-----------|
+| `lib/protocol/metadata.js` | MetadataRequestV10 (with topicId+nullable name per topic), MetadataResponseV10 (with topicId per topic) |
+| `lib/protocol/offset.js` | OffsetRequestV6, OffsetResponseV6 (first flexible version) |
+| `lib/protocol/produce.js` | ProduceRequestV9, ProduceResponseV9 (first flexible version) |
+| `lib/protocol/fetch.js` | FetchRequestV12/ResponseV12 (first flexible version), FetchRequestV13/ResponseV13 (topicId replaces topic name) |
+
+**Client integration** (`lib/client.js`):
+- Topic ID cache: `topicIds` (name→UUID) and `topicNames` (UUID→name) maps populated from Metadata v10+ responses
+- Version bumps: Metadata 9→10, Fetch 11→13, Produce 8→9, ListOffsets 5→6
+- Fetch v13 translates topic names to IDs on send, resolves IDs back to names on receive
+
+**Globals** (`lib/protocol/globals.js`):
+- FLEXIBLE_VERSION_THRESHOLDS updated: Produce=9, Fetch=12, ListOffsets=6
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/protocol/common.js` | Added `uuid` primitive type |
+| `lib/protocol/metadata.js` | Added MetadataRequestV10, MetadataResponseV10, TopicMetadataV10, MetadataRequestV10_TopicItem |
+| `lib/protocol/offset.js` | Added OffsetRequestV6, OffsetResponseV6 + partition/topic item types |
+| `lib/protocol/produce.js` | Added ProduceRequestV9, ProduceResponseV9 + partition/topic/recordError item types |
+| `lib/protocol/fetch.js` | Added FetchRequestV12/V13, FetchResponseV12/V13 + partition/topic/forgotten item types |
+| `lib/protocol/globals.js` | Updated FLEXIBLE_VERSION_THRESHOLDS for Produce, Fetch, ListOffsets |
+| `lib/client.js` | Added topicIds/topicNames cache, bumped 4 API version ceilings, added v10/v12/v13/v9/v6 branches |
+| `test/17.kip482_flexible_versions.js` | Updated threshold assertions for Produce, Fetch, ListOffsets |
+| `test/20.kip516_topic_ids.js` | New file: 15 round-trip tests |
+
+### Test Results
+- **391 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- 15 new unit tests in `test/20.kip516_topic_ids.js`
+- All existing integration tests pass (version negotiation falls back gracefully)
