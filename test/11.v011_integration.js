@@ -58,6 +58,18 @@ describe('v0.11 Integration', function () {
                 conn.apiVersions.should.have.property('18'); // ApiVersionsRequest
             });
         });
+
+        it('should discover API versions for initial brokers', function () {
+            var brokers = producer.client.initialBrokers;
+            brokers.should.be.an('array').with.length.above(0);
+            _.each(brokers, function (conn) {
+                conn.should.have.property('apiVersions');
+                conn.apiVersions.should.be.an('object');
+                conn.apiVersions.should.have.property('0'); // ProduceRequest
+                conn.apiVersions.should.have.property('1'); // FetchRequest
+                conn.apiVersions.should.have.property('18'); // ApiVersionsRequest
+            });
+        });
     });
 
     describe('Metadata v1', function () {

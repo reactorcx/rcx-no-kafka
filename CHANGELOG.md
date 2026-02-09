@@ -1,3 +1,8 @@
+## 4.3.1
+
+### Fixed
+- Initial (seed) brokers now query ApiVersions on connect, enabling version-negotiated metadata and InitProducerId requests instead of always falling back to v0
+
 ## 4.3
 
 ### Added (Kafka 2.4 Protocol Support)
