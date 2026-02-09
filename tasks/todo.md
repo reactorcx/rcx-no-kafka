@@ -122,3 +122,60 @@
 
 ### Known Limitation
 - `isolationLevel=1` (read_committed) correctly tells the broker to limit the fetch to the Last Stable Offset, but the client does not yet filter aborted transaction messages using the `abortedTransactions` list from FetchResponseV4. Full client-side abort filtering is a future enhancement.
+
+---
+
+# Kafka v1.0 Protocol Version Bumps
+
+## Tasks
+
+- [x] 1. Add `KafkaStorageException` (code 56) to `lib/errors.js`
+- [x] 2. Phase 0: Coordinator version discovery — call `apiVersionsRequest` on coordinator connections
+- [x] 3. Phase 1: Produce v5 — protocol definitions + client routing
+- [x] 4. Phase 1: Fetch v6 — protocol definitions + client routing
+- [x] 5. Phase 2: Metadata v5 — protocol definitions + client routing
+- [x] 6. Phase 2: ListOffsets v2 — protocol definitions + client routing
+- [x] 7. Phase 2: OffsetCommit v3 — protocol definitions + client routing
+- [x] 8. Phase 2: OffsetFetch v2/v3 — protocol definitions + client routing
+- [x] 9. Phase 3: JoinGroup v1 — protocol definitions + client routing
+- [x] 10. Phase 4: Throttle-time bumps — Heartbeat/LeaveGroup/SyncGroup v1
+- [x] 11. Phase 4: Throttle-time bumps — DescribeGroups/ListGroups v1
+- [x] 12. Phase 4: ApiVersions v1 — protocol definitions + client routing
+- [x] 13. Write unit tests in `test/14.protocol_v10.js`
+
+## Review
+
+### Summary of Changes
+
+**New files (1):**
+- `test/14.protocol_v10.js` — 32 unit tests covering all v1.0 protocol additions
+
+**Modified files (9):**
+- `lib/errors.js` — Added `KafkaStorageException` (code 56)
+- `lib/protocol/produce.js` — Added `ProduceRequestV5`, `ProduceResponseV5` (with `logStartOffset`)
+- `lib/protocol/fetch.js` — Added `FetchRequestV5PartitionItem` (with `logStartOffset`), `FetchRequestV5TopicItem`, `FetchRequestV6`, `FetchResponseV5` (with `logStartOffset`)
+- `lib/protocol/metadata.js` — Added `MetadataRequestV5` (with `allowAutoTopicCreation`), `MetadataResponseV5` (with `throttleTime`, `clusterId`, `offlineReplicas`)
+- `lib/protocol/offset.js` — Added `OffsetRequestV2` (with `isolationLevel`), `OffsetResponseV2` (with `throttleTime`)
+- `lib/protocol/offset_commit_fetch.js` — Added `OffsetCommitRequestV3` (retentionTime still in wire format, broker ignores), `OffsetCommitResponseV3` (with `throttleTime`), `OffsetFetchResponseV2` (with top-level `ErrorCode`), `OffsetFetchResponseV3` (with `throttleTime` + `ErrorCode`), `OffsetFetchRequestV3` (supports null topics)
+- `lib/protocol/group_membership.js` — Added `JoinConsumerGroupRequestV1` (with `rebalanceTimeout`), `HeartbeatRequestV1`/`ResponseV1`, `LeaveGroupRequestV1`/`ResponseV1`, `SyncConsumerGroupRequestV1`/`ResponseV1`
+- `lib/protocol/admin.js` — Added `ListGroupsRequestV1`/`ListGroupResponseV1`, `DescribeGroupRequestV1`/`DescribeGroupResponseV1`
+- `lib/protocol/api_versions.js` — Added `ApiVersionsRequestV1`/`ApiVersionsResponseV1` (with `throttleTime`)
+- `lib/client.js` — Phase 0: coordinator version discovery (`apiVersionsRequest` on group/transaction coordinator connections); bumped `clientMax` for all APIs (Produce 3→5, Fetch 4→6, Metadata 1→5, ListOffsets 1→2, OffsetCommit 2→3, OffsetFetch 1→3, JoinGroup 0→2, Heartbeat 0→1, LeaveGroup 0→1, SyncGroup 0→1, ListGroups 0→1, DescribeGroups 0→1); stores `clusterId` from metadata v5; accepts optional `rebalanceTimeout` in `joinConsumerGroupRequest`
+
+### Backward Compatibility
+- All changes use version negotiation — clients connecting to older brokers automatically fall back to previously supported versions
+- No behavioral changes for existing users; new fields (logStartOffset, clusterId, offlineReplicas, throttleTime) are only present when the broker supports them
+- The `joinConsumerGroupRequest` signature adds an optional 5th parameter (`rebalanceTimeout`); existing callers are unaffected
+
+### Bug Fixes Applied During Integration Testing
+1. **FetchRequestV6 missing `logStartOffset` per partition** — Fetch v5+ adds `logStartOffset` (Int64) to the partition request item. Added `FetchRequestV5PartitionItem` and `FetchRequestV5TopicItem` with the correct format.
+2. **OffsetResponseV1 used for v2 responses** — ListOffsets v2 response adds `throttleTime` before the topics array. Created `OffsetResponseV2` with throttleTime, updated client to use it.
+3. **OffsetCommitRequestV3 incorrectly removed `retentionTime`** — The v3 wire format still includes `retentionTime` (the broker ignores it). Re-added the field with default -1.
+4. **OffsetFetchResponseV2 used for v3 responses** — OffsetFetch v3 response adds `throttleTime` before the topics array. Created `OffsetFetchResponseV3` with throttleTime, updated client to use it.
+5. **MetadataRequestV5 missing `allowAutoTopicCreation`** — Metadata v4+ adds this boolean field. Added it with default value 1 (true).
+
+### Verification
+- 257 passing, 2 failing (pre-existing SSL connection failures on unconfigured port 9093)
+- All 32 v1.0 unit tests pass
+- All 46 v0.11 unit tests pass
+- All integration tests pass (SimpleConsumer, GroupConsumer, GroupAdmin, Compression, v0.11 Integration, Idempotent/Transactional)
