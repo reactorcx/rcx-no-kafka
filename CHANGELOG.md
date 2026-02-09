@@ -1,3 +1,26 @@
+## 4.2
+
+### Added (Kafka 2.1 Protocol Support)
+- Upgraded all APIs to Kafka 2.1 maximum protocol versions with automatic version negotiation
+- Fetch sessions support (KIP-227) — bypassed with full fetch mode (sessionId=0)
+- Leader epoch fencing fields (KIP-320) — parsed from responses, currentLeaderEpoch=-1 in requests
+- Produce v7, Fetch v10, Metadata v7, ListOffsets v4, OffsetCommit v6, OffsetFetch v5
+- JoinGroup v3 (throttleTime in response), FindCoordinator v2
+- Simple version bumps to v2: Heartbeat, LeaveGroup, SyncGroup, DescribeGroups, ListGroups, ApiVersions
+- Error codes 52-66 (UnsupportedCompressionType through DelegationTokenExpired)
+
+## 4.1
+
+### Added (Kafka 1.0 Protocol Support)
+- Upgraded all APIs to Kafka 1.0 maximum protocol versions with automatic version negotiation
+- Produce v5 and Fetch v6 with logStartOffset support
+- Metadata v5 with throttleTime, clusterId, controllerId, offlineReplicas, allowAutoTopicCreation
+- ListOffsets v2 with throttleTime and isolationLevel
+- OffsetCommit v3 with throttleTime, OffsetFetch v3 with throttleTime and null topics support
+- JoinGroup v1 with rebalanceTimeout (v2 for version negotiation)
+- Throttle-time version bumps: Heartbeat v1, LeaveGroup v1, SyncGroup v1, DescribeGroups v1, ListGroups v1, ApiVersions v1
+- Version discovery on coordinator connections (group and transaction coordinators)
+
 ## 4.0
 
 ### Added

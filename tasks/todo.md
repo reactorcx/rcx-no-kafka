@@ -179,3 +179,64 @@
 - All 32 v1.0 unit tests pass
 - All 46 v0.11 unit tests pass
 - All integration tests pass (SimpleConsumer, GroupConsumer, GroupAdmin, Compression, v0.11 Integration, Idempotent/Transactional)
+
+---
+
+# Kafka 2.1 Protocol Version Bumps
+
+## Tasks
+
+- [x] Phase 1: Add missing error codes (52-66) to `lib/errors.js`
+- [x] Phase 2: Simple clientMax bumps (6 APIs) — V2 requests reusing V1 responses
+- [x] Phase 3: FindCoordinator v2 — version negotiation for coordinator discovery
+- [x] Phase 4: Produce v7 — bumped apiVersion, response uses V5 format (not V7; recordErrors added in v8/KIP-467)
+- [x] Phase 5: JoinGroup v3 — response adds throttleTime
+- [x] Phase 6: OffsetCommit v6 — removes retentionTime, adds committedLeaderEpoch per partition in request AND response
+- [x] Phase 7: OffsetFetch v5 — response adds committedLeaderEpoch
+- [x] Phase 8: Metadata v7 — response adds leaderEpoch per partition
+- [x] Phase 9: ListOffsets v4 — request adds currentLeaderEpoch (before time, not after), response adds leaderEpoch
+- [x] Phase 10: Fetch v10 — fetch sessions (KIP-227) + leader epoch (KIP-320)
+- [x] Phase 11: Unit tests in `test/15.protocol_v21.js`
+- [x] Verification: Run `npm test` and verify all tests pass
+
+## Review
+
+### Summary of Changes
+
+**New files (1):**
+- `test/15.protocol_v21.js` — 28 unit tests covering all Kafka 2.1 protocol additions
+
+**Modified files (10):**
+- `lib/errors.js` — Added error codes 52-66 (UnsupportedCompressionType, SecurityDisabled, OperationNotAttempted, LogDirNotFound, SaslAuthenticationFailed, UnknownProducerId, ReassignmentInProgress, DelegationTokenAuthDisabled, DelegationTokenNotFound, DelegationTokenOwnerMismatch, DelegationTokenRequestNotAllowed, DelegationTokenAuthorizationFailed, DelegationTokenExpired)
+- `lib/protocol/group_membership.js` — Added HeartbeatRequestV2, LeaveGroupRequestV2, SyncConsumerGroupRequestV2, FindCoordinatorRequestV2, JoinConsumerGroupRequestV3, JoinConsumerGroupResponseV3 (throttleTime before error)
+- `lib/protocol/admin.js` — Added DescribeGroupRequestV2, ListGroupsRequestV2
+- `lib/protocol/api_versions.js` — Added ApiVersionsRequestV2
+- `lib/protocol/produce.js` — Added ProduceRequestV7 (apiVersion: 7, reuses V3 topic items), ProduceResponseV7 (for future v8+ use)
+- `lib/protocol/offset_commit_fetch.js` — Added OffsetCommitRequestV6 (no retentionTime, adds committedLeaderEpoch per partition), OffsetCommitResponseV6, OffsetFetchRequestV5 (null topic support), OffsetFetchResponseV5 (committedLeaderEpoch per partition)
+- `lib/protocol/metadata.js` — Added MetadataRequestV7, PartitionMetadataV7 (leaderEpoch between leader and replicas), TopicMetadataV7, MetadataResponseV7
+- `lib/protocol/offset.js` — Added OffsetRequestV4 (currentLeaderEpoch before time), OffsetResponseV4 (leaderEpoch after offset)
+- `lib/protocol/fetch.js` — Added FetchRequestV7 (sessionId, sessionEpoch, forgottenTopicsData), FetchResponseV7 (errorCode, sessionId), FetchRequestV9PartitionItem (currentLeaderEpoch), FetchRequestV10
+- `lib/client.js` — Bumped clientMax for all APIs: Produce 5→7, Fetch 6→10, Metadata 5→7, ListOffsets 2→4, OffsetCommit 3→6, OffsetFetch 3→5, JoinGroup 2→3, Heartbeat 1→2, LeaveGroup 1→2, SyncGroup 1→2, ListGroups 1→2, DescribeGroups 1→2, FindCoordinator version negotiation for both group and transaction coordinators
+
+### Bug Fixes Applied During Integration Testing
+
+1. **Produce v7 response format** — The plan stated v7 adds `recordErrors` + `errorMessage` per partition. This is actually a v8 addition (KIP-467, Kafka 2.4). The v7 response is identical to v5. Fixed by using `ProduceResponseV5` for v7 requests.
+
+2. **OffsetCommit v6 request missing `committedLeaderEpoch`** — The plan stated v6 only removes `retentionTime`. In reality, v6 also ADDS `committedLeaderEpoch` (Int32) per partition between `offset` and `metadata`. Created `OffsetCommitRequestV6PartitionItem` with the correct field.
+
+3. **ListOffsets v4 request field order** — The plan stated `currentLeaderEpoch` goes after `time`. The correct order is `partition → currentLeaderEpoch → time` (epoch comes BEFORE time). Reordered fields in `OffsetRequestV4PartitionItem`.
+
+### Design Decisions
+- Fetch sessions (KIP-227): Bypassed with `sessionId=0, sessionEpoch=-1` (full fetch mode every request)
+- Leader epoch (KIP-320): Pass `-1` for `currentLeaderEpoch` in requests. Parse `leaderEpoch` from responses but don't implement fencing logic.
+- Skipped intermediate versions where wire format is identical (e.g., Produce v6 = v5, OffsetFetch v4 = v3)
+
+### Backward Compatibility
+- All changes use version negotiation — clients connecting to older brokers automatically fall back to previously supported versions
+- No behavioral changes for existing users; new fields (leaderEpoch, committedLeaderEpoch, sessionId, errorCode) are only present when the broker supports them
+
+### Verification
+- 285 passing, 2 failing (pre-existing SSL connection failures on unconfigured port 9093)
+- All 28 v2.1 unit tests pass
+- All integration tests pass (SimpleConsumer, GroupConsumer, GroupAdmin, Compression, Idempotent/Transactional)
+- No broker request format errors in recent logs
