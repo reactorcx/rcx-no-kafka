@@ -45,3 +45,53 @@ Key design decisions:
 - **317 passing**, 2 failing (pre-existing SSL failures on port 9093)
 - ESLint: clean
 - All existing tests unaffected (backward compatible)
+
+---
+
+# KIP-482: Flexible Versions Infrastructure
+
+## Todo
+
+- [x] **1** Add compact type primitives (compactString, compactBytes, compactArray + nullable variants) to `lib/protocol/common.js`
+- [x] **2** Add TaggedFields primitive to `lib/protocol/common.js`
+- [x] **3** Add FlexibleRequestHeader to `lib/protocol/common.js`
+- [x] **4** Add FLEXIBLE_VERSION_THRESHOLDS map to `lib/protocol/globals.js`
+- [x] **5** Add unit tests in `test/17.kip482_flexible_versions.js`
+- [x] **6** Run lint and tests to verify no regressions
+
+---
+
+## Review
+
+### Summary
+Added KIP-482 flexible versions infrastructure — the encoding primitives needed for Kafka 2.6+ flexible version APIs. No existing APIs are changed; this is the foundation layer only.
+
+### What was added
+
+**Compact type primitives** (`lib/protocol/common.js`):
+- `compactString` / `compactNullableString` — UVarint(N+1)-prefixed UTF-8 strings
+- `compactBytes` / `compactNullableBytes` — UVarint(N+1)-prefixed byte buffers
+- `compactArray` / `compactNullableArray` — UVarint(N+1)-prefixed element loops
+
+**TaggedFields** (`lib/protocol/common.js`):
+- Read: skips unknown tagged fields (UVarint tag count, then tag/size/data triples)
+- Write: always emits `0x00` (empty tag section)
+
+**FlexibleRequestHeader** (`lib/protocol/common.js`):
+- Request header v1: same as v0 but uses compactNullableString for clientId + trailing TaggedFields
+
+**FLEXIBLE_VERSION_THRESHOLDS** (`lib/protocol/globals.js`):
+- Maps API key → first flexible version number for all APIs through Kafka 2.6
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/protocol/common.js` | Added 8 new Protocol.define blocks (6 compact types + TaggedFields + FlexibleRequestHeader) |
+| `lib/protocol/globals.js` | Added FLEXIBLE_VERSION_THRESHOLDS map |
+| `test/17.kip482_flexible_versions.js` | New file: 24 round-trip encode/decode tests |
+
+### Test Results
+- **334 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- All existing tests unaffected (backward compatible)
