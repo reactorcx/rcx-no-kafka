@@ -151,3 +151,38 @@ All 12 APIs bumped with version-branch logic:
 - ESLint: clean
 - 32 new unit tests in `test/18.kip482_flexible_api_bumps.js`
 - All existing integration tests pass (broker auto-negotiates to flexible versions)
+
+---
+
+# KIP-345: Static Group Membership Behavioral Layer
+
+## Todo
+
+- [x] **1** Suppress LeaveGroup on shutdown for static members (`lib/group_consumer.js` — `end()`)
+- [x] **2** Handle FencedInstanceId as fatal in `_heartbeat()` (`lib/group_consumer.js`)
+- [x] **3** Handle FencedInstanceId as fatal in `_fullRejoin()` (`lib/group_consumer.js`)
+- [x] **4** Add integration tests (`test/19.static_membership.js`)
+- [x] **5** Run lint + full test suite to verify no regressions
+
+---
+
+## Review
+
+### Summary
+Implemented KIP-345 static group membership behavioral layer. The wire format was already in place; this adds the GroupConsumer logic that makes static membership actually work.
+
+Key behaviors added:
+- **Static members skip LeaveGroup on shutdown** — the whole point of KIP-345. When `groupInstanceId` is set, `end()` goes directly to closing connections without calling `leaveGroupRequest`, so the broker preserves the member's assignment for session timeout duration.
+- **FencedInstanceId is fatal** — if another consumer registers with the same `group.instance.id`, the broker returns error code 82. The consumer now treats this as unrecoverable in both `_heartbeat()` and `_fullRejoin()`, setting `_closed = true` and rethrowing instead of entering a retry loop.
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/group_consumer.js` | 3 small changes: `end()` skips LeaveGroup when groupInstanceId is set; `_heartbeat()` catch-all checks for FencedInstanceId before retrying; `_fullRejoin()` catch checks for FencedInstanceId before backoff retry |
+| `test/19.static_membership.js` | New file: 3 integration tests — static member joins successfully, `end()` skips LeaveGroup for static members, `end()` still calls LeaveGroup for dynamic members |
+
+### Test Results
+- **376 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- All existing tests unaffected (backward compatible)
