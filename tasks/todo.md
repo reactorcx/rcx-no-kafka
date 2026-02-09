@@ -252,3 +252,53 @@ Implemented KIP-516 Topic IDs (UUIDs) for the no-kafka client. This adds support
 - ESLint: clean
 - 15 new unit tests in `test/20.kip516_topic_ids.js`
 - All existing integration tests pass (version negotiation falls back gracefully)
+
+---
+
+# Transaction API Version Bumps (v1-v3) for API Keys 24, 25, 26, 28
+
+## Todo
+
+- [x] **1** Make v0 request definitions accept `apiVersion` from data (transaction.js)
+- [x] **2** Add TxnOffsetCommit v2 definitions (committedLeaderEpoch)
+- [x] **3** Add v3 flexible definitions for all 4 APIs (transaction.js)
+- [x] **4** Update FLEXIBLE_VERSION_THRESHOLDS in globals.js
+- [x] **5** Client version negotiation in client.js
+- [x] **6** Add round-trip tests (test/21.transaction_api_versions.js)
+- [x] **7** Lint + full test suite
+
+---
+
+## Review
+
+### Summary
+Bumped all 4 transaction APIs (AddPartitionsToTxn, AddOffsetsToTxn, EndTxn, TxnOffsetCommit) from v0-only to v3 (first flexible version). This completes the KIP-482 flexible versions story for the entire client.
+
+For APIs 24/25/26, v1 and v2 only change behavioral semantics (not wire format), so the existing v0 definitions accept a variable `apiVersion`. TxnOffsetCommit v2 adds `committedLeaderEpoch` per partition, requiring a separate definition. All v3 definitions use compact types and TaggedFields per KIP-482. TxnOffsetCommit v3 additionally adds `generationId`, `memberId`, and `groupInstanceId` fields.
+
+### Protocol Definitions Added
+
+| File | APIs Added |
+|------|-----------|
+| `lib/protocol/transaction.js` | TxnOffsetCommitRequestV2 (+ partition/topic items), AddPartitionsToTxnRequestV3/ResponseV3, AddOffsetsToTxnRequestV3/ResponseV3, EndTxnRequestV3/ResponseV3, TxnOffsetCommitRequestV3/ResponseV3 (+ partition/topic items) |
+
+### Client Version Bumps (lib/client.js)
+
+All 4 transaction APIs bumped with version-branch logic:
+- AddPartitionsToTxn: 0→3, AddOffsetsToTxn: 0→3, EndTxn: 0→3
+- TxnOffsetCommit: 0→3 (with v2 branch for committedLeaderEpoch)
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/protocol/transaction.js` | Made v0 defs accept apiVersion from data; added TxnOffsetCommitRequestV2 + items; added v3 flexible defs for all 4 APIs |
+| `lib/protocol/globals.js` | Added FLEXIBLE_VERSION_THRESHOLDS for keys 24, 25, 26, 28 (all = 3) |
+| `lib/client.js` | Added `_negotiateVersion` calls and version branches for all 4 transaction methods |
+| `test/21.transaction_api_versions.js` | New file: 16 round-trip tests |
+
+### Test Results
+- **407 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- 16 new unit tests in `test/21.transaction_api_versions.js`
+- All existing integration tests pass (version negotiation falls back gracefully)
