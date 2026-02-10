@@ -175,6 +175,108 @@ describe('KIP-482 Flexible Version API Bumps', function () {
     });
 
     ///////////////////////////
+    // FindCoordinator v4    //
+    ///////////////////////////
+
+    describe('FindCoordinatorRequestV4', function () {
+        it('should use FlexibleRequestHeader with coordinatorKeys array', function () {
+            var encoded = protocol.write().FindCoordinatorRequestV4({
+                correlationId: 1,
+                clientId: 'test',
+                apiVersion: 4,
+                keyType: 0,
+                coordinatorKeys: ['mygroup']
+            }).result;
+
+            // apiKey=10, apiVersion=4
+            encoded[0].should.equal(0x00);
+            encoded[1].should.equal(10);
+            encoded[2].should.equal(0x00);
+            encoded[3].should.equal(4);
+        });
+
+        it('should accept apiVersion 6 for KIP-932', function () {
+            var encoded = protocol.write().FindCoordinatorRequestV4({
+                correlationId: 1,
+                clientId: 'test',
+                apiVersion: 6,
+                keyType: 0,
+                coordinatorKeys: ['g1']
+            }).result;
+
+            encoded[2].should.equal(0x00);
+            encoded[3].should.equal(6);
+        });
+    });
+
+    describe('FindCoordinatorResponseV4', function () {
+        it('should parse coordinators array', function () {
+            var buf = Buffer.concat([
+                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId
+                new Buffer([0x00]),                     // TaggedFields
+                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                new Buffer([0x02]),                     // compactArray: 1 coordinator
+                // coordinator item:
+                new Buffer([0x08]),                     // compactString "mygroup" (len 7+1=8)
+                new Buffer('mygroup', 'utf8'),
+                new Buffer([0x00, 0x00, 0x00, 0x01]),  // nodeId = 1
+                new Buffer([0x0a]),                     // compactString "localhost" (len 9+1=10)
+                new Buffer('localhost', 'utf8'),
+                new Buffer([0x00, 0x00, 0x23, 0x84]),  // port = 9092
+                new Buffer([0x00, 0x00]),               // error = 0
+                new Buffer([0x00]),                     // errorMessage = null
+                new Buffer([0x00]),                     // coordinator TaggedFields
+                new Buffer([0x00])                      // top-level TaggedFields
+            ]);
+            var result = protocol.read(buf).FindCoordinatorResponseV4().result;
+            result.correlationId.should.equal(1);
+            result.throttleTime.should.equal(0);
+            result.coordinators.length.should.equal(1);
+            result.coordinators[0].key.should.equal('mygroup');
+            result.coordinators[0].nodeId.should.equal(1);
+            result.coordinators[0].host.should.equal('localhost');
+            result.coordinators[0].port.should.equal(9092);
+        });
+
+        it('should parse multiple coordinators', function () {
+            var buf = Buffer.concat([
+                new Buffer([0x00, 0x00, 0x00, 0x02]),  // correlationId = 2
+                new Buffer([0x00]),                     // TaggedFields
+                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                new Buffer([0x03]),                     // compactArray: 2 coordinators
+                // coordinator 1: "g1"
+                new Buffer([0x03]),                     // compactString "g1" (len 2+1=3)
+                new Buffer('g1', 'utf8'),
+                new Buffer([0x00, 0x00, 0x00, 0x01]),  // nodeId = 1
+                new Buffer([0x0a]),                     // "localhost"
+                new Buffer('localhost', 'utf8'),
+                new Buffer([0x00, 0x00, 0x23, 0x84]),  // port = 9092
+                new Buffer([0x00, 0x00]),               // error = 0
+                new Buffer([0x00]),                     // errorMessage = null
+                new Buffer([0x00]),                     // TaggedFields
+                // coordinator 2: "g2"
+                new Buffer([0x03]),                     // compactString "g2"
+                new Buffer('g2', 'utf8'),
+                new Buffer([0x00, 0x00, 0x00, 0x02]),  // nodeId = 2
+                new Buffer([0x0a]),                     // "localhost"
+                new Buffer('localhost', 'utf8'),
+                new Buffer([0x00, 0x00, 0x23, 0x85]),  // port = 9093
+                new Buffer([0x00, 0x00]),               // error = 0
+                new Buffer([0x00]),                     // errorMessage = null
+                new Buffer([0x00]),                     // TaggedFields
+                new Buffer([0x00])                      // top-level TaggedFields
+            ]);
+            var result = protocol.read(buf).FindCoordinatorResponseV4().result;
+            result.coordinators.length.should.equal(2);
+            result.coordinators[0].key.should.equal('g1');
+            result.coordinators[0].nodeId.should.equal(1);
+            result.coordinators[1].key.should.equal('g2');
+            result.coordinators[1].nodeId.should.equal(2);
+            result.coordinators[1].port.should.equal(9093);
+        });
+    });
+
+    ///////////////////////////
     // OffsetCommit v8       //
     ///////////////////////////
 
@@ -673,6 +775,17 @@ describe('KIP-482 Flexible Version API Bumps', function () {
                 clientId: 'no-kafka',
                 key: 'test-group',
                 coordinatorType: 0
+            }).result;
+            encoded.length.should.be.greaterThan(0);
+        });
+
+        it('FindCoordinatorRequestV4 should round-trip', function () {
+            var encoded = protocol.write().FindCoordinatorRequestV4({
+                correlationId: 42,
+                clientId: 'no-kafka',
+                apiVersion: 4,
+                keyType: 0,
+                coordinatorKeys: ['group-1', 'group-2']
             }).result;
             encoded.length.should.be.greaterThan(0);
         });

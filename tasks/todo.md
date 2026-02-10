@@ -578,3 +578,88 @@ All reuse `OffsetRequestV6TopicItem`/`OffsetRequestV6PartitionItem` for the requ
 - ESLint: clean
 - 3 new tests in `test/20.kip516_topic_ids.js`
 - All existing integration tests pass (no regressions)
+
+---
+
+# FindCoordinator v4–v6 (KIP-699, KIP-890, KIP-932)
+
+## Background
+
+FindCoordinator is currently implemented through v3 (the first flexible version per KIP-482). Three more versions are needed:
+
+- **v4** (KIP-699): Replaces single `key` (string) with `coordinatorKeys` ([]string) for batch coordinator lookup. Response restructured: removes top-level `errorCode`/`errorMessage`/`coordinatorId`/`coordinatorHost`/`coordinatorPort` and replaces with a `coordinators` array, where each item has `key`, `nodeId`, `host`, `port`, `errorCode`, `errorMessage`.
+- **v5** (KIP-890): Same wire format as v4, adds support for `TRANSACTION_ABORTABLE` error code (error 74).
+- **v6** (KIP-932): Same wire format as v4/v5, adds support for share group coordinator type (keyType=2).
+
+All three versions are flexible (v3+), so they use `FlexibleRequestHeader`, `compactString`, `compactArray`, `TaggedFields`.
+
+Since v5 and v6 have identical wire format to v4, the V4 protocol definitions can be reused for v5/v6 by accepting a variable `apiVersion`.
+
+## Wire Format
+
+### Request (v4-v6)
+```
+FlexibleRequestHeader(apiKey=10, apiVersion=4/5/6)
+Int8(keyType)                    // 0=group, 1=transaction, 2=share
+compactArray(coordinatorKeys)    // each: compactString
+TaggedFields()
+```
+
+### Response (v4-v6)
+```
+Int32BE(correlationId)
+TaggedFields()                   // flexible response header
+Int32BE(throttleTime)
+compactArray(coordinators)       // each coordinator item:
+  compactString(key)
+  Int32BE(nodeId)
+  compactString(host)
+  Int32BE(port)
+  ErrorCode(errorCode)
+  compactNullableString(errorMessage)
+  TaggedFields()
+TaggedFields()                   // body-level
+```
+
+## Todo
+
+- [x] **1** Add `FindCoordinatorRequestV4` and response to `lib/protocol/group_membership.js` — request takes `coordinatorKeys` array + `keyType`; response returns `coordinators` array. Accept `apiVersion` from data so v5/v6 reuse the same definition.
+- [x] **2** Update `_findGroupCoordinator()` in `lib/client.js` — bump coordMax threshold to use V4 when available, wrap single groupId into `coordinatorKeys: [groupId]`, extract first coordinator from response array.
+- [x] **3** Update `_findTransactionCoordinator()` in `lib/client.js` — same pattern as step 2 but with `keyType: 1`.
+- [x] **4** Add unit tests in `test/18.kip482_flexible_api_bumps.js` — encode V4 request, decode V4 response with coordinators array, round-trip verification.
+- [x] **5** Lint + full test suite to verify no regressions.
+
+---
+
+## Review
+
+### Summary
+Implemented FindCoordinator v4–v6 protocol support (KIP-699, KIP-890, KIP-932). V4 restructures the API for batch coordinator lookup — the request takes an array of `coordinatorKeys` instead of a single `key`, and the response returns a `coordinators` array with per-key error handling instead of flat top-level fields. V5 and V6 have identical wire format to V4 (only adding new error code and coordinator type support respectively), so a single protocol definition handles all three via a variable `apiVersion`.
+
+### Protocol Definitions Added
+
+| Definition | Purpose |
+|-----------|---------|
+| `FindCoordinatorRequestV4` | Takes `coordinatorKeys` array + `keyType`, variable `apiVersion` for v4/v5/v6 |
+| `FindCoordinatorResponseV4_Coordinator` | Per-coordinator item: key, nodeId, host, port, errorCode, errorMessage |
+| `FindCoordinatorResponseV4` | Parses `coordinators` array (replaces flat fields from v3) |
+
+### Client Changes (lib/client.js)
+
+- `_findGroupCoordinator()`: Added `coordMax >= 4` branch — wraps `groupId` into `coordinatorKeys: [groupId]` with `keyType: 0`, extracts first coordinator from response array and normalizes field names
+- `_findTransactionCoordinator()`: Same pattern with `keyType: 1`
+- Both use `Math.min(coordMax, 6)` as apiVersion cap
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/protocol/group_membership.js` | Added 3 Protocol.define blocks (FindCoordinatorRequestV4, FindCoordinatorResponseV4_Coordinator, FindCoordinatorResponseV4) |
+| `lib/client.js` | Added `coordMax >= 4` branches in both `_findGroupCoordinator()` and `_findTransactionCoordinator()`, with V4 response normalization |
+| `test/18.kip482_flexible_api_bumps.js` | Added 5 tests (encode v4 request, encode v6 apiVersion, decode single coordinator, decode multiple coordinators, round-trip) |
+
+### Test Results
+- **433 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- 5 new tests in `test/18.kip482_flexible_api_bumps.js`
+- All existing integration tests pass (no regressions)

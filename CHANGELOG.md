@@ -1,3 +1,8 @@
+## 4.8
+
+### Added (KIP-699: Batch FindCoordinator)
+- FindCoordinator v4-v6 (KIP-699, KIP-890, KIP-932) — batch coordinator lookup with `coordinatorKeys` array, per-coordinator error handling in response
+
 ## 4.7
 
 ### Added (Kafka 3.7+ Fetch Protocol — KIP-405, KIP-903, KIP-951)
