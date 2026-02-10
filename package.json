@@ -13,13 +13,9 @@
     "kafka"
   ],
   "dependencies": {
-    "@types/lodash": "^4.14.55",
     "bin-protocol": "^3.1.1",
-    "buffer-crc32": "^0.2.5",
     "hashring": "^3.2.0",
-    "lodash": "^4.17.23",
     "murmur-hash-js": "^1.0.0",
-    "nice-simple-logger": "^1.0.1",
     "wrr-pool": "^1.0.3"
   },
   "optionalDependencies": {

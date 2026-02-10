@@ -3,7 +3,6 @@
 /* global describe, it */
 
 var util  = require('util');
-var _     = require('lodash');
 var Kafka = require('../lib/index');
 
 // Ran against Java DefaultPartitioner with 12 partitions
@@ -43,7 +42,8 @@ describe('Default Partitioner', function () {
     it('should partition correctly with murmur2', function () {
         var partitioner = new Kafka.DefaultPartitioner();
 
-        _.each(expectedPartitions, function (partition, key) {
+        Object.keys(expectedPartitions).forEach(function (key) {
+            var partition = expectedPartitions[key];
             partitioner.partition('topic', new Array(numPartitions), {
                 key : key
             }).should.equal(partition);

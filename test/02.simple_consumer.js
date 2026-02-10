@@ -6,7 +6,6 @@
 
 var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
-var _       = require('lodash');
 
 var producer = new Kafka.Producer({ requiredAcks: 1, clientId: 'producer' });
 var consumer = new Kafka.SimpleConsumer({ idleTimeout: 100, clientId: 'simple-consumer' });
@@ -308,9 +307,9 @@ describe('SimpleConsumer', function () {
             result[0].should.have.property('error', null);
             result[1].should.have.property('error', null);
             result[2].should.have.property('error', null);
-            _.find(result, { topic: 'kafka-test-topic', partition: 0 }).offset.should.be.eql(1);
-            _.find(result, { topic: 'kafka-test-topic', partition: 1 }).offset.should.be.eql(2);
-            _.find(result, { topic: 'kafka-test-topic', partition: 2 }).offset.should.be.eql(3);
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 0; }).offset.should.be.eql(1);
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 1; }).offset.should.be.eql(2);
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 2; }).offset.should.be.eql(3);
         });
     });
 

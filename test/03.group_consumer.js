@@ -6,7 +6,6 @@
 
 var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
-var _       = require('lodash');
 
 var producer = new Kafka.Producer({ requiredAcks: 1, clientId: 'producer' });
 var consumers = [
@@ -147,10 +146,10 @@ describe('GroupConsumer', function () {
             result[1].should.have.property('metadata').that.is.a('string');
             result[0].should.have.property('error', null);
             result[1].should.have.property('error', null);
-            _.find(result, { topic: 'kafka-test-topic', partition: 0 }).offset.should.be.eql(1 + 1);
-            _.find(result, { topic: 'kafka-test-topic', partition: 1 }).offset.should.be.eql(2 + 1);
-            _.find(result, { topic: 'kafka-test-topic', partition: 0 }).metadata.should.be.eql('m1');
-            _.find(result, { topic: 'kafka-test-topic', partition: 1 }).metadata.should.be.eql('m2');
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 0; }).offset.should.be.eql(1 + 1);
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 1; }).offset.should.be.eql(2 + 1);
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 0; }).metadata.should.be.eql('m1');
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 1; }).metadata.should.be.eql('m2');
         });
     });
 
@@ -339,8 +338,8 @@ describe('GroupConsumer (cooperative)', function () {
         var totalOwned;
         // After rebalancing, each consumer's ownedPartitions should reflect its actual subscriptions
         totalOwned = 0;
-        _.each(coopConsumers, function (c) {
-            _.each(c.ownedPartitions, function (tp) {
+        coopConsumers.forEach(function (c) {
+            c.ownedPartitions.forEach(function (tp) {
                 totalOwned += tp.partitions.length;
             });
         });

@@ -8,7 +8,6 @@
 
 var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
-var _       = require('lodash');
 
 describe('Idempotent Producer Integration', function () {
     var producer, consumer;
@@ -226,7 +225,7 @@ describe('Transactional Producer Integration', function () {
             for (i = 0; i < dataHandlerSpy.callCount; i++) {
                 allMessages = allMessages.concat(dataHandlerSpy.getCall(i).args[0]);
             }
-            found = _.find(allMessages, function (m) {
+            found = allMessages.find(function (m) {
                 return m.message.value.toString('utf8') === 'txn-committed-msg';
             });
             should.exist(found);

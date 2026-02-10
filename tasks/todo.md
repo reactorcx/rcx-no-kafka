@@ -1268,3 +1268,71 @@ These were flagged by automated analysis but verified as NOT bugs:
 - [ ] **3** Fix BUG 3: Clean up batch queue in `Producer.end()` (`lib/producer.js:423`)
 - [ ] **4** Fix BUG 4: Log error in `updateGroupCoordinator` catch (`lib/client.js:1269`)
 - [ ] **5** Lint + full test suite
+
+---
+
+# Remove lodash — Replace with native alternatives
+
+## Plan
+
+Replace all lodash usage in 4 files (`base_consumer.js`, `simple_consumer.js`, `producer.js`, `group_consumer.js`) with native JavaScript equivalents. Use `lib/utils.js` for `defaultsDeep`. Match existing code style (var declarations, vars-on-top ESLint rule).
+
+## Todo
+
+- [x] **1** `lib/base_consumer.js` — Replace lodash require with utils; replace defaultsDeep, chain pattern, isEmpty, last, isPlainObject, partialRight/map, ary/parseInt (9 changes)
+- [x] **2** `lib/simple_consumer.js` — Replace lodash require with utils; replace defaultsDeep, chain pattern (4 changes)
+- [x] **3** `lib/producer.js` — Replace lodash require with utils; replace defaultsDeep, filter, reject, each, groupBy, map, merge, sumBy, omit, min (15 changes)
+- [x] **4** `lib/group_consumer.js` — Replace lodash require with utils; replace defaultsDeep, isEmpty, isPlainObject, values, each, groupBy, map, filter, mapValues, get (16 changes)
+- [x] **5** Lint + full test suite to verify no regressions
+
+---
+
+## Review
+
+### Summary
+Replaced all lodash usage in 4 consumer/producer files with native JavaScript equivalents. Used `lib/utils.js` for `defaultsDeep`. All changes match the existing code style (var declarations, vars-on-top ESLint rule, function expressions).
+
+Also fixed 3 pre-existing issues discovered during this work:
+- `lib/utils.js`: Removed unused `match` variable (ESLint no-unused-vars)
+- `lib/client.js`: Fixed 5 brace-style violations (statement on same line as opening brace)
+- `lib/connection.js`: Fixed `Object.assign` to skip undefined option values (matching `_.defaults` semantics)
+
+### Lodash methods replaced
+
+| Lodash method | Native replacement |
+|---|---|
+| `_.defaultsDeep` | `utils.defaultsDeep` |
+| `_.isEmpty` | `Object.keys(x).length === 0` or `!x \|\| x.length === 0` |
+| `_.isPlainObject` | `typeof x === 'object' && x !== null && !Array.isArray(x)` |
+| `_.last` | `arr[arr.length - 1]` |
+| `_.partialRight(_.map, key)` | `.map(function (p) { return p[key]; })` |
+| `_.ary(parseInt, 1)` | `function (k) { return parseInt(k); }` |
+| `_.filter(arr, predicate)` | `arr.filter(predicate)` |
+| `_.reject(arr, predicate)` | `arr.filter(function (r) { return !predicate(r); })` |
+| `_.each(arr, fn)` | `arr.forEach(fn)` |
+| `_.map(arr, fn)` / `_.map(arr, key)` | `arr.map(fn)` / `arr.map(function (x) { return x[key]; })` |
+| `_.values(obj)` | `Object.values(obj)` |
+| `_.groupBy(arr, key/fn)` | `Object.groupBy(arr, fn)` |
+| `_(arr).groupBy().mapValues().value()` | Manual for-loop grouping |
+| `_.merge({}, defaults, options)` | `utils.defaultsDeep(options, defaults)` |
+| `_.sumBy(arr, path)` | `arr.reduce(function (sum, d) { ... }, 0)` |
+| `_.omit(obj, key)` | `Object.assign({}, obj); delete clone[key]` |
+| `_.min([a, b])` | `Math.min(a, b)` |
+| `_.get(obj, path, default)` | Manual safe property access |
+
+### Files Modified
+
+| File | Changes |
+|---|---|
+| `lib/base_consumer.js` | Replaced lodash require + 8 lodash method usages with native equivalents |
+| `lib/simple_consumer.js` | Replaced lodash require + 3 lodash method usages with native equivalents |
+| `lib/producer.js` | Replaced lodash require + 14 lodash method usages with native equivalents |
+| `lib/group_consumer.js` | Replaced lodash require + 15 lodash method usages with native equivalents |
+| `lib/utils.js` | Removed unused `match` variable (pre-existing lint error) |
+| `lib/client.js` | Fixed 5 pre-existing brace-style violations |
+| `lib/connection.js` | Fixed `Object.assign` to skip undefined option values (matching `_.defaults` semantics) |
+
+### Test Results
+- **454 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- All existing tests unaffected (backward compatible)

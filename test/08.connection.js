@@ -5,7 +5,7 @@
 var path = require('path');
 var fs = require('fs');
 var promiseUtils = require('../lib/promise-utils');
-var crc32   = require('buffer-crc32');
+var zlib    = require('zlib');
 var Kafka   = require('../lib/index');
 
 describe('Connection', function () {
@@ -32,7 +32,7 @@ describe('Connection', function () {
     });
 
     it('should be able to grow receive buffer', function () {
-        var buf = new Buffer(384 * 1024), crc = crc32.signed(buf);
+        var buf = new Buffer(384 * 1024), crc = (zlib.crc32(buf) | 0);
 
         dataHandlerSpy.reset();
 
@@ -51,7 +51,7 @@ describe('Connection', function () {
             dataHandlerSpy.lastCall.args[0][0].should.be.an('object');
             dataHandlerSpy.lastCall.args[0][0].should.have.property('message').that.is.an('object');
             dataHandlerSpy.lastCall.args[0][0].message.should.have.property('value');
-            crc32.signed(dataHandlerSpy.lastCall.args[0][0].message.value).should.be.eql(crc);
+            (zlib.crc32(dataHandlerSpy.lastCall.args[0][0].message.value) | 0).should.be.eql(crc);
         });
     });
 

@@ -7,7 +7,6 @@
 
 var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
-var _       = require('lodash');
 
 describe('v0.11 Integration', function () {
     var producer = new Kafka.Producer({ requiredAcks: 1, clientId: 'v011-producer' });
@@ -32,7 +31,7 @@ describe('v0.11 Integration', function () {
     describe('ApiVersions Discovery', function () {
         it('should discover API versions for broker connections', function () {
             var connections = producer.client.brokerConnections;
-            _.each(connections, function (conn) {
+            Object.values(connections).forEach(function (conn) {
                 conn.should.have.property('apiVersions');
                 conn.apiVersions.should.be.an('object');
                 // should have at least Produce and Fetch API keys
@@ -43,8 +42,8 @@ describe('v0.11 Integration', function () {
 
         it('should have version ranges for each API key', function () {
             var connections = producer.client.brokerConnections;
-            _.each(connections, function (conn) {
-                _.each(conn.apiVersions, function (v) {
+            Object.values(connections).forEach(function (conn) {
+                Object.values(conn.apiVersions).forEach(function (v) {
                     v.should.have.property('min').that.is.a('number');
                     v.should.have.property('max').that.is.a('number');
                     v.max.should.be.at.least(v.min);
@@ -54,7 +53,7 @@ describe('v0.11 Integration', function () {
 
         it('should have ApiVersions key (18) in version map', function () {
             var connections = producer.client.brokerConnections;
-            _.each(connections, function (conn) {
+            Object.values(connections).forEach(function (conn) {
                 conn.apiVersions.should.have.property('18'); // ApiVersionsRequest
             });
         });
@@ -62,7 +61,7 @@ describe('v0.11 Integration', function () {
         it('should discover API versions for initial brokers', function () {
             var brokers = producer.client.initialBrokers;
             brokers.should.be.an('array').with.length.above(0);
-            _.each(brokers, function (conn) {
+            brokers.forEach(function (conn) {
                 conn.should.have.property('apiVersions');
                 conn.apiVersions.should.be.an('object');
                 conn.apiVersions.should.have.property('0'); // ProduceRequest

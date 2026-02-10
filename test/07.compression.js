@@ -2,8 +2,8 @@
 
 /* global describe, it, before, sinon, after  */
 
-var crc32   = require('buffer-crc32');
 var promiseUtils = require('../lib/promise-utils');
+var zlib    = require('zlib');
 var Kafka   = require('../lib/index');
 
 describe('Compression', function () {
@@ -76,7 +76,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with Snappy compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = crc32.signed(buf);
+            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -95,7 +95,7 @@ describe('Compression', function () {
                 dataHandlerSpy.lastCall.args[0][0].should.be.an('object');
                 dataHandlerSpy.lastCall.args[0][0].should.have.property('message').that.is.an('object');
                 dataHandlerSpy.lastCall.args[0][0].message.should.have.property('value');
-                crc32.signed(dataHandlerSpy.lastCall.args[0][0].message.value).should.be.eql(crc);
+                (zlib.crc32(dataHandlerSpy.lastCall.args[0][0].message.value) | 0).should.be.eql(crc);
             });
         });
 
@@ -144,7 +144,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with LZ4 compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = crc32.signed(buf);
+            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -163,7 +163,7 @@ describe('Compression', function () {
                 dataHandlerSpy.lastCall.args[0][0].should.be.an('object');
                 dataHandlerSpy.lastCall.args[0][0].should.have.property('message').that.is.an('object');
                 dataHandlerSpy.lastCall.args[0][0].message.should.have.property('value');
-                crc32.signed(dataHandlerSpy.lastCall.args[0][0].message.value).should.be.eql(crc);
+                (zlib.crc32(dataHandlerSpy.lastCall.args[0][0].message.value) | 0).should.be.eql(crc);
             });
         });
 
@@ -189,7 +189,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with Zstd compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = crc32.signed(buf);
+            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -208,7 +208,7 @@ describe('Compression', function () {
                 dataHandlerSpy.lastCall.args[0][0].should.be.an('object');
                 dataHandlerSpy.lastCall.args[0][0].should.have.property('message').that.is.an('object');
                 dataHandlerSpy.lastCall.args[0][0].message.should.have.property('value');
-                crc32.signed(dataHandlerSpy.lastCall.args[0][0].message.value).should.be.eql(crc);
+                (zlib.crc32(dataHandlerSpy.lastCall.args[0][0].message.value) | 0).should.be.eql(crc);
             });
         });
 
@@ -304,7 +304,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with async Snappy compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = crc32.signed(buf);
+            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -323,7 +323,7 @@ describe('Compression', function () {
                 dataHandlerSpy.lastCall.args[0][0].should.be.an('object');
                 dataHandlerSpy.lastCall.args[0][0].should.have.property('message').that.is.an('object');
                 dataHandlerSpy.lastCall.args[0][0].message.should.have.property('value');
-                crc32.signed(dataHandlerSpy.lastCall.args[0][0].message.value).should.be.eql(crc);
+                (zlib.crc32(dataHandlerSpy.lastCall.args[0][0].message.value) | 0).should.be.eql(crc);
             });
         });
 
@@ -350,7 +350,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with async Gzip compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = crc32.signed(buf);
+            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -369,7 +369,7 @@ describe('Compression', function () {
                 dataHandlerSpy.lastCall.args[0][0].should.be.an('object');
                 dataHandlerSpy.lastCall.args[0][0].should.have.property('message').that.is.an('object');
                 dataHandlerSpy.lastCall.args[0][0].message.should.have.property('value');
-                crc32.signed(dataHandlerSpy.lastCall.args[0][0].message.value).should.be.eql(crc);
+                (zlib.crc32(dataHandlerSpy.lastCall.args[0][0].message.value) | 0).should.be.eql(crc);
             });
         });
 
@@ -396,7 +396,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with async LZ4 compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = crc32.signed(buf);
+            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -415,7 +415,7 @@ describe('Compression', function () {
                 dataHandlerSpy.lastCall.args[0][0].should.be.an('object');
                 dataHandlerSpy.lastCall.args[0][0].should.have.property('message').that.is.an('object');
                 dataHandlerSpy.lastCall.args[0][0].message.should.have.property('value');
-                crc32.signed(dataHandlerSpy.lastCall.args[0][0].message.value).should.be.eql(crc);
+                (zlib.crc32(dataHandlerSpy.lastCall.args[0][0].message.value) | 0).should.be.eql(crc);
             });
         });
 
@@ -442,7 +442,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with async Zstd compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = crc32.signed(buf);
+            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -461,7 +461,7 @@ describe('Compression', function () {
                 dataHandlerSpy.lastCall.args[0][0].should.be.an('object');
                 dataHandlerSpy.lastCall.args[0][0].should.have.property('message').that.is.an('object');
                 dataHandlerSpy.lastCall.args[0][0].message.should.have.property('value');
-                crc32.signed(dataHandlerSpy.lastCall.args[0][0].message.value).should.be.eql(crc);
+                (zlib.crc32(dataHandlerSpy.lastCall.args[0][0].message.value) | 0).should.be.eql(crc);
             });
         });
 
