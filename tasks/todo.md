@@ -1336,3 +1336,93 @@ Also fixed 3 pre-existing issues discovered during this work:
 - **454 passing**, 2 failing (pre-existing SSL failures on port 9093)
 - ESLint: clean
 - All existing tests unaffected (backward compatible)
+
+---
+
+# Protocol Upgrades to Kafka 4.1.1 Parity
+
+## Todo
+
+### Phase 1: Group Management APIs (6 version bumps)
+- [x] **1** JoinGroup v7/v8/v9 — protocol defs in group_membership.js + client.js dispatch (bump 6→9)
+- [x] **2** SyncGroup v5 — protocol def in group_membership.js + client.js dispatch (bump 4→5)
+- [x] **3** ListGroups v4/v5 — protocol defs in admin.js + client.js dispatch (bump 3→5)
+- [x] **4** DescribeGroups v6 — protocol def in admin.js + client.js dispatch (bump 5→6)
+
+### Phase 2: Core APIs (5 version bumps)
+- [x] **5** ApiVersions v4 — protocol def in api_versions.js
+- [x] **6** Metadata v13 — protocol defs in metadata.js + client.js dispatch
+- [x] **7** ListOffsets v10 — protocol def in offset.js + client.js dispatch (bump 9→10)
+- [x] **8** OffsetCommit v9 — protocol defs in offset_commit_fetch.js + client.js dispatch (bump 8→9)
+- [x] **9** OffsetFetch v9 — protocol defs in offset_commit_fetch.js + client.js dispatch (stays at 9)
+
+### Phase 3: Produce API (2 version bumps)
+- [x] **10** Produce v12/v13 — protocol defs in produce.js + client.js dispatch (bump 11→13)
+
+### Phase 4: Transaction V2 — Protocol Definitions (5 version bumps)
+- [x] **11** EndTxn v4/v5 — protocol defs in transaction.js + client.js dispatch (bump 3→5)
+- [x] **12** AddOffsetsToTxn v4 — protocol def in transaction.js + client.js dispatch (bump 3→4)
+- [x] **13** TxnOffsetCommit v4/v5 — protocol defs in transaction.js + client.js dispatch (bump 3→5)
+- [x] **14** InitProducerId v5 — protocol def in init_producer_id.js + client.js dispatch (bump 3→5)
+
+### Phase 5: Transaction V2 — Client Flow Changes
+- [x] **15** Detect Transaction V2 support + skip AddPartitionsToTxn + skip AddOffsetsToTxn + handle epoch bumping
+
+### Verification
+- [x] **16** Run lint + full test suite — 454 passing, 2 failing (pre-existing SSL), 3 pending
+
+## Review
+
+### Summary
+Upgraded 14 Kafka protocol APIs to Kafka 4.1.1 parity, adding ~20 version bumps across 5 phases. All changes follow the existing codebase patterns (Protocol.define for wire formats, version branching in client.js, _negotiateVersion for version selection).
+
+### Negotiated API Versions (Kafka 4.1.1 broker)
+| API | Previous Max | New Max | Notes |
+|-----|-------------|---------|-------|
+| Produce | 11 | 13 | v12=implicit AddPartitionsToTxn, v13=topicId |
+| Metadata | 12 | 13 | Wire-identical to v12 |
+| ListOffsets | 9 | 10 | Adds timeoutMs field |
+| OffsetCommit | 8 | 9 | Wire-identical to v8 |
+| OffsetFetch | 9 | 9 | Broker max=9, unchanged |
+| JoinGroup | 6 | 9 | v7=protocolType, v9=skipAssignment |
+| SyncGroup | 4 | 5 | v5=protocolType+protocolName |
+| ListGroups | 3 | 5 | v4=statesFilter, v5=typesFilter |
+| DescribeGroups | 5 | 6 | v6=errorMessage field |
+| ApiVersions | 3 | 4 | Wire-identical to v3 |
+| InitProducerId | 3 | 5 | Broker max=5 (not 6) |
+| EndTxn | 3 | 5 | v5=returns producerId/epoch |
+| AddOffsetsToTxn | 3 | 4 | Wire-identical to v3 |
+| TxnOffsetCommit | 3 | 5 | v5=implicit AddOffsetsToTxn |
+| AddPartitionsToTxn | 3 | 5 | Broker-managed in Produce v12+ |
+
+### Files Modified
+| File | Changes |
+|------|---------|
+| `lib/protocol/group_membership.js` | JoinGroup v7/v8/v9 request+response, SyncGroup v5 request+response |
+| `lib/protocol/admin.js` | ListGroups v4/v5, DescribeGroups v6 request+response |
+| `lib/protocol/api_versions.js` | ApiVersions v4 request |
+| `lib/protocol/metadata.js` | Metadata v13 request+response |
+| `lib/protocol/offset.js` | ListOffsets v10 request |
+| `lib/protocol/offset_commit_fetch.js` | OffsetCommit v9 request |
+| `lib/protocol/produce.js` | Produce v12/v13 request+response |
+| `lib/protocol/transaction.js` | EndTxn v4/v5, AddOffsetsToTxn v4, TxnOffsetCommit v4/v5 |
+| `lib/protocol/init_producer_id.js` | InitProducerId v4/v5 |
+| `lib/protocol/common.js` | RecordBatch isTransactional bit 4 in attributes |
+| `lib/client.js` | Version dispatch for all 14 APIs, clientMax bumps, epoch handling |
+| `lib/group_consumer.js` | Pass strategyName to syncConsumerGroupRequest |
+| `lib/producer.js` | Transaction V2 detection, sequence number reset after epoch bump |
+
+### Key Bugs Found and Fixed During Testing
+1. **MetadataResponseV13**: Plan incorrectly specified top-level ErrorCode — no such field exists in any version. Removed.
+2. **JoinGroupResponseV7/V9**: v7 adds `protocolType`, v9 adds `skipAssignment` — needed distinct response parsers.
+3. **SyncGroupResponseV5**: Adds `protocolType` and `protocolName` — needed distinct response parser.
+4. **SyncGroup v5 InconsistentGroupProtocol**: Must send actual `protocolType: 'consumer'` and protocol name, not null.
+5. **DescribeGroupResponseV6**: Adds `errorMessage` between ErrorCode and GroupId — needed distinct response parser.
+6. **EndTxnResponseV5**: Adds `producerId` and `producerEpoch` — needed distinct response parser.
+7. **RecordBatch isTransactional**: Bit 4 must be set for Transaction V2 implicit partition registration.
+8. **Sequence number reset**: After epoch bump in EndTxn v5, sequence numbers must restart at 0.
+
+### Test Results
+- **454 passing** (all protocol, producer, consumer, group consumer, and transaction tests)
+- **2 failing** (pre-existing SSL tests on port 9093 — not configured in Docker)
+- **3 pending** (skipped tests)
