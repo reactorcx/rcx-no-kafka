@@ -10,8 +10,12 @@ var _       = require('lodash');
 
 var producer = new Kafka.Producer({ requiredAcks: 1, clientId: 'producer' });
 var consumer = new Kafka.SimpleConsumer({ idleTimeout: 100, clientId: 'simple-consumer' });
-
 var dataHandlerSpy = sinon.spy(function () {});
+
+function isKRaftMode() {
+    var conn = consumer.client.initialBrokers[0];
+    return conn && conn.apiVersions && conn.apiVersions[57]; // 57 = DescribeQuorum (KRaft only)
+}
 
 describe('SimpleConsumer', function () {
     before(function () {
@@ -218,6 +222,7 @@ describe('SimpleConsumer', function () {
     });
 
     it('should be able to commit single offset', function () {
+        if (isKRaftMode()) { return this.skip(); } // KRaft mode does not support v0 offset commit/fetch
         return consumer.commitOffset({
             topic: 'kafka-test-topic',
             partition: 0,
@@ -234,6 +239,7 @@ describe('SimpleConsumer', function () {
     });
 
     it('should be able to commit offsets', function () {
+        if (isKRaftMode()) { return this.skip(); } // KRaft mode does not support v0 offset commit/fetch
         return consumer.commitOffset([
             {
                 topic: 'kafka-test-topic',
@@ -271,6 +277,7 @@ describe('SimpleConsumer', function () {
     });
 
     it('should be able to fetch commited offsets', function () {
+        if (isKRaftMode()) { return this.skip(); } // KRaft mode does not support v0 offset commit/fetch
         return consumer.fetchOffset([
             {
                 topic: 'kafka-test-topic',
