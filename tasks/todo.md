@@ -993,3 +993,178 @@ producer.send(data, { codec: Kafka.COMPRESSION_GZIP, compressionLevel: 1 });
 - ESLint: clean
 - 6 new unit tests in `test/24.kip390_compression_level.js`
 - All existing compression tests pass (backward compatible — level undefined = codec default)
+
+---
+
+# Performance Optimizations
+
+## Analysis Summary
+
+Analyzed the entire codebase for performance optimizations. Focused on hot paths: connection I/O, protocol encoding/decoding, produce/fetch request processing, and buffer management. Findings are prioritized by impact and simplicity.
+
+## Todo
+
+### High Impact, Low Complexity
+
+- [x] **1** Replace all deprecated `new Buffer()` with `Buffer.from()` / `Buffer.allocUnsafe()` across `lib/` (~20 locations)
+- [x] **2** Replace `_(value).toString()` with `String(value)` in protocol string encoding hot path (6 locations in `common.js`)
+- [x] **3** Enable TCP_NODELAY on sockets (`connection.js`)
+- [x] **4** Replace recursive `_receive()` with iterative loop (`connection.js`)
+- [x] **5** Clear connection timeout on success (`connection.js`)
+- [x] **6** Simplify `_mapTopics()` — replace lodash chain with plain `for` loops (`client.js`)
+- [x] **7** Use `Buffer.allocUnsafe` for `_growBuffer()` (`connection.js`) — done as part of item 1
+- [x] **8** Replace `_.flatten` with native `[].concat.apply([], r)` in decompressRecordBatches (`client.js`)
+- [ ] **9** ~~Use `socket.cork()`/`uncork()` in `send()`~~ — **REVERTED**: `data` is a protocol writer buffer view that gets invalidated before corked flush. Cork with copy is worse than original (2 allocs vs 1). Kept `Buffer.allocUnsafe` improvement only.
+- [x] **10** Run lint + full test suite to verify no regressions
+
+---
+
+## Review
+
+### Summary
+Applied 9 performance optimizations across the connection, protocol encoding, and request processing hot paths. All changes are minimal and targeted — no architectural changes, no API changes, fully backward compatible.
+
+### Changes by File
+
+| File | Changes |
+|------|---------|
+| `lib/connection.js` | Replaced 4 `new Buffer()` with `Buffer.allocUnsafe()`/`Buffer.from()`; enabled TCP_NODELAY (`setNoDelay(true)`); replaced `Promise.race` timeout pattern with stored timer ref + `clearTimeout` on connect/error; replaced recursive `_receive()` with iterative `while` loop over pipelined frames |
+| `lib/protocol/common.js` | Replaced 6 `_(value).toString()` lodash wrappers with native `String(value)`; replaced 13 `new Buffer()` with `Buffer.from()`/`Buffer.alloc()` |
+| `lib/protocol/group_membership.js` | Replaced 2 `new Buffer()` with `Buffer.allocUnsafe()` |
+| `lib/protocol/misc/compression.js` | Replaced 1 `new Buffer()` with `Buffer.from()` |
+| `lib/client.js` | Replaced `_mapTopics()` lodash chain (`_.flatten`, `_.transform`, `_.each`, `_.merge`, `_.omit`) with plain `for` loops; replaced 3 `_.flatten` calls with native `[].concat.apply([], r)` |
+
+### Performance Impact
+
+- **Buffer allocations**: ~20 deprecated `new Buffer()` → modern APIs. `Buffer.allocUnsafe()` skips zero-fill for pre-allocated buffers (connection receive buffer, grow buffer, send length prefix, protocol body extraction)
+- **Protocol encoding**: Removed lodash `_()` wrapper overhead from every string/bytes field write (6 locations in the hottest encoding path)
+- **TCP latency**: `setNoDelay(true)` disables Nagle's algorithm, eliminating up to 40ms coalescing delay on small packets
+- **Connection setup**: Timer leak fixed — `setTimeout` for connection timeout is now properly cleared on success/error
+- **Receive path**: Iterative loop eliminates recursion stack frames and intermediate `data.slice()` allocations for pipelined responses
+- **Send path**: `Buffer.allocUnsafe` replaces deprecated `new Buffer` for the length-prefixed send buffer (cork/uncork was attempted but reverted — `data` is a protocol writer buffer view that gets invalidated before corked flush)
+- **Response processing**: `_mapTopics()` no longer creates intermediate lodash chains, temporary objects from `_.omit()`, or deep-merge copies from `_.merge()`. Plain `for` loops with `for...in` property copy
+- **Decompression**: `_.flatten` → `[].concat.apply()` removes lodash function call overhead on every fetch response
+
+### Test Results
+- **454 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- All existing tests unaffected (backward compatible)
+
+---
+
+# KIP-714: Client Telemetry (Kafka 3.7+)
+
+## Background
+
+KIP-714 adds two new APIs (GetTelemetrySubscriptions key 71, PushTelemetry key 72) that allow the broker to request metrics from clients. The broker tells the client what metrics it wants, and the client periodically pushes them in OpenTelemetry MetricsData v1 protobuf format. Both APIs are flexible from v0 (compactString, compactArray, compactBytes, TaggedFields).
+
+### Lifecycle
+
+1. **Subscribe**: Client sends `GetTelemetrySubscriptionsRequest` with `ClientInstanceId` = nil UUID. Broker responds with an assigned `ClientInstanceId`, `SubscriptionId`, `PushIntervalMs` (default 5 min), `RequestedMetrics` prefixes, `AcceptedCompressionTypes`, `TelemetryMaxBytes`, and `DeltaTemporality`.
+2. **Push**: After a randomized initial delay of `[0.5 * PushIntervalMs, 1.5 * PushIntervalMs]`, the client pushes metrics at `PushIntervalMs` intervals via `PushTelemetryRequest`.
+3. **Re-subscribe**: On `UNKNOWN_SUBSCRIPTION_ID` error, client re-fetches subscriptions (using its assigned `ClientInstanceId`).
+4. **Terminate**: On shutdown, send a final push with `Terminating = true`.
+
+### Wire Formats
+
+**GetTelemetrySubscriptionsRequest v0:**
+```
+FlexibleRequestHeader(apiKey=71, apiVersion=0)
+uuid(clientInstanceId)       // nil UUID on first request
+TaggedFields()
+```
+
+**GetTelemetrySubscriptionsResponse v0:**
+```
+Int32BE(correlationId)
+TaggedFields()               // response header v1
+Int32BE(throttleTimeMs)
+ErrorCode(errorCode)
+uuid(clientInstanceId)       // broker-assigned
+Int32BE(subscriptionId)
+compactArray(acceptedCompressionTypes, Int8)
+Int32BE(pushIntervalMs)
+Int32BE(telemetryMaxBytes)
+Int8(deltaTemporality)       // bool
+compactArray(requestedMetrics, compactString)
+TaggedFields()
+```
+
+**PushTelemetryRequest v0:**
+```
+FlexibleRequestHeader(apiKey=72, apiVersion=0)
+uuid(clientInstanceId)
+Int32BE(subscriptionId)
+Int8(terminating)            // bool
+Int8(compressionType)        // 0=none, 1=gzip, 2=snappy, 3=lz4, 4=zstd
+compactBytes(metrics)        // OTLP MetricsData v1 protobuf
+TaggedFields()
+```
+
+**PushTelemetryResponse v0:**
+```
+Int32BE(correlationId)
+TaggedFields()               // response header v1
+Int32BE(throttleTimeMs)
+ErrorCode(errorCode)
+TaggedFields()
+```
+
+### Metrics Payload
+
+The `metrics` field uses OpenTelemetry MetricsData v1 protobuf encoding. For a minimal implementation we need:
+- `org.apache.kafka.client.connection.creation.total` (Sum, monotonic counter)
+- `org.apache.kafka.client.node.request.latency.avg` (Gauge, per node_id)
+
+The protobuf structure is straightforward — nested messages with varint field tags. We can hand-write a minimal encoder (~100 lines) for the specific OTLP message types needed, avoiding a protobuf library dependency.
+
+### Phased Implementation
+
+This feature has significant scope. We split it into 4 phases, each independently committable:
+
+**Phase 1 — Protocol definitions + client methods** (wire format only)
+The foundation layer. Encode/decode the two new APIs. No behavioral changes.
+
+**Phase 2 — Telemetry lifecycle manager** (timer loop + subscription state)
+Opt-in via `enableTelemetry: true`. Handles GetSubscriptions → periodic Push → terminating Push on shutdown. Sends empty metrics payload initially.
+
+**Phase 3 — OTLP protobuf encoder** (minimal, hand-written)
+Encodes collected metrics into the OpenTelemetry MetricsData v1 protobuf format. No external dependency — just a small encoder for the specific message types we need.
+
+**Phase 4 — Metrics instrumentation** (connection count + request latency)
+Instruments the Client to track connection creation count and per-node request latency. Filters by broker's `RequestedMetrics` prefixes.
+
+## Todo — Phase 1: Protocol Definitions
+
+- [ ] **1** Add API keys to `lib/protocol/globals.js` — `GetTelemetrySubscriptionsRequest: 71`, `PushTelemetryRequest: 72`; add both to `FLEXIBLE_VERSION_THRESHOLDS` with value `0` (flexible from v0).
+- [ ] **2** Create `lib/protocol/telemetry.js` — define `GetTelemetrySubscriptionsRequest`, `GetTelemetrySubscriptionsResponse`, `PushTelemetryRequest`, `PushTelemetryResponse` using compact types and TaggedFields.
+- [ ] **3** Register `'telemetry'` in `lib/protocol/index.js`.
+- [ ] **4** Add `getTelemetrySubscriptionsRequest()` and `pushTelemetryRequest()` methods to `lib/client.js` — send to any initial broker via `Promise.any()` (similar to `metadataRequest()`).
+- [ ] **5** Add unit tests (`test/25.kip714_telemetry.js`) — encode/decode both requests/responses, round-trip verification.
+- [ ] **6** Lint + full test suite.
+
+## Todo — Phase 2: Telemetry Lifecycle Manager
+
+- [ ] **7** Add `enableTelemetry: false` option to Client constructor defaults.
+- [ ] **8** Add telemetry state to Client constructor — `_telemetryClientInstanceId`, `_telemetrySubscriptionId`, `_telemetryPushIntervalMs`, `_telemetryTimeout`, `_telemetryClosed`, `_telemetryAcceptedCompression`, `_telemetryRequestedMetrics`, `_telemetryMaxBytes`, `_telemetryDeltaTemporality`.
+- [ ] **9** Add `_initTelemetry()` method — called from `init()` when enabled; sends GetTelemetrySubscriptionsRequest with nil UUID, stores response fields, starts push loop.
+- [ ] **10** Add `_telemetryPushLoop()` method — setTimeout-based recursive loop (like heartbeat pattern); calls `pushTelemetryRequest()` with empty metrics; handles UNKNOWN_SUBSCRIPTION_ID by re-subscribing; respects `_telemetryClosed` flag.
+- [ ] **11** Add `_stopTelemetry()` method — called from `end()`; sets `_telemetryClosed`, clears timeout, sends final push with `terminating: true`.
+- [ ] **12** Tests for lifecycle — subscription, push loop fires, terminating push on end(), re-subscribe on unknown subscription.
+- [ ] **13** Lint + full test suite.
+
+## Todo — Phase 3: OTLP Protobuf Encoder
+
+- [ ] **14** Create `lib/protocol/misc/otlp.js` — hand-written minimal protobuf encoder for: MetricsData, ResourceMetrics, Resource, ScopeMetrics, InstrumentationScope, Metric, Sum, Gauge, NumberDataPoint, KeyValue, AnyValue. Each is a function that returns a Buffer.
+- [ ] **15** Add `_serializeMetrics()` method to Client — takes collected metrics object, filters by `_telemetryRequestedMetrics` prefixes, encodes via otlp.js, optionally compresses using first supported codec from `_telemetryAcceptedCompression`.
+- [ ] **16** Wire `_serializeMetrics()` into `_telemetryPushLoop()` — replace empty payload with real serialized metrics.
+- [ ] **17** Tests for OTLP encoding — verify protobuf output structure, round-trip with a reference decoder if available, verify metric filtering by prefix.
+- [ ] **18** Lint + full test suite.
+
+## Todo — Phase 4: Metrics Instrumentation
+
+- [ ] **19** Track connection creation count — increment counter in `_createConnection()`.
+- [ ] **20** Track per-node request latency — instrument `Connection.send()` to record start/end timestamps; compute avg/max per node between push intervals.
+- [ ] **21** Expose `clientInstanceId()` method — returns the broker-assigned UUID (for external observability tools).
+- [ ] **22** Integration test — full telemetry flow against live broker (GetSubscriptions → Push with real metrics → verify no errors).
+- [ ] **23** Lint + full test suite.
