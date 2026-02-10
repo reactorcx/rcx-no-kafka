@@ -8,7 +8,7 @@
 
 __no-kafka__ is [Apache Kafka](https://kafka.apache.org) client for Node.js with [new unified consumer API](#groupconsumer-new-unified-consumer-api) support.
 
-Supports Kafka 0.9+ through 3.7+ protocol (automatic version negotiation via ApiVersions). Includes KIP-482 flexible version encoding, KIP-516 topic IDs (UUIDs), KIP-951 leader discovery optimizations, KIP-699 batch coordinator lookup, sync and async Gzip, Snappy, LZ4, and Zstd compression, producer batching and controllable retries, rack-aware fetching, static group membership, cooperative/incremental rebalancing (KIP-429), and offers few predefined group assignment strategies and producer partitioner option.
+Supports Kafka 0.9+ through 3.7+ protocol (automatic version negotiation via ApiVersions). Includes KIP-482 flexible version encoding, KIP-516 topic IDs (UUIDs), KIP-951 leader discovery optimizations, KIP-699 batch coordinator lookup, KIP-709 multi-group offset fetch, KIP-588 producer epoch recovery, sync and async Gzip, Snappy, LZ4, and Zstd compression, producer batching and controllable retries, rack-aware fetching, static group membership, cooperative/incremental rebalancing (KIP-429), and offers few predefined group assignment strategies and producer partitioner option.
 
 All methods will return a [Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise)
 

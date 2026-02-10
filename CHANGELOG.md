@@ -1,3 +1,10 @@
+## 4.9
+
+### Added (Multi-Group OffsetFetch, Producer Epoch Recovery, LeaveGroup Reason)
+- OffsetFetch v7-v9 (KIP-447, KIP-709, KIP-848) — `requireStable` flag, multi-group batch fetch with `groups` array, `memberId`/`memberEpoch` per group for new consumer protocol
+- InitProducerId v3-v5 (KIP-588, KIP-890) — `producerId`/`producerEpoch` in request for epoch recovery after transactional failures
+- LeaveGroup v5 (KIP-800) — `reason` field per member item
+
 ## 4.8
 
 ### Added (KIP-699: Batch FindCoordinator)

@@ -742,6 +742,169 @@ describe('KIP-482 Flexible Version API Bumps', function () {
         });
     });
 
+    ///////////////////////////
+    // OffsetFetch v7       //
+    ///////////////////////////
+
+    describe('OffsetFetchRequestV7', function () {
+        it('should encode with requireStable flag', function () {
+            var encoded = protocol.write().OffsetFetchRequestV7({
+                correlationId: 1,
+                clientId: 'test',
+                groupId: 'g1',
+                topics: [{ topicName: 'test', partitions: [0] }],
+                requireStable: true
+            }).result;
+
+            // apiKey=9, apiVersion=7
+            encoded[0].should.equal(0x00);
+            encoded[1].should.equal(9);
+            encoded[2].should.equal(0x00);
+            encoded[3].should.equal(7);
+        });
+    });
+
+    ///////////////////////////
+    // OffsetFetch v8       //
+    ///////////////////////////
+
+    describe('OffsetFetchRequestV8', function () {
+        it('should encode multi-group request', function () {
+            var encoded = protocol.write().OffsetFetchRequestV8({
+                correlationId: 1,
+                clientId: 'test',
+                apiVersion: 8,
+                groups: [{ groupId: 'g1', topics: [{ topicName: 'test', partitions: [0] }] }],
+                requireStable: false
+            }).result;
+
+            // apiKey=9, apiVersion=8
+            encoded[0].should.equal(0x00);
+            encoded[1].should.equal(9);
+            encoded[2].should.equal(0x00);
+            encoded[3].should.equal(8);
+        });
+
+        it('should accept apiVersion 9 for KIP-848', function () {
+            var encoded = protocol.write().OffsetFetchRequestV8({
+                correlationId: 1,
+                clientId: 'test',
+                apiVersion: 9,
+                groups: [{ groupId: 'g1', topics: null, apiVersion: 9, memberId: 'member-1', memberEpoch: 5 }],
+                requireStable: false
+            }).result;
+
+            encoded[2].should.equal(0x00);
+            encoded[3].should.equal(9);
+        });
+    });
+
+    describe('OffsetFetchResponseV8', function () {
+        it('should parse multi-group response', function () {
+            var buf = Buffer.concat([
+                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId
+                new Buffer([0x00]),                     // TaggedFields
+                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                new Buffer([0x02]),                     // compactArray: 1 group
+                // group item:
+                new Buffer([0x03]),                     // compactString "g1" (len 2+1)
+                new Buffer('g1', 'utf8'),
+                new Buffer([0x02]),                     // compactArray: 1 topic
+                new Buffer([0x05]),                     // compactString "test" (len 4+1)
+                new Buffer('test', 'utf8'),
+                new Buffer([0x02]),                     // compactArray: 1 partition
+                new Buffer([0x00, 0x00, 0x00, 0x00]),  // partition = 0
+                new Buffer([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A]),  // offset = 10
+                new Buffer([0xFF, 0xFF, 0xFF, 0xFF]),   // committedLeaderEpoch = -1
+                new Buffer([0x00]),                     // metadata = null
+                new Buffer([0x00, 0x00]),               // error = 0
+                new Buffer([0x00]),                     // partition TaggedFields
+                new Buffer([0x00]),                     // topic TaggedFields
+                new Buffer([0x00, 0x00]),               // group error = 0
+                new Buffer([0x00]),                     // group TaggedFields
+                new Buffer([0x00])                      // top-level TaggedFields
+            ]);
+            var result = protocol.read(buf).OffsetFetchResponseV8().result;
+            result.correlationId.should.equal(1);
+            result.groups.length.should.equal(1);
+            result.groups[0].groupId.should.equal('g1');
+            result.groups[0].topics.length.should.equal(1);
+            result.groups[0].topics[0].topicName.should.equal('test');
+            result.groups[0].topics[0].partitions[0].partition.should.equal(0);
+        });
+    });
+
+    ///////////////////////////
+    // InitProducerId v3    //
+    ///////////////////////////
+
+    describe('InitProducerIdRequestV3', function () {
+        it('should include producerId and producerEpoch', function () {
+            var encoded = protocol.write().InitProducerIdRequestV3({
+                correlationId: 1,
+                clientId: 'test',
+                apiVersion: 3,
+                transactionalId: null,
+                transactionTimeoutMs: 5000,
+                producerId: 100,
+                producerEpoch: 5
+            }).result;
+
+            // apiKey=22, apiVersion=3
+            encoded[0].should.equal(0x00);
+            encoded[1].should.equal(22);
+            encoded[2].should.equal(0x00);
+            encoded[3].should.equal(3);
+        });
+
+        it('should accept apiVersion 5', function () {
+            var encoded = protocol.write().InitProducerIdRequestV3({
+                correlationId: 1,
+                clientId: 'test',
+                apiVersion: 5,
+                transactionalId: 'tx-1',
+                transactionTimeoutMs: 10000,
+                producerId: -1,
+                producerEpoch: -1
+            }).result;
+
+            encoded[2].should.equal(0x00);
+            encoded[3].should.equal(5);
+        });
+    });
+
+    ///////////////////////////
+    // LeaveGroup v5        //
+    ///////////////////////////
+
+    describe('LeaveGroupRequestV5', function () {
+        it('should include reason per member', function () {
+            var encoded = protocol.write().LeaveGroupRequestV5({
+                correlationId: 1,
+                clientId: 'test',
+                groupId: 'g1',
+                members: [{ memberId: 'm1', groupInstanceId: null, reason: 'shutting down' }]
+            }).result;
+
+            // apiKey=13, apiVersion=5
+            encoded[0].should.equal(0x00);
+            encoded[1].should.equal(13);
+            encoded[2].should.equal(0x00);
+            encoded[3].should.equal(5);
+        });
+
+        it('should handle null reason', function () {
+            var encoded = protocol.write().LeaveGroupRequestV5({
+                correlationId: 1,
+                clientId: 'test',
+                groupId: 'g1',
+                members: [{ memberId: 'm1', groupInstanceId: null, reason: null }]
+            }).result;
+
+            encoded.length.should.be.greaterThan(0);
+        });
+    });
+
     ///////////////////////////////////////
     // Round-trip request serialization  //
     ///////////////////////////////////////
@@ -831,6 +994,54 @@ describe('KIP-482 Flexible Version API Bumps', function () {
                 clientId: 'no-kafka',
                 groupId: 'test-group',
                 members: [{ memberId: 'member-1', groupInstanceId: 'inst-1' }]
+            }).result;
+            encoded.length.should.be.greaterThan(0);
+        });
+
+        it('OffsetFetchRequestV7 should round-trip', function () {
+            var encoded = protocol.write().OffsetFetchRequestV7({
+                correlationId: 42,
+                clientId: 'no-kafka',
+                groupId: 'test-group',
+                topics: [{ topicName: 'test', partitions: [0, 1] }],
+                requireStable: true
+            }).result;
+            encoded.length.should.be.greaterThan(0);
+        });
+
+        it('OffsetFetchRequestV8 should round-trip with multiple groups', function () {
+            var encoded = protocol.write().OffsetFetchRequestV8({
+                correlationId: 42,
+                clientId: 'no-kafka',
+                apiVersion: 8,
+                groups: [
+                    { groupId: 'g1', topics: [{ topicName: 'test', partitions: [0] }] },
+                    { groupId: 'g2', topics: null }
+                ],
+                requireStable: false
+            }).result;
+            encoded.length.should.be.greaterThan(0);
+        });
+
+        it('InitProducerIdRequestV3 should round-trip', function () {
+            var encoded = protocol.write().InitProducerIdRequestV3({
+                correlationId: 42,
+                clientId: 'no-kafka',
+                apiVersion: 3,
+                transactionalId: 'tx-1',
+                transactionTimeoutMs: 10000,
+                producerId: 42,
+                producerEpoch: 3
+            }).result;
+            encoded.length.should.be.greaterThan(0);
+        });
+
+        it('LeaveGroupRequestV5 should round-trip', function () {
+            var encoded = protocol.write().LeaveGroupRequestV5({
+                correlationId: 42,
+                clientId: 'no-kafka',
+                groupId: 'test-group',
+                members: [{ memberId: 'member-1', groupInstanceId: 'inst-1', reason: 'shutting down' }]
             }).result;
             encoded.length.should.be.greaterThan(0);
         });

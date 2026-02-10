@@ -663,3 +663,159 @@ Implemented FindCoordinator v4–v6 protocol support (KIP-699, KIP-890, KIP-932)
 - ESLint: clean
 - 5 new tests in `test/18.kip482_flexible_api_bumps.js`
 - All existing integration tests pass (no regressions)
+
+---
+
+# OffsetFetch v7–v9, InitProducerId v3–v5, LeaveGroup v5
+
+## Background
+
+Three API version bumps covering multiple KIPs.
+
+### OffsetFetch (API key 9) — currently at v6
+
+- **v7** (KIP-447): Adds `requireStable` (Int8/Bool, default false) at end of request body. Response identical to v6.
+- **v8** (KIP-709): Major restructuring for multi-group support. Request replaces single `groupId` + `topics` with `groups` array (each containing `groupId` + `topics`). Response similarly restructured to `groups` array (each with `groupId`, `topics`, `errorCode`). This is the batch multi-group version.
+- **v9** (KIP-848): Same as v8 but adds `memberId` (compactNullableString) and `memberEpoch` (Int32, default -1) to the request. Response can return new error codes (STALE_MEMBER_EPOCH, UNKNOWN_MEMBER_ID).
+
+All are flexible versions (v6+). The client's `offsetFetchRequestV1` method only fetches for a single group, so v8/v9 will wrap it into a `groups: [{groupId, topics}]` array (similar to FindCoordinator v4 pattern).
+
+#### Wire Format — OffsetFetch v7 Request
+```
+FlexibleRequestHeader(apiKey=9, apiVersion=7)
+compactString(groupId)
+compactNullableArray(topics)     // each: compactString(topicName), compactArray(partitions, Int32BE), TaggedFields
+Int8(requireStable)              // NEW: 0 or 1
+TaggedFields()
+```
+
+#### Wire Format — OffsetFetch v8 Request
+```
+FlexibleRequestHeader(apiKey=9, apiVersion=8)
+compactArray(groups)             // each group:
+  compactString(groupId)
+  compactNullableArray(topics)   // each: compactString(topicName), compactArray(partitions, Int32BE), TaggedFields
+  TaggedFields()
+Int8(requireStable)
+TaggedFields()
+```
+
+#### Wire Format — OffsetFetch v8 Response
+```
+Int32BE(correlationId)
+TaggedFields()
+Int32BE(throttleTime)
+compactArray(groups)             // each group:
+  compactString(groupId)
+  compactArray(topics)           // each topic:
+    compactString(topicName)
+    compactArray(partitions)     // each partition:
+      Int32BE(partition)
+      KafkaOffset(offset)
+      Int32BE(committedLeaderEpoch)
+      compactNullableString(metadata)
+      ErrorCode(error)
+      TaggedFields()
+    TaggedFields()
+  ErrorCode(error)               // per-group error
+  TaggedFields()
+TaggedFields()
+```
+
+#### Wire Format — OffsetFetch v9 Request (same as v8 + 2 new fields)
+```
+FlexibleRequestHeader(apiKey=9, apiVersion=9)
+compactArray(groups)             // same as v8
+Int8(requireStable)
+compactNullableString(memberId)  // NEW (KIP-848)
+Int32BE(memberEpoch)             // NEW (KIP-848, default -1)
+TaggedFields()
+```
+
+### InitProducerId (API key 22) — currently at v2
+
+- **v3** (KIP-588): Adds `producerId` (Int64, default -1) and `producerEpoch` (Int16, default -1) to request, enabling producers to recover producer state after epoch bumps. Response identical to v2.
+- **v4** (KIP-890): Same wire format as v3, adds PRODUCER_FENCED error code support.
+- **v5** (KIP-890): Same wire format as v3/v4, adds TRANSACTION_ABORTABLE error code support.
+
+All flexible (v2+). V4 and V5 reuse V3 definition with variable `apiVersion`.
+
+#### Wire Format — InitProducerId v3 Request
+```
+FlexibleRequestHeader(apiKey=22, apiVersion=3/4/5)
+compactNullableString(transactionalId)
+Int32BE(transactionTimeoutMs)
+Int64BE(producerId)              // NEW (default -1)
+Int16BE(producerEpoch)           // NEW (default -1)
+TaggedFields()
+```
+
+### LeaveGroup (API key 13) — currently at v4
+
+**Note:** The Kafka protocol schema shows `validVersions: "0-5"` for LeaveGroup. There is no v6 — v5 is the latest version.
+
+- **v5** (KIP-800): Adds `reason` (compactNullableString) per member item in the request. Response identical to v4.
+
+#### Wire Format — LeaveGroup v5 Request Member Item
+```
+compactString(memberId)
+compactNullableString(groupInstanceId)
+compactNullableString(reason)    // NEW (KIP-800, nullable, ignorable)
+TaggedFields()
+```
+
+## Todo
+
+- [x] **1** Add OffsetFetch v7 request to `lib/protocol/offset_commit_fetch.js` — same as v6 but adds `requireStable` (Int8) at end of request body. Response reuses v6.
+- [x] **2** Add OffsetFetch v8 request/response to `lib/protocol/offset_commit_fetch.js` — multi-group request structure with `groups` array; response with `groups` array containing per-group topics+error.
+- [x] **3** Add OffsetFetch v9 request to `lib/protocol/offset_commit_fetch.js` — same as v8 but adds `memberId` and `memberEpoch`. Response reuses v8. Accept variable `apiVersion` from data.
+- [x] **4** Update `offsetFetchRequestV1()` in `lib/client.js` — bump clientMax from 6 to 9; add v9/v8/v7 branches wrapping single group into `groups` array for v8+, extract first group from response.
+- [x] **5** Add InitProducerId v3 request to `lib/protocol/init_producer_id.js` — adds `producerId` and `producerEpoch` to request. Accept variable `apiVersion` from data for v4/v5 reuse. Response reuses v2.
+- [x] **6** Update `initProducerIdRequest()` in `lib/client.js` — bump clientMax from 2 to 5; add `>= 3` branch passing current producerId/producerEpoch.
+- [x] **7** Add LeaveGroup v5 member item and request to `lib/protocol/group_membership.js` — adds `reason` per member. Response reuses v4.
+- [x] **8** Update `leaveGroupRequest()` in `lib/client.js` — bump clientMax from 4 to 5; add `>= 5` branch.
+- [x] **9** Add unit tests for all new protocol versions.
+- [x] **10** Lint + full test suite to verify no regressions.
+
+---
+
+## Review
+
+### Summary
+Implemented three API version bumps covering six KIPs:
+
+- **OffsetFetch v7–v9**: v7 (KIP-447) adds `requireStable` flag for read-committed consumers. v8 (KIP-709) restructures the API for multi-group batch fetches — request wraps groups into an array, response returns per-group error codes. v9 (KIP-848) adds `memberId` and `memberEpoch` for the new consumer protocol. The client wraps single-group fetches into the v8 groups array format and extracts the first group from the response, matching the FindCoordinator v4 pattern.
+
+- **InitProducerId v3–v5**: v3 (KIP-588) adds `producerId` and `producerEpoch` to the request for epoch recovery after transactional failures. v4/v5 (KIP-890) have identical wire format (new error codes only). A single V3 definition handles all three via variable `apiVersion`.
+
+- **LeaveGroup v5**: v5 (KIP-800) adds `reason` (compactNullableString) per member item. Note: the user originally requested v6, but the Kafka protocol schema only goes to v5 (`validVersions: "0-5"`).
+
+### Protocol Definitions Added
+
+| File | APIs Added |
+|------|-----------|
+| `lib/protocol/offset_commit_fetch.js` | OffsetFetchRequestV7, OffsetFetchRequestV8_GroupItem, OffsetFetchRequestV8, OffsetFetchResponseV8PartitionItem, OffsetFetchResponseV8TopicItem, OffsetFetchResponseV8_GroupItem, OffsetFetchResponseV8 |
+| `lib/protocol/init_producer_id.js` | InitProducerIdRequestV3 |
+| `lib/protocol/group_membership.js` | LeaveGroupRequestV5_MemberItem, LeaveGroupRequestV5 |
+
+### Client Version Bumps (lib/client.js)
+
+- OffsetFetch: 6 → 9 (v8+ wraps single group into `groups` array, extracts first group from response; v7 adds `requireStable: false`)
+- InitProducerId: 2 → 5 (v3+ passes `producerId`/`producerEpoch` for epoch recovery)
+- LeaveGroup: 4 → 5 (v5 adds `reason: null` per member)
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/protocol/offset_commit_fetch.js` | Added 7 Protocol.define blocks for OffsetFetch v7/v8/v9 request and v8 response types |
+| `lib/protocol/init_producer_id.js` | Added 1 Protocol.define block for InitProducerId v3 request |
+| `lib/protocol/group_membership.js` | Added 2 Protocol.define blocks for LeaveGroup v5 member item and request |
+| `lib/client.js` | Bumped 3 API version ceilings, added 4 version dispatch branches (v8+, v7, v3+, v5) |
+| `test/18.kip482_flexible_api_bumps.js` | Added 12 new tests (49 total in file) |
+
+### Test Results
+- **425 passing**, 14 failing (all pre-existing: SSL on port 9093, Static Group Membership timeouts, Consistent Assignment timeout)
+- ESLint: clean
+- 12 new unit tests in `test/18.kip482_flexible_api_bumps.js`
+- All existing integration tests pass (no regressions from our changes)
