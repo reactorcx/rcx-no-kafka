@@ -302,3 +302,187 @@ All 4 transaction APIs bumped with version-branch logic:
 - ESLint: clean
 - 16 new unit tests in `test/21.transaction_api_versions.js`
 - All existing integration tests pass (version negotiation falls back gracefully)
+
+---
+
+# KIP-951: Leader Discovery Optimizations (Produce v10/v11)
+
+## Background
+
+KIP-951 adds leader discovery information to Produce responses so the client can find the new leader without a full metadata refresh on NOT_LEADER_OR_FOLLOWER errors.
+
+**Produce v10** adds a `CurrentLeader` tagged field (tag 0) per partition in the response:
+- `leaderId` (Int32, default -1) — the current leader broker ID
+- `leaderEpoch` (Int32, default -1) — the latest known epoch
+
+**Produce v11** adds a `NodeEndpoints` tagged field (tag 0) at the response root:
+- Array of `NodeEndpoint`: `nodeId` (Int32), `host` (compactString), `port` (Int32), `rack` (compactNullableString)
+- Provides actual connection endpoints so the client can connect directly without metadata refresh
+
+Both are optional tagged fields — the response parser must gracefully handle their presence or absence.
+
+**Request format**: v10 and v11 are identical to v9 (same fields, same compact encoding). Only the `apiVersion` changes.
+
+## Todo
+
+- [x] **1** Add `ProduceRequestV10` and `ProduceRequestV11` to `lib/protocol/produce.js` — same body as V9 but with `apiVersion: 10` and `apiVersion: 11`
+- [x] **2** Add `ProduceResponseV10CurrentLeader` helper struct — reads `leaderId` (Int32), `leaderEpoch` (Int32), `TaggedFields()`
+- [x] **3** Add `ProduceResponseV10NodeEndpoint` helper struct — reads `nodeId` (Int32), `host` (compactString), `port` (Int32), `rack` (compactNullableString), `TaggedFields()`
+- [x] **4** Add `ProduceResponseV10PartitionItem` — same fields as V9 but replaces trailing `TaggedFields()` with inline tagged field parsing: tag 0 → `currentLeader` (using CurrentLeader helper)
+- [x] **5** Add `ProduceResponseV10TopicItem` and `ProduceResponseV10` — uses V10 partition items; root-level body tagged fields parse tag 0 → `nodeEndpoints` (using NodeEndpoint helper array)
+- [x] **6** Update `lib/client.js` version negotiation — bump clientMax from 9 to 11 in both `processPartition` and the send block; add `>= 11` and `>= 10` version dispatch branches
+- [x] **7** Add unit tests in `test/22.kip951_leader_discovery.js` — encode V10/V11 requests; decode V10 response with CurrentLeader; decode with NodeEndpoints; decode without tagged fields (graceful fallback)
+- [x] **8** Run lint + full test suite to verify no regressions
+
+---
+
+## Review
+
+### Summary
+Implemented KIP-951 leader discovery optimizations for the Produce API (v10/v11). This adds support for the broker to return the new leader's identity and connection endpoint directly in the Produce response, eliminating the need for a full metadata refresh on NOT_LEADER_OR_FOLLOWER errors.
+
+Key design decision: Rather than modifying the shared `TaggedFields` primitive, each V10 response struct uses inline tagged field parsing that handles tag 0 specifically and skips unknown tags. This is minimal-impact and avoids changes to the existing TaggedFields behavior.
+
+### Protocol Definitions Added
+
+| Definition | Purpose |
+|-----------|---------|
+| `ProduceRequestV10` | Same as V9, apiVersion: 10 |
+| `ProduceRequestV11` | Same as V9, apiVersion: 11 |
+| `ProduceResponseV10CurrentLeader` | Helper: leaderId (Int32) + leaderEpoch (Int32) + TaggedFields |
+| `ProduceResponseV10NodeEndpoint` | Helper: nodeId (Int32) + host (compactString) + port (Int32) + rack (compactNullableString) + TaggedFields |
+| `ProduceResponseV10PartitionItem` | Same fields as V9; inline tagged field parsing for tag 0 → currentLeader |
+| `ProduceResponseV10TopicItem` | Uses V10 partition items |
+| `ProduceResponseV10` | Uses V10 topic items; inline body-level tagged field parsing for tag 0 → nodeEndpoints |
+
+### Client Version Bumps (lib/client.js)
+
+- Produce clientMax: 9 → 11 (both processPartition and send block)
+- Added `>= 11` branch: ProduceRequestV11 + ProduceResponseV10
+- Added `>= 10` branch: ProduceRequestV10 + ProduceResponseV10
+
+### Response Data Flow
+
+- `currentLeader` (per partition) flows through `_mapTopics` automatically via `_.omit(p, 'partition')`
+- `nodeEndpoints` (root level) is available in the parsed result but not in the per-partition flattened array
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/protocol/produce.js` | Added 7 Protocol.define blocks for V10/V11 request and response types |
+| `lib/client.js` | Bumped clientMax 9→11, added two version dispatch branches |
+| `test/22.kip951_leader_discovery.js` | New file: 6 unit tests (encode V10/V11 requests, decode with/without CurrentLeader, decode with NodeEndpoints) |
+
+### Test Results
+- **410 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- 6 new unit tests in `test/22.kip951_leader_discovery.js`
+- All existing integration tests pass (version negotiation falls back gracefully)
+
+---
+
+# KIP-516: Metadata v11/v12 (Topic ID Support Completion)
+
+## Background
+
+Metadata v10 (already implemented) added `topicId` to the response. Two more versions are needed:
+
+- **v11** (KIP-700): Removes `includeClusterAuthorizedOperations` from request and `clusterAuthorizedOperations` from response — cluster authorized operations are now exposed by the DescribeCluster API instead.
+- **v12** (KIP-516 completion): Topic `Name` becomes nullable in the response (`compactNullableString`). The broker can return only topicId without a name, enabling full topic-ID-based operation.
+
+## Todo
+
+- [x] **1** Add `MetadataRequestV11` and `MetadataResponseV11` to `lib/protocol/metadata.js` — drops `includeClusterAuthorizedOperations` / `clusterAuthorizedOperations`
+- [x] **2** Add `MetadataRequestV12`, `TopicMetadataV12`, and `MetadataResponseV12` to `lib/protocol/metadata.js` — topicName uses `compactNullableString`
+- [x] **3** Update `lib/client.js` metadata version negotiation — add `>= 12` and `>= 11` branches; resolve null topicName from topicId cache for v12 responses
+- [x] **4** Add unit tests to `test/20.kip516_topic_ids.js` — encode v11/v12 requests; decode v11 response (no clusterAuthorizedOperations); decode v12 with null topicName; decode v12 with topicName present
+- [x] **5** Run lint + full test suite to verify no regressions
+
+---
+
+## Review
+
+### Summary
+Completed Metadata v11/v12 support for the KIP-516 topic identifier story. v11 removes the deprecated cluster authorized operations fields. v12 makes topicName nullable in the response, enabling the broker to identify topics solely by UUID.
+
+### Protocol Definitions Added
+
+| Definition | Purpose |
+|-----------|---------|
+| `MetadataRequestV11` | Same as V10 but apiVersion: 11, drops `includeClusterAuthorizedOperations` |
+| `MetadataResponseV11` | Same as V10 but drops `clusterAuthorizedOperations` |
+| `MetadataRequestV12` | Same as V11 but apiVersion: 12 |
+| `TopicMetadataV12` | topicName uses `compactNullableString` (nullable) |
+| `MetadataResponseV12` | Uses `TopicMetadataV12` |
+
+### Client Changes (lib/client.js)
+
+- Added `>= 12` branch: MetadataRequestV12 + MetadataResponseV12 (sends topicId from cache when available)
+- Added `>= 11` branch: MetadataRequestV11 + MetadataResponseV11
+- Null topicName resolution: when topicName is null (v12), resolves from topicId cache before populating topicMetadata
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/protocol/metadata.js` | Added 5 Protocol.define blocks for V11/V12 request, response, and topic metadata types |
+| `lib/client.js` | Added two version dispatch branches, null topicName resolution in metadata processing |
+| `test/20.kip516_topic_ids.js` | Added 5 new tests (encode v11/v12 requests, decode v11/v12 responses with nullable topicName) |
+
+### Test Results
+- **415 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- 5 new unit tests in `test/20.kip516_topic_ids.js`
+- All existing integration tests pass (version negotiation falls back gracefully)
+
+---
+
+# KIP-951: Leader Discovery Behavioral Layer
+
+## Todo
+
+- [x] **1** Add `_applyLeaderHints()` method to `lib/client.js`
+- [x] **2** Modify `produceRequest()` response handling to call `_applyLeaderHints` for v10+ responses
+- [x] **3** Parse `currentLeader` from Fetch v12/v13 tagged fields in `lib/protocol/fetch.js`
+- [x] **4** Modify `fetchRequest()` response handling to call `_applyLeaderHints` for v12+ responses
+- [x] **5** Add tests to `test/22.kip951_leader_discovery.js`
+- [x] **6** Run lint + full test suite
+
+---
+
+## Review
+
+### Summary
+Implemented KIP-951 leader discovery behavioral layer. The wire format for Produce v10/v11 was already in place; this adds the Fetch v12/v13 `currentLeader` parsing and the `_applyLeaderHints()` method that processes leader hints from both APIs to update the client's metadata cache without a full metadata refresh.
+
+### What was added
+
+**`_applyLeaderHints(topics, nodeEndpoints)`** (`lib/client.js`):
+- Creates broker connections from `nodeEndpoints` (Produce v11) if missing
+- Updates `topicMetadata[topic][partition].leader` from `currentLeader` hints when `leaderId >= 0`
+- Respects `checkBrokerRedirect` for new connections
+
+**Fetch v12/v13 CurrentLeader parsing** (`lib/protocol/fetch.js`):
+- Replaced generic `TaggedFields()` in `FetchResponseV12PartitionItem` with inline tagged field parsing
+- Tag 1 → `currentLeader` (reuses `ProduceResponseV10CurrentLeader` helper)
+- All other tags (including tag 0 = DivergingEpoch) → skipped
+- Both v12 and v13 benefit since they share `FetchResponseV12PartitionItem`
+
+**Response handling integration** (`lib/client.js`):
+- `produceRequest()`: v10+ responses extract full result, call `_applyLeaderHints(topics, nodeEndpoints)`
+- `fetchRequest()`: v12+ responses call `_applyLeaderHints(topics, null)` (Fetch has no NodeEndpoints until v16+)
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/client.js` | Added `_applyLeaderHints()` method; modified `produceRequest()` and `fetchRequest()` response handling |
+| `lib/protocol/fetch.js` | Replaced `TaggedFields()` with inline tag parsing in `FetchResponseV12PartitionItem` |
+| `test/22.kip951_leader_discovery.js` | Added 5 new tests (Fetch v12 decode with/without CurrentLeader, _applyLeaderHints: metadata update, leaderId -1 ignored, nodeEndpoints creates connections) |
+
+### Test Results
+- **420 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- 5 new tests, 11 total in `test/22.kip951_leader_discovery.js`
+- All existing integration tests pass (no regressions)

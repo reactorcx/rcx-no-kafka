@@ -120,6 +120,147 @@ describe('KIP-516 Topic IDs', function () {
         });
     });
 
+    /////////////////////
+    // Metadata v11    //
+    /////////////////////
+
+    describe('Metadata v11', function () {
+        it('should encode MetadataRequestV11 without includeClusterAuthorizedOperations', function () {
+            var encoded = protocol.write().MetadataRequestV11({
+                correlationId: 3,
+                clientId: 'test',
+                topicNames: [{ topicId: null, name: 'my-topic' }]
+            }).result;
+            encoded.length.should.be.above(0);
+        });
+
+        it('should decode MetadataResponseV11 without clusterAuthorizedOperations', function () {
+            var topicId = '550e8400-e29b-41d4-a716-446655440000';
+            var writer = protocol.write();
+            var result;
+
+            // correlationId
+            writer.Int32BE(43);
+            // response header TaggedFields
+            writer.TaggedFields();
+            // throttleTime
+            writer.Int32BE(0);
+            // brokers: empty compact array
+            writer.compactArray([], function () {});
+            // clusterId
+            writer.compactString('test-cluster');
+            // controllerId
+            writer.Int32BE(1);
+            // topicMetadata: 1 topic
+            writer.compactArray([1], function () {
+                this.Int16BE(0);              // error code
+                this.compactString('my-topic'); // topicName
+                this.uuid(topicId);           // topicId
+                this.Int8(0);                 // isInternal
+                this.compactArray([], function () {}); // partitions
+                this.Int32BE(-2147483648);    // topicAuthorizedOperations
+                this.TaggedFields();
+            });
+            // no clusterAuthorizedOperations (removed in v11)
+            // TaggedFields
+            writer.TaggedFields();
+
+            result = protocol.read(writer.result).MetadataResponseV11().result;
+            result.correlationId.should.equal(43);
+            result.topicMetadata.length.should.equal(1);
+            result.topicMetadata[0].topicName.should.equal('my-topic');
+            result.topicMetadata[0].topicId.should.equal(topicId);
+            (result.clusterAuthorizedOperations === undefined).should.equal(true);
+        });
+    });
+
+    /////////////////////
+    // Metadata v12    //
+    /////////////////////
+
+    describe('Metadata v12', function () {
+        it('should encode MetadataRequestV12', function () {
+            var encoded = protocol.write().MetadataRequestV12({
+                correlationId: 4,
+                clientId: 'test',
+                topicNames: [{ topicId: '550e8400-e29b-41d4-a716-446655440000', name: null }]
+            }).result;
+            encoded.length.should.be.above(0);
+        });
+
+        it('should decode MetadataResponseV12 with nullable topicName', function () {
+            var topicId = '550e8400-e29b-41d4-a716-446655440000';
+            var writer = protocol.write();
+            var result;
+
+            // correlationId
+            writer.Int32BE(44);
+            // response header TaggedFields
+            writer.TaggedFields();
+            // throttleTime
+            writer.Int32BE(0);
+            // brokers: empty
+            writer.compactArray([], function () {});
+            // clusterId
+            writer.compactString('test-cluster');
+            // controllerId
+            writer.Int32BE(1);
+            // topicMetadata: 1 topic with null topicName
+            writer.compactArray([1], function () {
+                this.Int16BE(0);                    // error code
+                this.compactNullableString(null);    // topicName = null (v12)
+                this.uuid(topicId);                 // topicId
+                this.Int8(0);                       // isInternal
+                this.compactArray([], function () {}); // partitions
+                this.Int32BE(-2147483648);          // topicAuthorizedOperations
+                this.TaggedFields();
+            });
+            // TaggedFields
+            writer.TaggedFields();
+
+            result = protocol.read(writer.result).MetadataResponseV12().result;
+            result.correlationId.should.equal(44);
+            result.topicMetadata.length.should.equal(1);
+            (result.topicMetadata[0].topicName === null).should.equal(true);
+            result.topicMetadata[0].topicId.should.equal(topicId);
+        });
+
+        it('should decode MetadataResponseV12 with topicName present', function () {
+            var topicId = '550e8400-e29b-41d4-a716-446655440000';
+            var writer = protocol.write();
+            var result;
+
+            // correlationId
+            writer.Int32BE(45);
+            // response header TaggedFields
+            writer.TaggedFields();
+            // throttleTime
+            writer.Int32BE(0);
+            // brokers: empty
+            writer.compactArray([], function () {});
+            // clusterId
+            writer.compactString('test-cluster');
+            // controllerId
+            writer.Int32BE(1);
+            // topicMetadata: 1 topic with topicName present
+            writer.compactArray([1], function () {
+                this.Int16BE(0);
+                this.compactNullableString('my-topic'); // topicName present
+                this.uuid(topicId);
+                this.Int8(0);
+                this.compactArray([], function () {});
+                this.Int32BE(-2147483648);
+                this.TaggedFields();
+            });
+            // TaggedFields
+            writer.TaggedFields();
+
+            result = protocol.read(writer.result).MetadataResponseV12().result;
+            result.topicMetadata[0].topicName.should.equal('my-topic');
+            result.topicMetadata[0].topicId.should.equal(topicId);
+        });
+    });
+
     ////////////////////
     // ListOffsets v6 //
     ////////////////////
