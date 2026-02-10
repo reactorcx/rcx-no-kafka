@@ -541,3 +541,40 @@ Implemented Fetch v14–v16 protocol support:
 - ESLint: clean
 - 5 new tests, 16 total in `test/22.kip951_leader_discovery.js`
 - All existing integration tests pass (no regressions)
+
+---
+
+# ListOffsets v7–v9 Protocol Implementation
+
+## Todo
+
+- [x] **1** Add `OffsetRequestV7`, `OffsetRequestV8`, `OffsetRequestV9` to `lib/protocol/offset.js`
+- [x] **2** Update `lib/client.js` version negotiation — bump clientMax 6→9, add v7/v8/v9 branches
+- [x] **3** Add encode tests for v7/v8/v9 in `test/20.kip516_topic_ids.js`
+- [x] **4** Lint + full test suite
+
+---
+
+## Review
+
+### Summary
+Added ListOffsets v7–v9 protocol support. All three versions have identical wire format to v6 — only the `apiVersion` in the request header changes:
+- **v7** (KIP-734): Enables max timestamp query
+- **v8** (KIP-405): Enables tiered storage queries
+- **v9** (KIP-1005): Enables last tiered offset query (timestamp sentinel -5)
+
+All reuse `OffsetRequestV6TopicItem`/`OffsetRequestV6PartitionItem` for the request body and `OffsetResponseV6` for the response.
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/protocol/offset.js` | Added 3 Protocol.define blocks (`OffsetRequestV7`, `OffsetRequestV8`, `OffsetRequestV9`) |
+| `lib/client.js` | Bumped clientMax 6→9, added three version dispatch branches (v9, v8, v7) |
+| `test/20.kip516_topic_ids.js` | Added 3 encode tests (ListOffsets v7/v8/v9 describe blocks) |
+
+### Test Results
+- **428 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- 3 new tests in `test/20.kip516_topic_ids.js`
+- All existing integration tests pass (no regressions)

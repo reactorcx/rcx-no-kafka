@@ -315,6 +315,63 @@ describe('KIP-516 Topic IDs', function () {
         });
     });
 
+    ////////////////////
+    // ListOffsets v7 //
+    ////////////////////
+
+    describe('ListOffsets v7', function () {
+        it('should encode OffsetRequestV7', function () {
+            var encoded = protocol.write().OffsetRequestV7({
+                correlationId: 10,
+                clientId: 'test',
+                isolationLevel: 0,
+                topics: [{
+                    topicName: 'my-topic',
+                    partitions: [{ partition: 0, time: -1 }]
+                }]
+            }).result;
+            encoded.length.should.be.above(0);
+        });
+    });
+
+    ////////////////////
+    // ListOffsets v8 //
+    ////////////////////
+
+    describe('ListOffsets v8', function () {
+        it('should encode OffsetRequestV8', function () {
+            var encoded = protocol.write().OffsetRequestV8({
+                correlationId: 10,
+                clientId: 'test',
+                isolationLevel: 0,
+                topics: [{
+                    topicName: 'my-topic',
+                    partitions: [{ partition: 0, time: -1 }]
+                }]
+            }).result;
+            encoded.length.should.be.above(0);
+        });
+    });
+
+    ////////////////////
+    // ListOffsets v9 //
+    ////////////////////
+
+    describe('ListOffsets v9', function () {
+        it('should encode OffsetRequestV9', function () {
+            var encoded = protocol.write().OffsetRequestV9({
+                correlationId: 10,
+                clientId: 'test',
+                isolationLevel: 0,
+                topics: [{
+                    topicName: 'my-topic',
+                    partitions: [{ partition: 0, time: -1 }]
+                }]
+            }).result;
+            encoded.length.should.be.above(0);
+        });
+    });
+
     //////////////////
     // Produce v9   //
     //////////////////
