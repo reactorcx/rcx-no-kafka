@@ -1168,3 +1168,103 @@ Instruments the Client to track connection creation count and per-node request l
 - [ ] **21** Expose `clientInstanceId()` method — returns the broker-assigned UUID (for external observability tools).
 - [ ] **22** Integration test — full telemetry flow against live broker (GetSubscriptions → Push with real metrics → verify no errors).
 - [ ] **23** Lint + full test suite.
+
+---
+
+# Pre-existing Bug Audit
+
+Deep investigation of the codebase for correctness bugs. Each finding was verified by reading the actual code and tracing through execution paths.
+
+## Verified Bugs
+
+### BUG 1: `_updateSubscription` null reference crash (HIGH)
+**File:** `lib/base_consumer.js:143`
+
+```javascript
+var s = self.subscriptions[topic + ':' + partition];
+return self.subscribe(topic, partition, s.offset !== undefined ? { offset: s.offset } : s.options, s.handler)
+```
+
+**Problem:** `updateMetadata()` is async. While it runs, `unsubscribe()` can synchronously delete the subscription at line 286. When the `.then()` resumes, `s` is `undefined` and `s.offset` throws a `TypeError`, crashing the consumer.
+
+**Scenario:** Partition error triggers `_partitionError` → `_updateSubscription` → `updateMetadata()` starts. Concurrently, user calls `unsubscribe()`. Metadata resolves, `s` is gone → crash.
+
+**Fix:** Add null guard: `if (!s) { return; }` before accessing `s.offset`.
+
+---
+
+### BUG 2: `_fullRejoin` infinite retry after shutdown (HIGH)
+**File:** `lib/group_consumer.js:286-290`
+
+```javascript
+return promiseUtils.delay(retryDelay).then(function () {
+    return _tryFullRejoin(attempt + 1);
+});
+```
+
+**Problem:** The recursive `_tryFullRejoin` never checks `self._closed` before retrying. After `GroupConsumer.end()` sets `_closed = true` and closes the client, the retry loop continues forever — each attempt fails (client is closed), catches the error, waits up to 30s, and retries. Logs errors indefinitely.
+
+Note: `_heartbeat` correctly checks `_closed` at lines 312, 320, 333. But `_fullRejoin` doesn't.
+
+**Fix:** Add `if (self._closed) { return; }` before the retry in the catch handler.
+
+---
+
+### BUG 3: Producer.end() doesn't clean up batch queue (MEDIUM)
+**File:** `lib/producer.js:423-426`
+
+```javascript
+Producer.prototype.end = function () {
+    var self = this;
+    return self.client.end();
+};
+```
+
+**Problem:** Pending batch timeouts in `self.queue` are not cleared. If `send()` was called with batching (`batch.maxWait > 0`), the queued batch has a `setTimeout` that fires after `end()`, calling `_send()` on a closed client. The batch promises remain unresolved until the timeout fires and the closed client errors out.
+
+**Fix:** Iterate `self.queue`, clear each `task.timeout`, reject each `task.reject`, then clear the queue before calling `client.end()`.
+
+---
+
+### BUG 4: `updateGroupCoordinator` swallows all errors silently (LOW)
+**File:** `lib/client.js:1269-1271`
+
+```javascript
+.catch(function () {
+    delete self.groupCoordinators[groupId];
+});
+```
+
+**Problem:** All errors are silently swallowed without logging. When coordinator connection close fails, the error context is completely lost.
+
+**Fix:** Add `self.error('Failed to close group coordinator for', groupId, err);` inside the catch.
+
+---
+
+## Already Fixed
+
+### Connection stale receive buffer on reconnect (MEDIUM)
+**File:** `lib/connection.js:113`
+**Status:** Fixed — added `this.offset = 0` in `_disconnect()`
+
+---
+
+## False Positives Eliminated
+
+These were flagged by automated analysis but verified as NOT bugs:
+
+| Claim | Verdict | Reason |
+|-------|---------|--------|
+| ProduceResponseV10 references V9RecordError defined later | NOT A BUG | `Protocol.define` registers on prototype; `this.method` is a runtime lookup, not evaluated at definition time |
+| FetchResponseV12 compact messageSetSize off-by-one | NOT A BUG | messageSetSize=1 (compact for 0 bytes) correctly results in empty array — that IS the right behavior |
+| OffsetFetchRequestV8 apiVersion not propagated to groups | NOT A BUG | client.js:1183 explicitly passes `apiVersion: fetchVersion` on each group item |
+| Socket event listener accumulation on reconnect | NOT A BUG | Each `connect()` calls `socket.destroy()` on old socket, creates fresh socket with new listeners |
+| Producer batch queue race condition | NOT A BUG | Node.js is single-threaded; `send()` is synchronous; no concurrent mutation possible |
+
+## Todo
+
+- [ ] **1** Fix BUG 1: Add null guard in `_updateSubscription` (`lib/base_consumer.js:143`)
+- [ ] **2** Fix BUG 2: Add `_closed` check in `_fullRejoin` retry path (`lib/group_consumer.js:288`)
+- [ ] **3** Fix BUG 3: Clean up batch queue in `Producer.end()` (`lib/producer.js:423`)
+- [ ] **4** Fix BUG 4: Log error in `updateGroupCoordinator` catch (`lib/client.js:1269`)
+- [ ] **5** Lint + full test suite
