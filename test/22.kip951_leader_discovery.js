@@ -440,4 +440,276 @@ describe('KIP-951: Leader Discovery Optimizations (Produce v10/v11)', function (
             client.brokerRacks[3].should.equal('rack-a');
         });
     });
+
+    ///////////////////////////////////
+    // Fetch v14/v15/v16             //
+    ///////////////////////////////////
+
+    describe('Fetch v14 (KIP-405 Tiered Storage)', function () {
+        it('should encode FetchRequestV14 (same body as v13 but apiVersion=14)', function () {
+            var encoded = protocol.write().FetchRequestV14({
+                correlationId: 60,
+                clientId: 'test',
+                maxWaitTime: 100,
+                minBytes: 1,
+                maxBytes: 65536,
+                isolationLevel: 0,
+                sessionId: 0,
+                sessionEpoch: -1,
+                topics: [{
+                    topicId: '00000000-0000-0000-0000-000000000001',
+                    partitions: [{
+                        partition: 0,
+                        currentLeaderEpoch: -1,
+                        offset: 0,
+                        lastFetchedEpoch: -1,
+                        logStartOffset: -1,
+                        maxBytes: 65536
+                    }]
+                }],
+                forgottenTopicsData: [],
+                rackId: ''
+            }).result;
+            encoded.length.should.be.above(0);
+            // apiVersion should be 14 (bytes at offset 6-7 in the request header)
+            encoded.readInt16BE(2).should.equal(14);
+        });
+    });
+
+    describe('Fetch v15 (KIP-903 Broker Epoch)', function () {
+        it('should encode FetchRequestV15 (no replicaId field)', function () {
+            var v14Encoded, v15Encoded;
+
+            v14Encoded = protocol.write().FetchRequestV14({
+                correlationId: 61,
+                clientId: 'test',
+                maxWaitTime: 100,
+                minBytes: 1,
+                maxBytes: 65536,
+                isolationLevel: 0,
+                sessionId: 0,
+                sessionEpoch: -1,
+                topics: [{
+                    topicId: '00000000-0000-0000-0000-000000000001',
+                    partitions: [{
+                        partition: 0,
+                        currentLeaderEpoch: -1,
+                        offset: 0,
+                        lastFetchedEpoch: -1,
+                        logStartOffset: -1,
+                        maxBytes: 65536
+                    }]
+                }],
+                forgottenTopicsData: [],
+                rackId: ''
+            }).result;
+
+            v15Encoded = protocol.write().FetchRequestV15({
+                correlationId: 61,
+                clientId: 'test',
+                maxWaitTime: 100,
+                minBytes: 1,
+                maxBytes: 65536,
+                isolationLevel: 0,
+                sessionId: 0,
+                sessionEpoch: -1,
+                topics: [{
+                    topicId: '00000000-0000-0000-0000-000000000001',
+                    partitions: [{
+                        partition: 0,
+                        currentLeaderEpoch: -1,
+                        offset: 0,
+                        lastFetchedEpoch: -1,
+                        logStartOffset: -1,
+                        maxBytes: 65536
+                    }]
+                }],
+                forgottenTopicsData: [],
+                rackId: ''
+            }).result;
+
+            v15Encoded.length.should.be.above(0);
+            // apiVersion should be 15
+            v15Encoded.readInt16BE(2).should.equal(15);
+            // v15 should be 4 bytes shorter than v14 (missing replicaId Int32)
+            v15Encoded.length.should.equal(v14Encoded.length - 4);
+        });
+    });
+
+    describe('Fetch v16 (KIP-951 Leader Discovery)', function () {
+        it('should encode FetchRequestV16 (same body as v15 but apiVersion=16)', function () {
+            var v15Encoded, v16Encoded;
+
+            v15Encoded = protocol.write().FetchRequestV15({
+                correlationId: 62,
+                clientId: 'test',
+                maxWaitTime: 100,
+                minBytes: 1,
+                maxBytes: 65536,
+                isolationLevel: 0,
+                sessionId: 0,
+                sessionEpoch: -1,
+                topics: [{
+                    topicId: '00000000-0000-0000-0000-000000000001',
+                    partitions: [{
+                        partition: 0,
+                        currentLeaderEpoch: -1,
+                        offset: 0,
+                        lastFetchedEpoch: -1,
+                        logStartOffset: -1,
+                        maxBytes: 65536
+                    }]
+                }],
+                forgottenTopicsData: [],
+                rackId: ''
+            }).result;
+
+            v16Encoded = protocol.write().FetchRequestV16({
+                correlationId: 62,
+                clientId: 'test',
+                maxWaitTime: 100,
+                minBytes: 1,
+                maxBytes: 65536,
+                isolationLevel: 0,
+                sessionId: 0,
+                sessionEpoch: -1,
+                topics: [{
+                    topicId: '00000000-0000-0000-0000-000000000001',
+                    partitions: [{
+                        partition: 0,
+                        currentLeaderEpoch: -1,
+                        offset: 0,
+                        lastFetchedEpoch: -1,
+                        logStartOffset: -1,
+                        maxBytes: 65536
+                    }]
+                }],
+                forgottenTopicsData: [],
+                rackId: ''
+            }).result;
+
+            v16Encoded.length.should.be.above(0);
+            // apiVersion should be 16
+            v16Encoded.readInt16BE(2).should.equal(16);
+            // v16 and v15 should have the same body length (identical wire format)
+            v16Encoded.length.should.equal(v15Encoded.length);
+        });
+
+        it('should decode FetchResponseV16 with NodeEndpoints tagged field (tag 0)', function () {
+            var writer, result, nw, nodeData;
+
+            // Build NodeEndpoints data first
+            nw = protocol.write();
+            // compactArray with 1 item: UVarint(2) = 1+1
+            nw.UVarint(2);
+            // item 1: broker 7
+            nw.Int32BE(7);
+            nw.compactString('broker7.example.com');
+            nw.Int32BE(9092);
+            nw.compactNullableString('rack-b');
+            nw.TaggedFields();
+            nodeData = Buffer.from(nw.result);
+
+            writer = protocol.write();
+            // correlationId
+            writer.Int32BE(63);
+            // response header TaggedFields (flexible)
+            writer.TaggedFields();
+            // throttleTime
+            writer.Int32BE(50);
+            // errorCode
+            writer.Int16BE(0);
+            // sessionId
+            writer.Int32BE(12345);
+            // topics: 1 topic with topicId
+            writer.compactArray([1], function () {
+                this.uuid('00000000-0000-0000-0000-000000000001');
+                this.compactArray([1], function () {
+                    this.Int32BE(0);   // partition
+                    this.Int16BE(6);   // error code 6 = NOT_LEADER_OR_FOLLOWER
+                    this.Int64BE(200); // highwaterMarkOffset
+                    this.Int64BE(180); // lastStableOffset
+                    this.Int64BE(0);   // logStartOffset
+                    // abortedTransactions: empty
+                    this.compactArray([], function () {});
+                    // preferredReadReplica
+                    this.Int32BE(-1);
+                    // records: null (UVarint 0)
+                    this.UVarint(0);
+                    // Tagged fields: tag 1 = CurrentLeader
+                    this.UVarint(1);    // 1 tagged field
+                    this.UVarint(1);    // tag id = 1
+                    this.UVarint(9);    // size = 4 + 4 + 1
+                    this.Int32BE(7);    // leaderId = broker 7
+                    this.Int32BE(55);   // leaderEpoch = 55
+                    this.UVarint(0);    // CurrentLeader's own TaggedFields
+                });
+                this.TaggedFields();
+            });
+
+            // Body-level tagged fields: tag 0 = NodeEndpoints
+            writer.UVarint(1);                // 1 tagged field
+            writer.UVarint(0);                // tag id = 0
+            writer.UVarint(nodeData.length);  // size
+            writer.raw(nodeData);
+
+            result = protocol.read(writer.result).FetchResponseV16().result;
+            result.correlationId.should.equal(63);
+            result.throttleTime.should.equal(50);
+            result.sessionId.should.equal(12345);
+            // CurrentLeader from partition
+            result.topics[0].partitions[0].partition.should.equal(0);
+            result.topics[0].partitions[0].currentLeader.leaderId.should.equal(7);
+            result.topics[0].partitions[0].currentLeader.leaderEpoch.should.equal(55);
+            // NodeEndpoints
+            result.nodeEndpoints.length.should.equal(1);
+            result.nodeEndpoints[0].nodeId.should.equal(7);
+            result.nodeEndpoints[0].host.should.equal('broker7.example.com');
+            result.nodeEndpoints[0].port.should.equal(9092);
+            result.nodeEndpoints[0].rack.should.equal('rack-b');
+        });
+
+        it('should decode FetchResponseV16 without NodeEndpoints (graceful fallback)', function () {
+            var writer, result;
+
+            writer = protocol.write();
+            // correlationId
+            writer.Int32BE(64);
+            // response header TaggedFields (flexible)
+            writer.TaggedFields();
+            // throttleTime
+            writer.Int32BE(0);
+            // errorCode
+            writer.Int16BE(0);
+            // sessionId
+            writer.Int32BE(0);
+            // topics: 1 topic, no error, no partition tagged fields
+            writer.compactArray([1], function () {
+                this.uuid('00000000-0000-0000-0000-000000000002');
+                this.compactArray([1], function () {
+                    this.Int32BE(0);
+                    this.Int16BE(0);
+                    this.Int64BE(100);
+                    this.Int64BE(90);
+                    this.Int64BE(0);
+                    this.compactArray([], function () {});
+                    this.Int32BE(-1);
+                    this.UVarint(0);
+                    // No tagged fields
+                    this.TaggedFields();
+                });
+                this.TaggedFields();
+            });
+            // body TaggedFields (empty — no NodeEndpoints)
+            writer.TaggedFields();
+
+            result = protocol.read(writer.result).FetchResponseV16().result;
+            result.correlationId.should.equal(64);
+            result.topics[0].partitions[0].partition.should.equal(0);
+            // nodeEndpoints should not be present when no body tagged fields
+            (result.nodeEndpoints === undefined).should.equal(true);
+            // currentLeader should not be present when no partition tagged fields
+            (result.topics[0].partitions[0].currentLeader === undefined).should.equal(true);
+        });
+    });
 });

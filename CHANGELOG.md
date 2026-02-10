@@ -1,3 +1,20 @@
+## 4.7
+
+### Added (Kafka 3.7+ Fetch Protocol — KIP-405, KIP-903, KIP-951)
+- Fetch v14 (KIP-405 Tiered Storage) — version bump signaling tiered storage awareness
+- Fetch v15 (KIP-903 Broker Epoch) — removes replicaId from request body
+- Fetch v16 (KIP-951 Leader Discovery) — response adds NodeEndpoints tagged field for direct leader connection without metadata refresh
+
+## 4.6
+
+### Added (KIP-951 Leader Discovery + KIP-516 Completion)
+- Produce v10/v11 (KIP-951) — CurrentLeader per-partition and NodeEndpoints in Produce responses
+- Metadata v11/v12 (KIP-516 completion) — nullable topicName, removed clusterAuthorizedOperations
+- Fetch v12/v13 CurrentLeader parsing — inline tagged field parsing for leader hints
+- `_applyLeaderHints()` — updates metadata cache from leader hints without full metadata refresh
+- Transaction API v3 bumps (AddPartitionsToTxn, AddOffsetsToTxn, EndTxn, TxnOffsetCommit)
+- KIP-516 topic IDs (UUIDs) — Metadata v10, Fetch v13 with topicId, uuid primitive type
+
 ## 4.5
 
 ### Added (Kafka 2.6 Protocol Support — KIP-482 Flexible Versions)

@@ -486,3 +486,58 @@ Implemented KIP-951 leader discovery behavioral layer. The wire format for Produ
 - ESLint: clean
 - 5 new tests, 11 total in `test/22.kip951_leader_discovery.js`
 - All existing integration tests pass (no regressions)
+
+---
+
+# Fetch v14–v16 Protocol Implementation (KIP-405, KIP-903, KIP-951)
+
+## Todo
+
+- [x] **1** Add `FetchRequestV14` to `lib/protocol/fetch.js` — same as V13 but apiVersion: 14
+- [x] **2** Add `FetchRequestV15` to `lib/protocol/fetch.js` — removes replicaId, body starts at maxWaitTime
+- [x] **3** Add `FetchRequestV16` and `FetchResponseV16` to `lib/protocol/fetch.js` — response adds NodeEndpoints (tag 0)
+- [x] **4** Update `lib/client.js` — bump clientMax 13→16, add three version dispatch branches
+- [x] **5** Add tests to `test/22.kip951_leader_discovery.js`
+- [x] **6** Lint + full test suite
+
+---
+
+## Review
+
+### Summary
+Implemented Fetch v14–v16 protocol support:
+- **v14** (KIP-405 Tiered Storage): Version bump only, no wire format changes
+- **v15** (KIP-903 Broker Epoch): Removes `replicaId` from request body (consumer clients don't send ReplicaState tagged field)
+- **v16** (KIP-951 Leader Discovery): Response adds `NodeEndpoints` body-level tagged field (tag 0), reusing `ProduceResponseV10NodeEndpoint`
+
+### Protocol Definitions Added
+
+| Definition | Purpose |
+|-----------|---------|
+| `FetchRequestV14` | Same as V13, apiVersion: 14 |
+| `FetchRequestV15` | Removes replicaId field, apiVersion: 15 |
+| `FetchRequestV16` | Same as V15, apiVersion: 16 |
+| `FetchResponseV16` | Inline body-level tagged field parsing: tag 0 → nodeEndpoints |
+
+### Client Changes (lib/client.js)
+
+- Fetch clientMax: 13 → 16
+- Added `>= 16` branch: FetchRequestV16 + FetchResponseV16 (passes nodeEndpoints to `_applyLeaderHints`)
+- Added `>= 15` branch: FetchRequestV15 + FetchResponseV13
+- Added `>= 14` branch: FetchRequestV14 + FetchResponseV13
+- Changed topicId resolution from `responseName === 'FetchResponseV13'` to `fetchVersion >= 13` (covers v13-v16)
+- Changed `_applyLeaderHints` call to pass `parsed.nodeEndpoints || null` (v16 provides nodeEndpoints)
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/protocol/fetch.js` | Added 4 Protocol.define blocks for V14/V15/V16 request and V16 response |
+| `lib/client.js` | Bumped clientMax 13→16, added three version dispatch branches, updated response handling |
+| `test/22.kip951_leader_discovery.js` | Added 5 new tests (encode V14/V15/V16 requests, decode V16 with/without NodeEndpoints) |
+
+### Test Results
+- **425 passing**, 2 failing (pre-existing SSL failures on port 9093)
+- ESLint: clean
+- 5 new tests, 16 total in `test/22.kip951_leader_discovery.js`
+- All existing integration tests pass (no regressions)
