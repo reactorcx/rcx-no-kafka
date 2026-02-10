@@ -1,3 +1,9 @@
+## 4.10
+
+### Added (KIP-899 Re-bootstrap, KIP-390 Compression Level)
+- Client re-bootstrap (KIP-899) — `rebootstrap: true` option enables automatic re-resolution of bootstrap servers when all known brokers are unavailable
+- Compression level support (KIP-390) — `compressionLevel` option for producer to control compression ratio vs. speed (Gzip 0-9, Zstd 1-22, LZ4 high compression mode)
+
 ## 4.9
 
 ### Added (Multi-Group OffsetFetch, Producer Epoch Recovery, LeaveGroup Reason)

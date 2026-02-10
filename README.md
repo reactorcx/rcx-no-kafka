@@ -8,7 +8,7 @@
 
 __no-kafka__ is [Apache Kafka](https://kafka.apache.org) client for Node.js with [new unified consumer API](#groupconsumer-new-unified-consumer-api) support.
 
-Supports Kafka 0.9+ through 3.7+ protocol (automatic version negotiation via ApiVersions). Includes KIP-482 flexible version encoding, KIP-516 topic IDs (UUIDs), KIP-951 leader discovery optimizations, KIP-699 batch coordinator lookup, KIP-709 multi-group offset fetch, KIP-588 producer epoch recovery, sync and async Gzip, Snappy, LZ4, and Zstd compression, producer batching and controllable retries, rack-aware fetching, static group membership, cooperative/incremental rebalancing (KIP-429), and offers few predefined group assignment strategies and producer partitioner option.
+Supports Kafka 0.9+ through 3.7+ protocol (automatic version negotiation via ApiVersions). Includes KIP-482 flexible version encoding, KIP-516 topic IDs (UUIDs), KIP-951 leader discovery optimizations, KIP-699 batch coordinator lookup, KIP-709 multi-group offset fetch, KIP-588 producer epoch recovery, KIP-899 client re-bootstrap, KIP-390 compression levels, sync and async Gzip, Snappy, LZ4, and Zstd compression, producer batching and controllable retries, rack-aware fetching, static group membership, cooperative/incremental rebalancing (KIP-429), and offers few predefined group assignment strategies and producer partitioner option.
 
 All methods will return a [Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise)
 
@@ -258,6 +258,8 @@ Transaction methods:
     * `min` - minimum delay, used as increment value for next attempts, defaults to 1000ms
     * `max` - maximum delay value, defaults to 3000ms
 * `codec` - compression codec, one of Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP, Kafka.COMPRESSION_LZ4, Kafka.COMPRESSION_ZSTD
+* `compressionLevel` - compression level, defaults to -1 (codec default). Gzip: 0-9, Zstd: 1-22, LZ4: >= 0 enables high compression, Snappy: ignored
+* `rebootstrap` - boolean, re-resolve bootstrap servers when all known brokers are unavailable (KIP-899), defaults to `false`
 * `batch` - control batching (grouping) of requests
   * `size` - group messages together into single batch until their total size exceeds this value, defaults to 16384 bytes. Set to 0 to disable batching.
   * `maxWait` - send grouped messages after this amount of milliseconds expire even if their total size doesn't exceed `batch.size` yet, defaults to 10ms. Set to 0 to disable batching.
@@ -588,6 +590,16 @@ var Kafka = require('no-kafka');
 var producer = new Kafka.Producer({
     clientId: 'producer',
     codec: Kafka.COMPRESSION_SNAPPY // Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP, Kafka.COMPRESSION_LZ4, Kafka.COMPRESSION_ZSTD
+});
+```
+
+You can also specify a compression level to control the compression ratio vs. speed tradeoff:
+
+```javascript
+var producer = new Kafka.Producer({
+    clientId: 'producer',
+    codec: Kafka.COMPRESSION_GZIP,
+    compressionLevel: 9 // max compression (Gzip: 0-9, Zstd: 1-22, LZ4: >= 0 for HC mode)
 });
 ```
 

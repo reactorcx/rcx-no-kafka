@@ -819,3 +819,177 @@ Implemented three API version bumps covering six KIPs:
 - ESLint: clean
 - 12 new unit tests in `test/18.kip482_flexible_api_bumps.js`
 - All existing integration tests pass (no regressions from our changes)
+
+---
+
+# KIP-899: Client Re-bootstrap
+
+## Background
+
+KIP-899 allows Kafka clients to repeat the bootstrap process when all known brokers become unavailable. This is purely client-side logic — no protocol changes.
+
+**Problem**: When all cached broker connections die (DNS changes, IP rotation, full cluster restart), the no-kafka client fails permanently because `initialBrokers` connections are created once in `init()` and never refreshed. Even though `metadataRequest()` tries all `initialBrokers` via `Promise.any()`, if those Connection objects are closed or point to stale addresses, every attempt fails and the error propagates.
+
+**Solution**: When `metadataRequest()` fails and the `rebootstrap` option is enabled, the client re-parses the original `connectionString`, creates fresh Connection objects (which re-resolve DNS on connect), discovers API versions, and retries the metadata request.
+
+### Current flow (lib/client.js)
+
+```
+init()
+  → parse connectionString → create initialBrokers (Connection objects)
+  → apiVersionsRequest() on each initialBroker
+  → updateMetadata()
+
+updateMetadata()
+  → metadataRequest() — Promise.any(initialBrokers.map(send))
+    → success → update brokerConnections, topicMetadata
+    → failure → throw  ← PROBLEM: no recovery
+```
+
+### With KIP-899
+
+```
+updateMetadata()
+  → metadataRequest()
+    → success → update brokerConnections, topicMetadata
+    → failure → if rebootstrap enabled:
+        → _rebootstrap()  — close old, create new initialBrokers, apiVersions
+        → metadataRequest()  — retry with fresh connections
+          → success → update brokerConnections, topicMetadata
+          → failure → throw
+```
+
+### Key points
+
+- `connectionString` is preserved in `self.options.connectionString` — always available for re-parsing
+- `Connection.close()` sets `closed = true` which prevents reconnection — old connections must be replaced, not reused
+- DNS re-resolution happens naturally via `net.connect({host, port})` in new Connection objects
+- One rebootstrap attempt per metadata failure — no infinite loops
+- Log a warning when rebootstrap is triggered for observability
+
+## Todo
+
+- [x] **1** Add `rebootstrap` option to client constructor defaults (`lib/client.js` line ~33) — boolean, default `false`.
+- [x] **2** Add `_rebootstrap()` method to Client prototype (`lib/client.js`) — closes old `initialBrokers`, re-parses `connectionString`, creates fresh Connection objects, runs `apiVersionsRequest()` on each. Returns a promise.
+- [x] **3** Modify `updateMetadata()` (`lib/client.js` line ~263) — wrap the `metadataRequest()` call so that on failure, if `self.options.rebootstrap` is enabled, call `_rebootstrap()` then retry `metadataRequest()` once. If retry also fails, throw the original error.
+- [x] **4** Add unit tests (`test/23.kip899_rebootstrap.js`) — test `_rebootstrap()` creates fresh connections; test `updateMetadata()` retries after rebootstrap when enabled; test no retry when disabled.
+- [x] **5** Lint + full test suite to verify no regressions.
+
+---
+
+## Review
+
+### Summary
+Implemented KIP-899 client re-bootstrap for the no-kafka client. When all known broker connections are unavailable and a metadata update fails, the client can now automatically re-resolve the original `connectionString`, create fresh Connection objects (which re-resolve DNS on connect), discover API versions, and retry the metadata request. This is purely client-side logic — no protocol changes.
+
+The feature is opt-in via `rebootstrap: true` in client options (default `false`). One rebootstrap attempt per metadata failure — no infinite retry loops. A warning is logged when rebootstrap is triggered for observability.
+
+### How it works
+
+1. `updateMetadata()` calls `metadataRequest()` which tries all `initialBrokers` via `Promise.any()`
+2. If all fail and `rebootstrap` is enabled, a `.catch()` handler calls `_rebootstrap()`
+3. `_rebootstrap()` closes old `initialBrokers` (permanently dead after `close()`), re-parses `connectionString`, creates new Connection objects, runs `apiVersionsRequest()` on each
+4. `metadataRequest()` is retried with the fresh connections
+5. If retry also fails, the error propagates normally
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/client.js` | Added `rebootstrap: false` default option; added `_rebootstrap()` method (~15 lines); added `.catch()` handler in `updateMetadata()` (~7 lines) |
+| `test/23.kip899_rebootstrap.js` | New file: 3 tests — `_rebootstrap()` creates fresh connections, `updateMetadata()` recovers with rebootstrap enabled, `updateMetadata()` throws with rebootstrap disabled |
+
+### Test Results
+- **448 passing**, 2 failing (pre-existing SSL on port 9093)
+- ESLint: clean
+- 3 new tests in `test/23.kip899_rebootstrap.js`
+- All existing integration tests pass (no regressions)
+
+---
+
+# KIP-390: Compression Level Support
+
+## Background
+
+KIP-390 adds a `compression.level` configuration to the Kafka producer so users can control compression ratio vs. speed tradeoffs. This is purely a client-side change — no protocol modifications.
+
+### Current architecture
+
+The compression call chain is:
+
+```
+producer.send(data, {codec})
+  → client.produceRequest(requests, codec)
+    → compress(recordsBuf, codec)           // compression.js — no level param
+    → compress(messageSetBuf, codec)        // legacy path — same
+```
+
+`compression.js` has four codecs, each with `compress`/`compressAsync` methods that take `(buffer)` only:
+- **Gzip**: `zlib.gzipSync(buffer)` — supports `{level: -1..9}` option
+- **Zstd**: `zstd.compress(buffer)` — supports numeric level argument (1-22)
+- **LZ4**: `lz4.encode(buffer)` — supports `{highCompression: true}` option
+- **Snappy**: `snappy.compressSync(buffer)` — no level support (fixed algorithm)
+
+### Plan
+
+Thread a `compressionLevel` parameter from producer options through to each codec:
+
+1. **compression.js**: Add `level` parameter to `compress(buffer, codec, level)` and `compressAsync(buffer, codec, level)`. Each codec's compress functions accept the level:
+   - Gzip: pass `{level: N}` to `zlib.gzipSync`/`zlib.gzip`
+   - Zstd: pass level to `zstd.compress(buffer, level)`
+   - LZ4: map `level > 0` to `{highCompression: true}`
+   - Snappy: ignore level (fixed algorithm)
+   - When level is `-1` or `undefined`, use the codec's default (current behavior)
+
+2. **producer.js**: Add `compressionLevel: -1` to default options. Thread it alongside `codec` in `send()`.
+
+3. **client.js**: Accept `compressionLevel` in `produceRequest()`. Pass it to `compress(buffer, codec, level)` in both the RecordBatch and legacy MessageSet paths.
+
+## Todo
+
+- [x] **1** Update compression codec functions in `lib/protocol/misc/compression.js` — add `level` parameter to Gzip, Zstd, LZ4 compress/compressAsync; add `level` to exported compress/compressAsync.
+- [x] **2** Add `compressionLevel: -1` default option in `lib/producer.js`; thread `compressionLevel` alongside `codec` in `send()` options.
+- [x] **3** Update `lib/client.js` — accept `compressionLevel` in `produceRequest()` signature; pass to `compress()` calls in RecordBatch and legacy MessageSet paths.
+- [x] **4** Add unit tests (`test/24.kip390_compression_level.js`) — verify gzip level is applied (compare compressed sizes at level 1 vs 9); verify default level (-1) matches current behavior; verify snappy ignores level.
+- [x] **5** Lint + full test suite to verify no regressions.
+
+---
+
+## Review
+
+### Summary
+Implemented KIP-390 compression level support for the no-kafka producer. Users can now specify a `compressionLevel` option to control the compression ratio vs. speed tradeoff. This is purely client-side — no protocol changes.
+
+Level semantics per codec:
+- **Gzip**: levels 0-9 (0=none, 1=fastest, 9=best compression). Default (-1) uses zlib default (level 6).
+- **Zstd**: levels 1-22 (1=fastest, 22=best). Default (-1) uses zstd default (level 3).
+- **LZ4**: level >= 0 enables high compression mode. Default (-1) uses standard LZ4.
+- **Snappy**: level ignored (fixed algorithm, no tuning).
+
+### Usage
+
+```javascript
+// Producer-level setting
+var producer = new Kafka.Producer({
+    codec: Kafka.COMPRESSION_GZIP,
+    compressionLevel: 9  // max compression
+});
+
+// Per-send override
+producer.send(data, { codec: Kafka.COMPRESSION_GZIP, compressionLevel: 1 });
+```
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/protocol/misc/compression.js` | Added `level` parameter to Gzip, Zstd, LZ4 compress/compressAsync methods; added `level` to exported compress/compressAsync |
+| `lib/producer.js` | Added `compressionLevel: -1` default; threaded through `send()` options to `produceRequest()` |
+| `lib/client.js` | Added `compressionLevel` parameter to `produceRequest()` and `_compressMessageSet()`; passed to `compress()` calls |
+| `test/24.kip390_compression_level.js` | New file: 6 tests — gzip default level, undefined level, level 1 vs 9 size comparison, async level, round-trip with level, snappy ignores level |
+
+### Test Results
+- **454 passing**, 2 failing (pre-existing SSL on port 9093)
+- ESLint: clean
+- 6 new unit tests in `test/24.kip390_compression_level.js`
+- All existing compression tests pass (backward compatible — level undefined = codec default)
