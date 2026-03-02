@@ -1426,3 +1426,76 @@ Upgraded 14 Kafka protocol APIs to Kafka 4.1.1 parity, adding ~20 version bumps 
 - **454 passing** (all protocol, producer, consumer, group consumer, and transaction tests)
 - **2 failing** (pre-existing SSL tests on port 9093 — not configured in Docker)
 - **3 pending** (skipped tests)
+
+---
+
+# Fix 6 Bugs Found in Deep Audit
+
+## Todo
+
+- [x] **1** Bug 1: Remove redundant `_joinGroup()` call in `_fullRejoin` (double rebalance)
+- [x] **2** Bug 2: Route `txnOffsetCommitRequest` to group coordinator instead of transaction coordinator
+- [x] **3** Bug 3: Add `updateTransactionCoordinator` method + error recovery `.catch` blocks
+- [x] **4** Bug 4: Throw `AggregateError` instead of raw arrays at 4 locations
+- [x] **5** Bug 5: Pass `this.server()` instead of `this` to `NoKafkaConnectionError` in `close()`
+- [x] **6** Bug 6: Wrap fire-and-forget `apiVersionsRequest` with `Promise.resolve().catch()`
+- [x] **7** Run full test suite — verified no regressions
+
+---
+
+## Review
+
+### Changes Made
+
+| File | Bug(s) | Lines Changed |
+|------|--------|---------------|
+| `lib/group_consumer.js` | 1 | Removed 2 lines (redundant `_joinGroup` + `.then`) |
+| `lib/connection.js` | 5 | Changed `this` to `this.server()` on 1 line |
+| `lib/client.js` | 2, 3, 4, 6 | ~40 lines added/changed |
+
+### Bug 1 — `_fullRejoin` double join
+Removed the redundant `self._joinGroup().then(function () {` wrapper. `_rejoin()` already calls `_joinGroup()` internally, so the extra call caused two consecutive JoinGroup requests per rebalance.
+
+### Bug 2 — Wrong coordinator for TxnOffsetCommit
+Changed `_findTransactionCoordinator(transactionalId)` to `_findGroupCoordinator(groupId)`. The Kafka protocol requires TxnOffsetCommit to be sent to the group coordinator.
+
+### Bug 3 — Stale transaction coordinator cache
+Added `updateTransactionCoordinator()` method (mirrors existing `updateGroupCoordinator()`). Added `.catch` blocks to `addPartitionsToTxnRequest`, `addOffsetsToTxnRequest`, and `endTxnRequest` that clear the cached coordinator on connection/coordinator errors so the next call rediscovers it.
+
+### Bug 4 — Raw array throws
+Changed `throw errs;` to `throw new AggregateError(errs, 'All attempts failed');` at 4 locations in error handlers for `Promise.any`. This ensures upstream code can use `instanceof` checks.
+
+### Bug 5 — `[object Object]` in error messages
+Changed `new NoKafkaConnectionError(this, ...)` to `new NoKafkaConnectionError(this.server(), ...)` in `Connection.close()`.
+
+### Bug 6 — Unhandled promise rejection in `_applyLeaderHints`
+Wrapped fire-and-forget `apiVersionsRequest` call with `Promise.resolve(...).catch(...)` to handle both rejections and cases where the function returns undefined (e.g., in tests with stubs).
+
+### Test Results
+- 454 tests passing (no regressions)
+- 2 pre-existing SSL failures (port 9093 not configured)
+- 3 pending tests (skipped)
+- GroupConsumer tests have pre-existing timing flakiness in full suite (pass reliably in isolation)
+
+---
+
+# Fix GroupConsumer Test Ordering Pollution
+
+## Todo
+
+- [x] **1** Add unique `groupId` per test run for main GroupConsumer tests
+- [x] **2** Add unique `coopGroupId` per test run for cooperative GroupConsumer tests
+- [x] **3** Verify tests pass in isolation (`npx mocha test/03.group_consumer.js`)
+- [x] **4** Verify tests pass in full suite (`npm test`)
+
+## Review
+
+### Summary
+Fixed GroupConsumer test ordering pollution by making groupIds unique per test run. The root cause: consumers used a fixed `groupId` (`no-kafka-group-v0.9`), so Kafka persisted committed offsets across runs. On subsequent `npm test` runs, consumers resumed from stale offsets instead of LATEST, picking up messages written by earlier test files.
+
+### Changes
+- `test/03.group_consumer.js`: Added `groupId = 'no-kafka-group-v0.9-' + Date.now()` and passed it to all 3 consumers. Added `coopGroupId = 'no-kafka-coop-test-' + Date.now()` and passed it to both cooperative consumers. ~7 lines changed.
+
+### Test Results
+- 454 passing, 2 failing (pre-existing SSL), 3 pending
+- GroupConsumer tests now pass reliably in full suite

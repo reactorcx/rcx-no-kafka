@@ -7,19 +7,23 @@
 var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
 
+var groupId = 'no-kafka-group-v0.9-' + Date.now();
 var producer = new Kafka.Producer({ requiredAcks: 1, clientId: 'producer' });
 var consumers = [
     new Kafka.GroupConsumer({
+        groupId: groupId,
         idleTimeout: 100,
         heartbeatTimeout: 100,
         clientId: 'group-consumer1'
     }),
     new Kafka.GroupConsumer({
+        groupId: groupId,
         idleTimeout: 100,
         heartbeatTimeout: 100,
         clientId: 'group-consumer2'
     }),
     new Kafka.GroupConsumer({
+        groupId: groupId,
         idleTimeout: 100,
         heartbeatTimeout: 100,
         clientId: 'group-consumer3'
@@ -258,16 +262,17 @@ describe('GroupConsumer', function () {
 });
 
 describe('GroupConsumer (cooperative)', function () {
+    var coopGroupId = 'no-kafka-coop-test-' + Date.now();
     var coopProducer = new Kafka.Producer({ requiredAcks: 1, clientId: 'coop-producer' });
     var coopConsumers = [
         new Kafka.GroupConsumer({
-            groupId: 'no-kafka-coop-test-group',
+            groupId: coopGroupId,
             idleTimeout: 100,
             heartbeatTimeout: 100,
             clientId: 'coop-consumer1'
         }),
         new Kafka.GroupConsumer({
-            groupId: 'no-kafka-coop-test-group',
+            groupId: coopGroupId,
             idleTimeout: 100,
             heartbeatTimeout: 100,
             clientId: 'coop-consumer2'
