@@ -351,3 +351,72 @@ describe('GroupConsumer (cooperative)', function () {
         totalOwned.should.be.eql(3);
     });
 });
+
+describe('GroupConsumer (eager mode callbacks)', function () {
+    var eagerGroupId = 'no-kafka-eager-cb-' + Date.now();
+    var eagerConsumers = [
+        new Kafka.GroupConsumer({
+            groupId: eagerGroupId,
+            idleTimeout: 100,
+            heartbeatTimeout: 100,
+            clientId: 'eager-consumer1'
+        }),
+        new Kafka.GroupConsumer({
+            groupId: eagerGroupId,
+            idleTimeout: 100,
+            heartbeatTimeout: 100,
+            clientId: 'eager-consumer2'
+        })
+    ];
+    var assignedPartitions, revokedPartitions;
+
+    after(function () {
+        this.timeout(10000);
+        return Promise.all(eagerConsumers.map(function (c) {
+            return c.end();
+        }));
+    });
+
+    it('should fire onPartitionsAssigned on initial join', function () {
+        this.timeout(10000);
+        assignedPartitions = [];
+        revokedPartitions = [];
+        return eagerConsumers[0].init({
+            subscriptions: ['kafka-test-topic'],
+            handler: function () {},
+            onPartitionsRevoked: function (partitions) {
+                revokedPartitions = revokedPartitions.concat(partitions);
+            },
+            onPartitionsAssigned: function (partitions) {
+                assignedPartitions = assignedPartitions.concat(partitions);
+            }
+        })
+        .then(function () {
+            // First join — no prior subscriptions, so no revocations
+            revokedPartitions.should.have.length(0);
+            // Should be assigned all 3 partitions of kafka-test-topic
+            assignedPartitions.should.have.length(3);
+            assignedPartitions.forEach(function (p) {
+                p.should.have.property('topic', 'kafka-test-topic');
+                p.should.have.property('partition').that.is.a('number');
+            });
+        });
+    });
+
+    it('should fire onPartitionsRevoked when a second consumer triggers rebalance', function () {
+        this.timeout(15000);
+        revokedPartitions = [];
+        assignedPartitions = [];
+        return eagerConsumers[1].init({
+            subscriptions: ['kafka-test-topic'],
+            handler: function () {}
+        })
+        .then(promiseUtils.delayChain(2000))
+        .then(function () {
+            // Consumer 1 had all 3 partitions, then rebalanced — should have revoked all 3
+            revokedPartitions.should.have.length(3);
+            // After rebalance, consumer 1 gets re-assigned its share
+            assignedPartitions.length.should.be.gt(0);
+        });
+    });
+});
