@@ -1499,3 +1499,85 @@ Fixed GroupConsumer test ordering pollution by making groupIds unique per test r
 ### Test Results
 - 454 passing, 2 failing (pre-existing SSL), 3 pending
 - GroupConsumer tests now pass reliably in full suite
+
+---
+
+# Add Missing Protocol Version Tests
+
+## Todo
+
+- [x] Phase 1: Group Membership APIs — JoinGroup v7/v8/v9, SyncGroup v5
+- [x] Phase 2: Admin APIs — DescribeGroups v6, ListGroups v4/v5
+- [x] Phase 3: Transaction APIs — EndTxn v4/v5, AddOffsetsToTxn v4, TxnOffsetCommit v4/v5, InitProducerId v6
+- [x] Phase 4: Core APIs — Produce v12/v13, Metadata v13, ListOffsets v10, OffsetCommit v9/v10, OffsetFetch v10, ApiVersions v4
+- [x] Run tests and verify all pass
+
+## Review
+
+### Summary
+Added 31 new protocol version unit tests in `test/25.protocol_v41.js` covering 20+ versions across 15 APIs. Tests verify both request encoding (apiKey/apiVersion bytes) and response deserialization (new fields parsed correctly).
+
+### Changes
+- **New file:** `test/25.protocol_v41.js` — 31 tests organized in 4 phases:
+  - Phase 1 (7 tests): JoinGroup v7 req+resp, v8 req, v9 req+resp, SyncGroup v5 req+resp
+  - Phase 2 (6 tests): DescribeGroups v6 req+resp, ListGroups v4 req+resp, ListGroups v5 req+resp
+  - Phase 3 (7 tests): EndTxn v4 req, EndTxn v5 req+resp, AddOffsetsToTxn v4 req, TxnOffsetCommit v4 req, TxnOffsetCommit v5 req, InitProducerId v6 req
+  - Phase 4 (11 tests): Produce v12 req, Produce v13 req+resp, Metadata v13 req, ListOffsets v10 req, OffsetCommit v9 req, OffsetCommit v10 req+resp, OffsetFetch v10 req+resp, ApiVersions v4 req
+
+### Key fields now tested
+- JoinGroup v7: `protocolType` (compactNullableString)
+- JoinGroup v9: `skipAssignment` (Int8)
+- SyncGroup v5: `protocolType` + `protocolName` (request + response)
+- DescribeGroups v6: `errorMessage` (compactNullableString)
+- ListGroups v4: `groupState`; v5: `groupType`
+- EndTxn v5: `producerId` (Int64BE) + `producerEpoch` (Int16BE)
+- Produce v13, OffsetCommit v10, OffsetFetch v10: `topicId` (uuid)
+- InitProducerId v6: `enable2Pc` + `keepPreparedTxn` (Int8)
+- ListOffsets v10: `timeoutMs` (Int32BE)
+
+### Test Results
+- 485 passing, 2 failing (pre-existing SSL), 3 pending
+- All 31 new tests pass in isolation and in full suite
+
+---
+
+# Response Parser Integration Tests
+
+## Todo
+
+- [x] **1** Create `test/26.response_parser_integration.js` with 6 integration tests
+- [x] **2** Fix MetadataResponseV13 test (pass topic name to updateMetadata)
+- [x] **3** Fix FetchResponseV3→V4 (Kafka 4.1.1 min Fetch version is 4)
+- [x] **4** Fix ESLint vars-on-top violations
+- [x] **5** Run full test suite — 497 passing, 2 failing (pre-existing SSL)
+
+---
+
+## Review
+
+### Summary
+Added integration tests that hit the real Kafka 4.1.1 broker to validate 6 response parsers. These complement the existing unit tests in `test/25.protocol_v41.js` which only test synthetic buffers.
+
+### File Created
+- `test/26.response_parser_integration.js` — 6 integration tests
+
+### Approach
+- **Version capping**: A helper function `capApiVersions()` temporarily lowers `connection.apiVersions[apiKey].max` on broker/coordinator connections. This forces `_negotiateVersion()` to select the target version, causing the client to send the old-format request and the broker to respond in the matching old format.
+- **Cleanup**: Each test saves and restores the original version in a `catch`/finally pattern.
+
+### Tests
+| # | Test | API Key | Cap | Parser Validated |
+|---|------|---------|-----|------------------|
+| 1 | MetadataResponseV13 | 3 | None (production version) | MetadataResponseV13 |
+| 2 | FetchResponseV4 | 1 | 4 | FetchResponseV4 |
+| 3 | DescribeGroupResponseV4 | 15 | 4 | DescribeGroupResponseV4 |
+| 4 | DescribeGroupResponseV5 | 15 | 5 | DescribeGroupResponseV5 |
+| 5 | OffsetFetchResponseV3 | 9 | 4 | OffsetFetchResponseV3 |
+| 6 | OffsetResponseV2 | 2 | 3 | OffsetResponseV2 |
+
+### Key Discovery
+- Kafka 4.1.1 Fetch API minimum is **v4** (not v0), so FetchResponseV3 cannot be integration-tested against this broker. Changed to FetchResponseV4.
+
+### Test Results
+- 497 passing, 2 failing (pre-existing SSL), 3 pending
+- All 6 new integration tests pass in isolation and in full suite
