@@ -336,6 +336,12 @@ describe('GroupConsumer (cooperative)', function () {
             // Each should have at least 1
             subs0.should.be.gte(1);
             subs1.should.be.gte(1);
+            // Consumer 1 should have revoked at least 1 partition to make room for consumer 2
+            revokedPartitions.should.have.length.gte(1);
+            revokedPartitions.forEach(function (p) {
+                p.should.have.property('topic', 'kafka-test-topic');
+                p.should.have.property('partition').that.is.a('number');
+            });
         });
     });
 
