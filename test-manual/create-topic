@@ -1,0 +1,14 @@
+#!/bin/bash
+
+TOPIC=kafka-test-topic
+
+echo "── Creating topic '$TOPIC' (RF=3, partitions=6) ──"
+docker exec broker-east /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server broker-east:9092 \
+    --create \
+    --topic "$TOPIC" \
+    --partitions 6 \
+    --replication-factor 3 \
+    --if-not-exists 2>/dev/null
+echo "  ✓ Topic created"
+echo ""
