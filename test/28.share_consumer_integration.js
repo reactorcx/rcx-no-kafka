@@ -22,7 +22,7 @@ function pollUntil(conditionFn, intervalMs, maxAttempts) {
             if (attempt >= maxAttempts) {
                 return reject(new Error('pollUntil timed out after ' + maxAttempts + ' attempts'));
             }
-            setTimeout(check, intervalMs);
+            return setTimeout(check, intervalMs);
         }());
     });
 }
@@ -54,12 +54,14 @@ describe('KIP-932 ShareConsumer Integration', function () {
         var consumer;
 
         afterEach(function () {
+            var c;
             this.timeout(10000);
             if (consumer) {
-                var c = consumer;
+                c = consumer;
                 consumer = null;
                 return c.end();
             }
+            return undefined;
         });
 
         it('should join a share group and receive a memberEpoch', function () {
@@ -126,14 +128,13 @@ describe('KIP-932 ShareConsumer Integration', function () {
 
     describe('ShareFetch (message delivery)', function () {
         it('should fetch messages produced while consumer is active', function () {
-            this.timeout(30000);
-
             var received = [];
             var consumer = new Kafka.ShareConsumer({
                 groupId: 'share-integ-fetch-' + Date.now(),
                 clientId: 'share-integ-fetch',
                 idleTimeout: 500
             });
+            this.timeout(30000);
 
             return consumer.init({
                 topics: [TOPIC],
@@ -162,8 +163,9 @@ describe('KIP-932 ShareConsumer Integration', function () {
                     return received.length >= 2;
                 }, 500, 20);
             }).then(function () {
+                var values;
                 received.length.should.be.at.least(2);
-                var values = received.map(function (r) { return r.value; });
+                values = received.map(function (r) { return r.value; });
                 values.should.include('share-fetch-1');
                 values.should.include('share-fetch-2');
                 return consumer.end();
@@ -173,8 +175,6 @@ describe('KIP-932 ShareConsumer Integration', function () {
 
     describe('Acknowledge (accept records)', function () {
         it('should acknowledge records via piggybacked acks on next fetch', function () {
-            this.timeout(30000);
-
             var received = [];
             var acknowledged = false;
             var consumer = new Kafka.ShareConsumer({
@@ -182,6 +182,7 @@ describe('KIP-932 ShareConsumer Integration', function () {
                 clientId: 'share-integ-ack',
                 idleTimeout: 500
             });
+            this.timeout(30000);
 
             return consumer.init({
                 topics: [TOPIC],

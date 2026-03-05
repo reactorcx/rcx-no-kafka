@@ -25,7 +25,6 @@ var promiseUtils = require('../lib/promise-utils');
 var TOPIC = 'kafka-test-topic';
 
 describe('Rack Awareness Integration (KIP-392)', function () {
-
     describe('Replica placement', function () {
         var client;
 
@@ -64,7 +63,7 @@ describe('Rack Awareness Integration (KIP-392)', function () {
 
     describe('Fetch locality with rackId', function () {
         var producer, rackConsumer, plainConsumer;
-        var rackFetchTimes = [], plainFetchTimes = [];
+        var ends;
 
         before(function () {
             this.timeout(30000);
@@ -92,7 +91,7 @@ describe('Rack Awareness Integration (KIP-392)', function () {
 
         after(function () {
             this.timeout(10000);
-            var ends = [producer.end()];
+            ends = [producer.end()];
             if (rackConsumer) { ends.push(rackConsumer.end()); }
             if (plainConsumer) { ends.push(plainConsumer.end()); }
             return Promise.all(ends);
@@ -108,10 +107,8 @@ describe('Rack Awareness Integration (KIP-392)', function () {
                 idleTimeout: 200
             });
 
-            var fetchCount = 0;
-
             return rackConsumer.init().then(function () {
-                return rackConsumer.subscribe(TOPIC, [0, 1, 2, 3, 4, 5], { time: Kafka.EARLIEST_OFFSET }, function (messageSet, topic, partition) {
+                return rackConsumer.subscribe(TOPIC, [0, 1, 2, 3, 4, 5], { time: Kafka.EARLIEST_OFFSET }, function () {
                     // Just consume
                 });
             }).then(function () {
@@ -152,7 +149,7 @@ describe('Rack Awareness Integration (KIP-392)', function () {
             });
 
             return plainConsumer.init().then(function () {
-                return plainConsumer.subscribe(TOPIC, [0, 1, 2, 3, 4, 5], { time: Kafka.EARLIEST_OFFSET }, function (messageSet, topic, partition) {
+                return plainConsumer.subscribe(TOPIC, [0, 1, 2, 3, 4, 5], { time: Kafka.EARLIEST_OFFSET }, function () {
                     // Just consume
                 });
             }).then(function () {
@@ -177,45 +174,20 @@ describe('Rack Awareness Integration (KIP-392)', function () {
         });
 
         it('should show latency difference between rack-aware and plain fetches', function () {
-            this.timeout(30000);
-
             var rackTimes = [], plainTimes = [];
-
-            // Measure rack-aware fetch latency
-            function measureFetch(consumer, times) {
-                var start, i = 0;
-                return new Promise(function (resolve) {
-                    function doFetch() {
-                        if (i >= 5) { return resolve(); }
-                        start = Date.now();
-                        consumer.client.fetchRequest({}).then(function () {
-                            times.push(Date.now() - start);
-                            i++;
-                            setTimeout(doFetch, 100);
-                        }).catch(function () {
-                            times.push(Date.now() - start);
-                            i++;
-                            setTimeout(doFetch, 100);
-                        });
-                    }
-                    doFetch();
-                });
-            }
+            this.timeout(30000);
 
             // Use the existing subscriptions data to build proper fetch requests
             function measureSubscribedFetch(consumer, times, count) {
                 var done = 0;
                 return new Promise(function (resolve) {
-                    var origHandler = null;
-                    var subs = consumer.subscriptions;
-                    var subKeys = Object.keys(subs);
-
                     // Measure the time of each fetch cycle
                     function tick() {
+                        var start;
                         if (done >= count) { return resolve(); }
-                        var start = Date.now();
+                        start = Date.now();
                         // Wait for next idle timeout fetch cycle
-                        setTimeout(function () {
+                        return setTimeout(function () {
                             times.push(Date.now() - start);
                             done++;
                             tick();

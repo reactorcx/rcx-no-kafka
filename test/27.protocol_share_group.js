@@ -217,7 +217,7 @@ describe('KIP-932 Share Group Protocol Tests', function () {
 
         it('should parse ShareFetchResponseV1 with records and acquired metadata', function () {
             var writer = protocol.write();
-            var result;
+            var result, p;
 
             // correlationId
             writer.Int32BE(10);
@@ -270,7 +270,7 @@ describe('KIP-932 Share Group Protocol Tests', function () {
             result.responses[0].topicId.should.equal('a1b2c3d4-e5f6-7890-abcd-ef1234567890');
             result.responses[0].partitions.should.be.an('array').with.length(1);
 
-            var p = result.responses[0].partitions[0];
+            p = result.responses[0].partitions[0];
             p.partitionIndex.should.equal(0);
             should.not.exist(p.error);
             p.currentLeader.leaderId.should.equal(1);
@@ -283,7 +283,7 @@ describe('KIP-932 Share Group Protocol Tests', function () {
 
         it('should parse ShareFetchResponseV1 with partition error', function () {
             var writer = protocol.write();
-            var result;
+            var result, p;
 
             writer.Int32BE(12);
             writer.TaggedFields();
@@ -316,7 +316,7 @@ describe('KIP-932 Share Group Protocol Tests', function () {
             writer.TaggedFields();
 
             result = protocol.read(writer.result).ShareFetchResponseV1().result;
-            var p = result.responses[0].partitions[0];
+            p = result.responses[0].partitions[0];
             p.error.should.be.an('object');
             p.error.code.should.equal('NotLeaderForPartition');
             p.errorMessage.should.equal('not the leader');
@@ -381,7 +381,7 @@ describe('KIP-932 Share Group Protocol Tests', function () {
 
         it('should parse ShareAcknowledgeResponseV1 success', function () {
             var writer = protocol.write();
-            var result;
+            var result, p;
 
             writer.Int32BE(20);
             writer.TaggedFields();
@@ -411,7 +411,7 @@ describe('KIP-932 Share Group Protocol Tests', function () {
             should.not.exist(result.error);
             result.responses.should.be.an('array').with.length(1);
             result.responses[0].topicId.should.equal('a1b2c3d4-e5f6-7890-abcd-ef1234567890');
-            var p = result.responses[0].partitions[0];
+            p = result.responses[0].partitions[0];
             p.partitionIndex.should.equal(0);
             should.not.exist(p.error);
             p.currentLeader.leaderId.should.equal(1);
@@ -420,7 +420,7 @@ describe('KIP-932 Share Group Protocol Tests', function () {
 
         it('should parse ShareAcknowledgeResponseV1 with partition error', function () {
             var writer = protocol.write();
-            var result;
+            var result, p;
 
             writer.Int32BE(21);
             writer.TaggedFields();
@@ -444,7 +444,7 @@ describe('KIP-932 Share Group Protocol Tests', function () {
             writer.TaggedFields();
 
             result = protocol.read(writer.result).ShareAcknowledgeResponseV1().result;
-            var p = result.responses[0].partitions[0];
+            p = result.responses[0].partitions[0];
             p.error.should.be.an('object');
             p.error.code.should.equal('UnknownMemberId');
             p.errorMessage.should.equal('unknown member');
