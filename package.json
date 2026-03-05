@@ -7,6 +7,9 @@
     "email": "oleksiyk@gmail.com"
   },
   "version": "4.0.0",
+  "engines": {
+    "node": ">=16"
+  },
   "main": "./lib/index.js",
   "types": "./types/index.d.ts",
   "keywords": [

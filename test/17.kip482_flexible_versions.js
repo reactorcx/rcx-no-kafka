@@ -26,12 +26,12 @@ describe('KIP-482 Flexible Versions Infrastructure', function () {
             encoded.length.should.equal(6);
         });
 
-        it('should round-trip null', function () {
+        it('should encode null as empty string (non-nullable type)', function () {
             var encoded = protocol.write().compactString(null).result;
             var decoded = protocol.read(encoded).compactString('value').result;
-            should.equal(decoded.value, null);
+            decoded.value.should.equal('');
             encoded.length.should.equal(1);
-            encoded[0].should.equal(0x00);
+            encoded[0].should.equal(0x01); // UVarint(1) = empty string
         });
 
         it('should round-trip empty string', function () {

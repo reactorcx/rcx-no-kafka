@@ -52,10 +52,10 @@ describe('v0.11 Protocol Upgrade', function () {
     //////////////////
 
     describe('Error Codes', function () {
-        it('should resolve error code 13 (StaleControllerEpochCode)', function () {
+        it('should resolve error code 13 (NetworkException)', function () {
             var err = errors.byCode(13);
             err.should.be.an.instanceOf(errors.KafkaError);
-            err.code.should.equal('StaleControllerEpochCode');
+            err.code.should.equal('NetworkException');
         });
 
         it('should resolve error code 33 (UnsupportedSaslMechanism)', function () {
