@@ -32,7 +32,7 @@ describe('KIP-951: Leader Discovery Optimizations (Produce v10/v11)', function (
                             baseOffset: 0,
                             records: [{
                                 key: null,
-                                value: new Buffer('hello', 'utf8')
+                                value: Buffer.from('hello', 'utf8')
                             }],
                             codec: 0
                         }
@@ -145,7 +145,7 @@ describe('KIP-951: Leader Discovery Optimizations (Produce v10/v11)', function (
                             baseOffset: 0,
                             records: [{
                                 key: null,
-                                value: new Buffer('world', 'utf8')
+                                value: Buffer.from('world', 'utf8')
                             }],
                             codec: 0
                         }

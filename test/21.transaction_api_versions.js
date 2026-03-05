@@ -159,20 +159,20 @@ describe('Transaction API Version Bumps (v1-v3)', function () {
     describe('AddPartitionsToTxnResponseV3', function () {
         it('should parse flexible response', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId = 1
-                new Buffer([0x00]),                     // TaggedFields (empty)
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
-                new Buffer([0x02]),                     // compactArray length = 2 (1 item)
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId = 1
+                Buffer.from([0x00]),                     // TaggedFields (empty)
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
+                Buffer.from([0x02]),                     // compactArray length = 2 (1 item)
                 // topic result
-                new Buffer([0x03]),                     // compactString len=2+1 = 3
-                new Buffer('t1', 'utf8'),
-                new Buffer([0x02]),                     // compactArray length = 2 (1 partition)
+                Buffer.from([0x03]),                     // compactString len=2+1 = 3
+                Buffer.from('t1', 'utf8'),
+                Buffer.from([0x02]),                     // compactArray length = 2 (1 partition)
                 // partition result
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // partition = 0
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00]),                     // TaggedFields (partition)
-                new Buffer([0x00]),                     // TaggedFields (topic)
-                new Buffer([0x00])                      // TaggedFields (top-level)
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // partition = 0
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00]),                     // TaggedFields (partition)
+                Buffer.from([0x00]),                     // TaggedFields (topic)
+                Buffer.from([0x00])                      // TaggedFields (top-level)
             ]);
             var result = protocol.read(buf).AddPartitionsToTxnResponseV3().result;
             result.correlationId.should.equal(1);
@@ -210,11 +210,11 @@ describe('Transaction API Version Bumps (v1-v3)', function () {
     describe('AddOffsetsToTxnResponseV3', function () {
         it('should parse flexible response', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId = 1
-                new Buffer([0x00]),                     // TaggedFields (empty)
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00])                      // TaggedFields (empty)
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId = 1
+                Buffer.from([0x00]),                     // TaggedFields (empty)
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00])                      // TaggedFields (empty)
             ]);
             var result = protocol.read(buf).AddOffsetsToTxnResponseV3().result;
             result.correlationId.should.equal(1);
@@ -248,11 +248,11 @@ describe('Transaction API Version Bumps (v1-v3)', function () {
     describe('EndTxnResponseV3', function () {
         it('should parse flexible response', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId = 1
-                new Buffer([0x00]),                     // TaggedFields (empty)
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00])                      // TaggedFields (empty)
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId = 1
+                Buffer.from([0x00]),                     // TaggedFields (empty)
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00])                      // TaggedFields (empty)
             ]);
             var result = protocol.read(buf).EndTxnResponseV3().result;
             result.correlationId.should.equal(1);
@@ -314,20 +314,20 @@ describe('Transaction API Version Bumps (v1-v3)', function () {
     describe('TxnOffsetCommitResponseV3', function () {
         it('should parse flexible response', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId = 1
-                new Buffer([0x00]),                     // TaggedFields (empty)
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
-                new Buffer([0x02]),                     // compactArray length = 2 (1 item)
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId = 1
+                Buffer.from([0x00]),                     // TaggedFields (empty)
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
+                Buffer.from([0x02]),                     // compactArray length = 2 (1 item)
                 // topic result
-                new Buffer([0x03]),                     // compactString len=2+1 = 3
-                new Buffer('t1', 'utf8'),
-                new Buffer([0x02]),                     // compactArray length = 2 (1 partition)
+                Buffer.from([0x03]),                     // compactString len=2+1 = 3
+                Buffer.from('t1', 'utf8'),
+                Buffer.from([0x02]),                     // compactArray length = 2 (1 partition)
                 // partition result
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // partition = 0
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00]),                     // TaggedFields (partition)
-                new Buffer([0x00]),                     // TaggedFields (topic)
-                new Buffer([0x00])                      // TaggedFields (top-level)
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // partition = 0
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00]),                     // TaggedFields (partition)
+                Buffer.from([0x00]),                     // TaggedFields (topic)
+                Buffer.from([0x00])                      // TaggedFields (top-level)
             ]);
             var result = protocol.read(buf).TxnOffsetCommitResponseV3().result;
             result.correlationId.should.equal(1);

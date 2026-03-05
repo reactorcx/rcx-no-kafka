@@ -392,7 +392,7 @@ describe('KIP-516 Topic IDs', function () {
                             baseOffset: 0,
                             records: [{
                                 key: null,
-                                value: new Buffer('hello', 'utf8')
+                                value: Buffer.from('hello', 'utf8')
                             }],
                             codec: 0
                         }

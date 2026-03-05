@@ -154,7 +154,7 @@ describe('v0.11 Protocol Upgrade', function () {
 
             var result = protocol.read(buf).RecordHeader().result;
             result.key.should.equal('trace-id');
-            // null value writes as length 0
+            should.equal(result.value, null);
         });
 
         it('should round-trip a header with empty key', function () {

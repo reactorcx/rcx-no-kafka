@@ -598,7 +598,7 @@ describe('Kafka 4.1.1 Protocol Version Tests', function () {
                             baseOffset: 0,
                             records: [{
                                 key: null,
-                                value: new Buffer('hello', 'utf8')
+                                value: Buffer.from('hello', 'utf8')
                             }],
                             codec: 0
                         }
@@ -631,7 +631,7 @@ describe('Kafka 4.1.1 Protocol Version Tests', function () {
                             baseOffset: 0,
                             records: [{
                                 key: null,
-                                value: new Buffer('hello', 'utf8')
+                                value: Buffer.from('hello', 'utf8')
                             }],
                             codec: 0
                         }

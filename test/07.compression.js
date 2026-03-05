@@ -76,7 +76,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with Snappy compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
+            var buf = Buffer.alloc(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -144,7 +144,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with LZ4 compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
+            var buf = Buffer.alloc(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -189,7 +189,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with Zstd compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
+            var buf = Buffer.alloc(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -304,7 +304,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with async Snappy compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
+            var buf = Buffer.alloc(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -350,7 +350,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with async Gzip compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
+            var buf = Buffer.alloc(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -396,7 +396,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with async LZ4 compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
+            var buf = Buffer.alloc(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 
@@ -442,7 +442,7 @@ describe('Compression', function () {
         });
 
         it('should send/receive with async Zstd compression (>32kb)', function () {
-            var buf = new Buffer(90 * 1024), crc = (zlib.crc32(buf) | 0);
+            var buf = Buffer.alloc(90 * 1024), crc = (zlib.crc32(buf) | 0);
 
             dataHandlerSpy.reset();
 

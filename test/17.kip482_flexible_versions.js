@@ -80,7 +80,7 @@ describe('KIP-482 Flexible Versions Infrastructure', function () {
 
     describe('compactBytes', function () {
         it('should round-trip a non-null buffer', function () {
-            var buf = new Buffer([0x01, 0x02, 0x03]);
+            var buf = Buffer.from([0x01, 0x02, 0x03]);
             var encoded = protocol.write().compactBytes(buf).result;
             var decoded = protocol.read(encoded).compactBytes('value').result;
             Buffer.isBuffer(decoded.value).should.equal(true);
@@ -98,7 +98,7 @@ describe('KIP-482 Flexible Versions Infrastructure', function () {
         });
 
         it('should round-trip empty buffer', function () {
-            var encoded = protocol.write().compactBytes(new Buffer(0)).result;
+            var encoded = protocol.write().compactBytes(Buffer.alloc(0)).result;
             var decoded = protocol.read(encoded).compactBytes('value').result;
             Buffer.isBuffer(decoded.value).should.equal(true);
             decoded.value.length.should.equal(0);
@@ -112,7 +112,7 @@ describe('KIP-482 Flexible Versions Infrastructure', function () {
 
     describe('compactNullableBytes', function () {
         it('should round-trip a non-null buffer', function () {
-            var buf = new Buffer([0xAA, 0xBB]);
+            var buf = Buffer.from([0xAA, 0xBB]);
             var encoded = protocol.write().compactNullableBytes(buf).result;
             var decoded = protocol.read(encoded).compactNullableBytes('value').result;
             Buffer.isBuffer(decoded.value).should.equal(true);
@@ -126,7 +126,7 @@ describe('KIP-482 Flexible Versions Infrastructure', function () {
         });
 
         it('should round-trip empty buffer', function () {
-            var encoded = protocol.write().compactNullableBytes(new Buffer(0)).result;
+            var encoded = protocol.write().compactNullableBytes(Buffer.alloc(0)).result;
             var decoded = protocol.read(encoded).compactNullableBytes('value').result;
             Buffer.isBuffer(decoded.value).should.equal(true);
             decoded.value.length.should.equal(0);
@@ -227,7 +227,7 @@ describe('KIP-482 Flexible Versions Infrastructure', function () {
             // Tag 0: UVarint(0) tag, UVarint(3) size, 3 bytes data
             // Tag 1: UVarint(1) tag, UVarint(2) size, 2 bytes data
             // Then a trailing marker byte 0xFF to verify we land at the right offset
-            var buf = new Buffer([
+            var buf = Buffer.from([
                 0x02,                   // tagCount = 2
                 0x00, 0x03, 0xAA, 0xBB, 0xCC,  // tag=0, size=3, data
                 0x01, 0x02, 0xDD, 0xEE,         // tag=1, size=2, data

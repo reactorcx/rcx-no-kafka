@@ -32,7 +32,7 @@ describe('Connection', function () {
     });
 
     it('should be able to grow receive buffer', function () {
-        var buf = new Buffer(384 * 1024), crc = (zlib.crc32(buf) | 0);
+        var buf = Buffer.alloc(384 * 1024), crc = (zlib.crc32(buf) | 0);
 
         dataHandlerSpy.reset();
 

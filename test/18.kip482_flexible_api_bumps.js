@@ -35,13 +35,13 @@ describe('KIP-482 Flexible Version API Bumps', function () {
     describe('InitProducerIdResponseV2', function () {
         it('should parse flexible response with TaggedFields', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId = 1
-                new Buffer([0x00]),                     // TaggedFields (empty)
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]), // producerId = 1
-                new Buffer([0x00, 0x01]),               // producerEpoch = 1
-                new Buffer([0x00])                      // TaggedFields (empty)
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId = 1
+                Buffer.from([0x00]),                     // TaggedFields (empty)
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]), // producerId = 1
+                Buffer.from([0x00, 0x01]),               // producerEpoch = 1
+                Buffer.from([0x00])                      // TaggedFields (empty)
             ]);
             var result = protocol.read(buf).InitProducerIdResponseV2().result;
             result.correlationId.should.equal(1);
@@ -76,11 +76,11 @@ describe('KIP-482 Flexible Version API Bumps', function () {
     describe('HeartbeatResponseV4', function () {
         it('should parse flexible response', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00])                      // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId
+                Buffer.from([0x00]),                     // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00])                      // TaggedFields
             ]);
             var result = protocol.read(buf).HeartbeatResponseV4().result;
             result.correlationId.should.equal(1);
@@ -110,18 +110,18 @@ describe('KIP-482 Flexible Version API Bumps', function () {
     describe('ListGroupResponseV3', function () {
         it('should parse flexible response with compact arrays', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x02]),                     // compactArray length = 1+1=2 (1 item)
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId
+                Buffer.from([0x00]),                     // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x02]),                     // compactArray length = 1+1=2 (1 item)
                 // group item: compactString "g1" + compactString "consumer" + TaggedFields
-                new Buffer([0x03]),                     // compactString len=2+1 = 3
-                new Buffer('g1', 'utf8'),
-                new Buffer([0x09]),                     // compactString len=8+1 = 9
-                new Buffer('consumer', 'utf8'),
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00])                      // top-level TaggedFields
+                Buffer.from([0x03]),                     // compactString len=2+1 = 3
+                Buffer.from('g1', 'utf8'),
+                Buffer.from([0x09]),                     // compactString len=8+1 = 9
+                Buffer.from('consumer', 'utf8'),
+                Buffer.from([0x00]),                     // TaggedFields
+                Buffer.from([0x00])                      // top-level TaggedFields
             ]);
             var result = protocol.read(buf).ListGroupResponseV3().result;
             result.correlationId.should.equal(1);
@@ -155,16 +155,16 @@ describe('KIP-482 Flexible Version API Bumps', function () {
     describe('FindCoordinatorResponseV3', function () {
         it('should parse flexible response', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00]),                     // errorMessage = null (compactNullableString)
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // coordinatorId = 1
-                new Buffer([0x0a]),                     // compactString len=9+1 = 10
-                new Buffer('localhost', 'utf8'),
-                new Buffer([0x00, 0x00, 0x23, 0x84]),  // coordinatorPort = 9092
-                new Buffer([0x00])                      // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId
+                Buffer.from([0x00]),                     // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00]),                     // errorMessage = null (compactNullableString)
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // coordinatorId = 1
+                Buffer.from([0x0a]),                     // compactString len=9+1 = 10
+                Buffer.from('localhost', 'utf8'),
+                Buffer.from([0x00, 0x00, 0x23, 0x84]),  // coordinatorPort = 9092
+                Buffer.from([0x00])                      // TaggedFields
             ]);
             var result = protocol.read(buf).FindCoordinatorResponseV3().result;
             result.correlationId.should.equal(1);
@@ -212,21 +212,21 @@ describe('KIP-482 Flexible Version API Bumps', function () {
     describe('FindCoordinatorResponseV4', function () {
         it('should parse coordinators array', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
-                new Buffer([0x02]),                     // compactArray: 1 coordinator
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId
+                Buffer.from([0x00]),                     // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                Buffer.from([0x02]),                     // compactArray: 1 coordinator
                 // coordinator item:
-                new Buffer([0x08]),                     // compactString "mygroup" (len 7+1=8)
-                new Buffer('mygroup', 'utf8'),
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // nodeId = 1
-                new Buffer([0x0a]),                     // compactString "localhost" (len 9+1=10)
-                new Buffer('localhost', 'utf8'),
-                new Buffer([0x00, 0x00, 0x23, 0x84]),  // port = 9092
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00]),                     // errorMessage = null
-                new Buffer([0x00]),                     // coordinator TaggedFields
-                new Buffer([0x00])                      // top-level TaggedFields
+                Buffer.from([0x08]),                     // compactString "mygroup" (len 7+1=8)
+                Buffer.from('mygroup', 'utf8'),
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // nodeId = 1
+                Buffer.from([0x0a]),                     // compactString "localhost" (len 9+1=10)
+                Buffer.from('localhost', 'utf8'),
+                Buffer.from([0x00, 0x00, 0x23, 0x84]),  // port = 9092
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00]),                     // errorMessage = null
+                Buffer.from([0x00]),                     // coordinator TaggedFields
+                Buffer.from([0x00])                      // top-level TaggedFields
             ]);
             var result = protocol.read(buf).FindCoordinatorResponseV4().result;
             result.correlationId.should.equal(1);
@@ -240,31 +240,31 @@ describe('KIP-482 Flexible Version API Bumps', function () {
 
         it('should parse multiple coordinators', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x02]),  // correlationId = 2
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
-                new Buffer([0x03]),                     // compactArray: 2 coordinators
+                Buffer.from([0x00, 0x00, 0x00, 0x02]),  // correlationId = 2
+                Buffer.from([0x00]),                     // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                Buffer.from([0x03]),                     // compactArray: 2 coordinators
                 // coordinator 1: "g1"
-                new Buffer([0x03]),                     // compactString "g1" (len 2+1=3)
-                new Buffer('g1', 'utf8'),
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // nodeId = 1
-                new Buffer([0x0a]),                     // "localhost"
-                new Buffer('localhost', 'utf8'),
-                new Buffer([0x00, 0x00, 0x23, 0x84]),  // port = 9092
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00]),                     // errorMessage = null
-                new Buffer([0x00]),                     // TaggedFields
+                Buffer.from([0x03]),                     // compactString "g1" (len 2+1=3)
+                Buffer.from('g1', 'utf8'),
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // nodeId = 1
+                Buffer.from([0x0a]),                     // "localhost"
+                Buffer.from('localhost', 'utf8'),
+                Buffer.from([0x00, 0x00, 0x23, 0x84]),  // port = 9092
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00]),                     // errorMessage = null
+                Buffer.from([0x00]),                     // TaggedFields
                 // coordinator 2: "g2"
-                new Buffer([0x03]),                     // compactString "g2"
-                new Buffer('g2', 'utf8'),
-                new Buffer([0x00, 0x00, 0x00, 0x02]),  // nodeId = 2
-                new Buffer([0x0a]),                     // "localhost"
-                new Buffer('localhost', 'utf8'),
-                new Buffer([0x00, 0x00, 0x23, 0x85]),  // port = 9093
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00]),                     // errorMessage = null
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00])                      // top-level TaggedFields
+                Buffer.from([0x03]),                     // compactString "g2"
+                Buffer.from('g2', 'utf8'),
+                Buffer.from([0x00, 0x00, 0x00, 0x02]),  // nodeId = 2
+                Buffer.from([0x0a]),                     // "localhost"
+                Buffer.from('localhost', 'utf8'),
+                Buffer.from([0x00, 0x00, 0x23, 0x85]),  // port = 9093
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00]),                     // errorMessage = null
+                Buffer.from([0x00]),                     // TaggedFields
+                Buffer.from([0x00])                      // top-level TaggedFields
             ]);
             var result = protocol.read(buf).FindCoordinatorResponseV4().result;
             result.coordinators.length.should.equal(2);
@@ -306,18 +306,18 @@ describe('KIP-482 Flexible Version API Bumps', function () {
     describe('OffsetCommitResponseV8', function () {
         it('should parse flexible response', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
-                new Buffer([0x02]),                     // compactArray: 1 topic
-                new Buffer([0x05]),                     // compactString: "test" (len 4+1)
-                new Buffer('test', 'utf8'),
-                new Buffer([0x02]),                     // compactArray: 1 partition
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // partition = 0
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00]),                     // partition TaggedFields
-                new Buffer([0x00]),                     // topic TaggedFields
-                new Buffer([0x00])                      // top-level TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId
+                Buffer.from([0x00]),                     // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                Buffer.from([0x02]),                     // compactArray: 1 topic
+                Buffer.from([0x05]),                     // compactString: "test" (len 4+1)
+                Buffer.from('test', 'utf8'),
+                Buffer.from([0x02]),                     // compactArray: 1 partition
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // partition = 0
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00]),                     // partition TaggedFields
+                Buffer.from([0x00]),                     // topic TaggedFields
+                Buffer.from([0x00])                      // top-level TaggedFields
             ]);
             var result = protocol.read(buf).OffsetCommitResponseV8().result;
             result.correlationId.should.equal(1);
@@ -367,22 +367,22 @@ describe('KIP-482 Flexible Version API Bumps', function () {
     describe('OffsetFetchResponseV6', function () {
         it('should parse flexible response', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),          // correlationId
-                new Buffer([0x00]),                             // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),          // throttleTime
-                new Buffer([0x02]),                             // compactArray: 1 topic
-                new Buffer([0x05]),                             // compactString: "test" (len 4+1)
-                new Buffer('test', 'utf8'),
-                new Buffer([0x02]),                             // compactArray: 1 partition
-                new Buffer([0x00, 0x00, 0x00, 0x00]),          // partition = 0
-                new Buffer([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A]),  // offset = 10
-                new Buffer([0xFF, 0xFF, 0xFF, 0xFF]),           // committedLeaderEpoch = -1
-                new Buffer([0x00]),                             // metadata = null (compactNullableString)
-                new Buffer([0x00, 0x00]),                       // error = 0
-                new Buffer([0x00]),                             // partition TaggedFields
-                new Buffer([0x00]),                             // topic TaggedFields
-                new Buffer([0x00, 0x00]),                       // top-level error = 0
-                new Buffer([0x00])                              // top-level TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),          // correlationId
+                Buffer.from([0x00]),                             // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),          // throttleTime
+                Buffer.from([0x02]),                             // compactArray: 1 topic
+                Buffer.from([0x05]),                             // compactString: "test" (len 4+1)
+                Buffer.from('test', 'utf8'),
+                Buffer.from([0x02]),                             // compactArray: 1 partition
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),          // partition = 0
+                Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A]),  // offset = 10
+                Buffer.from([0xFF, 0xFF, 0xFF, 0xFF]),           // committedLeaderEpoch = -1
+                Buffer.from([0x00]),                             // metadata = null (compactNullableString)
+                Buffer.from([0x00, 0x00]),                       // error = 0
+                Buffer.from([0x00]),                             // partition TaggedFields
+                Buffer.from([0x00]),                             // topic TaggedFields
+                Buffer.from([0x00, 0x00]),                       // top-level error = 0
+                Buffer.from([0x00])                              // top-level TaggedFields
             ]);
             var result = protocol.read(buf).OffsetFetchResponseV6().result;
             result.correlationId.should.equal(1);
@@ -416,17 +416,17 @@ describe('KIP-482 Flexible Version API Bumps', function () {
     describe('LeaveGroupResponseV4', function () {
         it('should parse flexible response', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x02]),                     // compactArray: 1 member
-                new Buffer([0x03]),                     // compactString: "m1" (len 2+1)
-                new Buffer('m1', 'utf8'),
-                new Buffer([0x00]),                     // groupInstanceId = null
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00]),                     // member TaggedFields
-                new Buffer([0x00])                      // top-level TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId
+                Buffer.from([0x00]),                     // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x02]),                     // compactArray: 1 member
+                Buffer.from([0x03]),                     // compactString: "m1" (len 2+1)
+                Buffer.from('m1', 'utf8'),
+                Buffer.from([0x00]),                     // groupInstanceId = null
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00]),                     // member TaggedFields
+                Buffer.from([0x00])                      // top-level TaggedFields
             ]);
             var result = protocol.read(buf).LeaveGroupResponseV4().result;
             result.correlationId.should.equal(1);
@@ -487,24 +487,24 @@ describe('KIP-482 Flexible Version API Bumps', function () {
         it('should parse flexible response with compact assignment', function () {
             // Build inner assignment: version=0, 1 partition assignment (topic "t1", partition [0]), null metadata
             var innerBuf = Buffer.concat([
-                new Buffer([0x00, 0x00]),               // version = 0
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // array length = 1 (old encoding)
-                new Buffer([0x00, 0x02]),               // string length = 2 (old encoding)
-                new Buffer('t1', 'utf8'),
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // array length = 1
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // partition = 0
-                new Buffer([0xFF, 0xFF, 0xFF, 0xFF])    // metadata = null (old bytes)
+                Buffer.from([0x00, 0x00]),               // version = 0
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // array length = 1 (old encoding)
+                Buffer.from([0x00, 0x02]),               // string length = 2 (old encoding)
+                Buffer.from('t1', 'utf8'),
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // array length = 1
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // partition = 0
+                Buffer.from([0xFF, 0xFF, 0xFF, 0xFF])    // metadata = null (old bytes)
             ]);
 
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),   // correlationId
-                new Buffer([0x00]),                      // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),   // throttleTime
-                new Buffer([0x00, 0x00]),                // error = 0
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),   // correlationId
+                Buffer.from([0x00]),                      // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),   // throttleTime
+                Buffer.from([0x00, 0x00]),                // error = 0
                 // compactBytes: UVarint(innerBuf.length + 1)
-                new Buffer([innerBuf.length + 1]),
+                Buffer.from([innerBuf.length + 1]),
                 innerBuf,
-                new Buffer([0x00])                       // top-level TaggedFields
+                Buffer.from([0x00])                       // top-level TaggedFields
             ]);
             var result = protocol.read(buf).SyncConsumerGroupResponseV4().result;
             result.correlationId.should.equal(1);
@@ -568,42 +568,42 @@ describe('KIP-482 Flexible Version API Bumps', function () {
         it('should parse flexible response with compact members', function () {
             // Build inner metadata: version=0, subscriptions=["t1"], null metadata (old encoding)
             var innerMeta = Buffer.concat([
-                new Buffer([0x00, 0x00]),               // version = 0
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // array length = 1 (old encoding)
-                new Buffer([0x00, 0x02]),               // string length = 2 (old encoding)
-                new Buffer('t1', 'utf8'),
-                new Buffer([0xFF, 0xFF, 0xFF, 0xFF])    // metadata = null (old bytes)
+                Buffer.from([0x00, 0x00]),               // version = 0
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // array length = 1 (old encoding)
+                Buffer.from([0x00, 0x02]),               // string length = 2 (old encoding)
+                Buffer.from('t1', 'utf8'),
+                Buffer.from([0xFF, 0xFF, 0xFF, 0xFF])    // metadata = null (old bytes)
             ]);
 
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),   // correlationId
-                new Buffer([0x00]),                      // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),   // throttleTime
-                new Buffer([0x00, 0x00]),                // error = 0
-                new Buffer([0x00, 0x00, 0x00, 0x01]),   // generationId = 1
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),   // correlationId
+                Buffer.from([0x00]),                      // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),   // throttleTime
+                Buffer.from([0x00, 0x00]),                // error = 0
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),   // generationId = 1
                 // compactString "range" (len 5+1=6)
-                new Buffer([0x06]),
-                new Buffer('range', 'utf8'),
+                Buffer.from([0x06]),
+                Buffer.from('range', 'utf8'),
                 // compactString "leader-1" (len 8+1=9)
-                new Buffer([0x09]),
-                new Buffer('leader-1', 'utf8'),
+                Buffer.from([0x09]),
+                Buffer.from('leader-1', 'utf8'),
                 // compactString "member-1" (len 8+1=9)
-                new Buffer([0x09]),
-                new Buffer('member-1', 'utf8'),
+                Buffer.from([0x09]),
+                Buffer.from('member-1', 'utf8'),
                 // compactArray: 1 member
-                new Buffer([0x02]),
+                Buffer.from([0x02]),
                 // member: compactString "member-1"
-                new Buffer([0x09]),
-                new Buffer('member-1', 'utf8'),
+                Buffer.from([0x09]),
+                Buffer.from('member-1', 'utf8'),
                 // groupInstanceId = null
-                new Buffer([0x00]),
+                Buffer.from([0x00]),
                 // compactBytes: inner metadata
-                new Buffer([innerMeta.length + 1]),
+                Buffer.from([innerMeta.length + 1]),
                 innerMeta,
                 // member TaggedFields
-                new Buffer([0x00]),
+                Buffer.from([0x00]),
                 // top-level TaggedFields
-                new Buffer([0x00])
+                Buffer.from([0x00])
             ]);
             var result = protocol.read(buf).JoinConsumerGroupResponseV6().result;
             result.correlationId.should.equal(1);
@@ -641,44 +641,44 @@ describe('KIP-482 Flexible Version API Bumps', function () {
     describe('MetadataResponseV9', function () {
         it('should parse flexible response with compact nested structures', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId
+                Buffer.from([0x00]),                     // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime
                 // brokers: compactArray with 1 broker
-                new Buffer([0x02]),                     // compactArray length = 2 (1 item)
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // nodeId = 1
-                new Buffer([0x0a]),                     // compactString "localhost" (len 9+1=10)
-                new Buffer('localhost', 'utf8'),
-                new Buffer([0x00, 0x00, 0x23, 0x84]),  // port = 9092
-                new Buffer([0x00]),                     // rack = null
-                new Buffer([0x00]),                     // broker TaggedFields
+                Buffer.from([0x02]),                     // compactArray length = 2 (1 item)
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // nodeId = 1
+                Buffer.from([0x0a]),                     // compactString "localhost" (len 9+1=10)
+                Buffer.from('localhost', 'utf8'),
+                Buffer.from([0x00, 0x00, 0x23, 0x84]),  // port = 9092
+                Buffer.from([0x00]),                     // rack = null
+                Buffer.from([0x00]),                     // broker TaggedFields
                 // clusterId
-                new Buffer([0x05]),                     // compactString "abcd" (len 4+1=5)
-                new Buffer('abcd', 'utf8'),
+                Buffer.from([0x05]),                     // compactString "abcd" (len 4+1=5)
+                Buffer.from('abcd', 'utf8'),
                 // controllerId
-                new Buffer([0x00, 0x00, 0x00, 0x01]),
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),
                 // topics: compactArray with 1 topic
-                new Buffer([0x02]),                     // compactArray length = 2 (1 item)
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x05]),                     // compactString "test" (len 4+1=5)
-                new Buffer('test', 'utf8'),
-                new Buffer([0x00]),                     // isInternal = false
+                Buffer.from([0x02]),                     // compactArray length = 2 (1 item)
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x05]),                     // compactString "test" (len 4+1=5)
+                Buffer.from('test', 'utf8'),
+                Buffer.from([0x00]),                     // isInternal = false
                 // partitions: compactArray with 1 partition
-                new Buffer([0x02]),                     // compactArray length = 2
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // partitionId = 0
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // leader = 1
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // leaderEpoch = 0
-                new Buffer([0x02]),                     // replicas compactArray: 1 item
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // replica = 1
-                new Buffer([0x02]),                     // isr compactArray: 1 item
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // isr = 1
-                new Buffer([0x01]),                     // offlineReplicas compactArray: 0 items
-                new Buffer([0x00]),                     // partition TaggedFields
-                new Buffer([0xFF, 0xFF, 0xFF, 0xFF]),   // topicAuthorizedOperations = -1
-                new Buffer([0x00]),                     // topic TaggedFields
-                new Buffer([0xFF, 0xFF, 0xFF, 0xFF]),   // clusterAuthorizedOperations = -1
-                new Buffer([0x00])                      // top-level TaggedFields
+                Buffer.from([0x02]),                     // compactArray length = 2
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // partitionId = 0
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // leader = 1
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // leaderEpoch = 0
+                Buffer.from([0x02]),                     // replicas compactArray: 1 item
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // replica = 1
+                Buffer.from([0x02]),                     // isr compactArray: 1 item
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // isr = 1
+                Buffer.from([0x01]),                     // offlineReplicas compactArray: 0 items
+                Buffer.from([0x00]),                     // partition TaggedFields
+                Buffer.from([0xFF, 0xFF, 0xFF, 0xFF]),   // topicAuthorizedOperations = -1
+                Buffer.from([0x00]),                     // topic TaggedFields
+                Buffer.from([0xFF, 0xFF, 0xFF, 0xFF]),   // clusterAuthorizedOperations = -1
+                Buffer.from([0x00])                      // top-level TaggedFields
             ]);
             var result = protocol.read(buf).MetadataResponseV9().result;
             result.correlationId.should.equal(1);
@@ -719,18 +719,18 @@ describe('KIP-482 Flexible Version API Bumps', function () {
 
     describe('ApiVersionsResponseV3', function () {
         it('should parse flexible response with compact arrays and trailing throttleTime', function () {
+            // ApiVersions always uses response header v0 (no TaggedFields after correlationId)
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId (header v0)
+                Buffer.from([0x00, 0x00]),               // error = 0
                 // apiVersions: compactArray with 1 item
-                new Buffer([0x02]),                     // compactArray length = 2 (1 item)
-                new Buffer([0x00, 0x03]),               // apiKey = 3
-                new Buffer([0x00, 0x00]),               // minVersion = 0
-                new Buffer([0x00, 0x09]),               // maxVersion = 9
-                new Buffer([0x00]),                     // item TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
-                new Buffer([0x00])                      // top-level TaggedFields
+                Buffer.from([0x02]),                     // compactArray length = 2 (1 item)
+                Buffer.from([0x00, 0x03]),               // apiKey = 3
+                Buffer.from([0x00, 0x00]),               // minVersion = 0
+                Buffer.from([0x00, 0x09]),               // maxVersion = 9
+                Buffer.from([0x00]),                     // item TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime = 0
+                Buffer.from([0x00])                      // top-level TaggedFields
             ]);
             var result = protocol.read(buf).ApiVersionsResponseV3().result;
             result.correlationId.should.equal(1);
@@ -802,27 +802,27 @@ describe('KIP-482 Flexible Version API Bumps', function () {
     describe('OffsetFetchResponseV8', function () {
         it('should parse multi-group response', function () {
             var buf = Buffer.concat([
-                new Buffer([0x00, 0x00, 0x00, 0x01]),  // correlationId
-                new Buffer([0x00]),                     // TaggedFields
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // throttleTime
-                new Buffer([0x02]),                     // compactArray: 1 group
+                Buffer.from([0x00, 0x00, 0x00, 0x01]),  // correlationId
+                Buffer.from([0x00]),                     // TaggedFields
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // throttleTime
+                Buffer.from([0x02]),                     // compactArray: 1 group
                 // group item:
-                new Buffer([0x03]),                     // compactString "g1" (len 2+1)
-                new Buffer('g1', 'utf8'),
-                new Buffer([0x02]),                     // compactArray: 1 topic
-                new Buffer([0x05]),                     // compactString "test" (len 4+1)
-                new Buffer('test', 'utf8'),
-                new Buffer([0x02]),                     // compactArray: 1 partition
-                new Buffer([0x00, 0x00, 0x00, 0x00]),  // partition = 0
-                new Buffer([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A]),  // offset = 10
-                new Buffer([0xFF, 0xFF, 0xFF, 0xFF]),   // committedLeaderEpoch = -1
-                new Buffer([0x00]),                     // metadata = null
-                new Buffer([0x00, 0x00]),               // error = 0
-                new Buffer([0x00]),                     // partition TaggedFields
-                new Buffer([0x00]),                     // topic TaggedFields
-                new Buffer([0x00, 0x00]),               // group error = 0
-                new Buffer([0x00]),                     // group TaggedFields
-                new Buffer([0x00])                      // top-level TaggedFields
+                Buffer.from([0x03]),                     // compactString "g1" (len 2+1)
+                Buffer.from('g1', 'utf8'),
+                Buffer.from([0x02]),                     // compactArray: 1 topic
+                Buffer.from([0x05]),                     // compactString "test" (len 4+1)
+                Buffer.from('test', 'utf8'),
+                Buffer.from([0x02]),                     // compactArray: 1 partition
+                Buffer.from([0x00, 0x00, 0x00, 0x00]),  // partition = 0
+                Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A]),  // offset = 10
+                Buffer.from([0xFF, 0xFF, 0xFF, 0xFF]),   // committedLeaderEpoch = -1
+                Buffer.from([0x00]),                     // metadata = null
+                Buffer.from([0x00, 0x00]),               // error = 0
+                Buffer.from([0x00]),                     // partition TaggedFields
+                Buffer.from([0x00]),                     // topic TaggedFields
+                Buffer.from([0x00, 0x00]),               // group error = 0
+                Buffer.from([0x00]),                     // group TaggedFields
+                Buffer.from([0x00])                      // top-level TaggedFields
             ]);
             var result = protocol.read(buf).OffsetFetchResponseV8().result;
             result.correlationId.should.equal(1);

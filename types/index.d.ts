@@ -6,5 +6,6 @@ export * from "./simple_consumer";
 export * from "./group_consumer";
 
 export * from "./group_admin";
+export * from "./share_consumer";
 
 export * from "./assignment";
