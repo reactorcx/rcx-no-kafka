@@ -4,9 +4,29 @@
 
 var path = require('path');
 var fs = require('fs');
-var Promise = require('bluebird');
-var crc32   = require('buffer-crc32');
+var promiseUtils = require('../lib/promise-utils');
+var zlib    = require('zlib');
 var Kafka   = require('../lib/index');
+
+// CRC-32 (ISO 3309) — use native zlib.crc32 (Node 22+) or pure-JS fallback
+var crc32 = (typeof zlib.crc32 === 'function') ? zlib.crc32 : (function () {
+    var TABLE = new Int32Array(256);
+    var i, j, c;
+    for (i = 0; i < 256; i++) {
+        c = i;
+        for (j = 0; j < 8; j++) {
+            c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        }
+        TABLE[i] = c;
+    }
+    return function (buf) {
+        var crc = -1, k;
+        for (k = 0; k < buf.length; k++) {
+            crc = TABLE[(crc ^ buf[k]) & 0xFF] ^ (crc >>> 8);
+        }
+        return (crc ^ -1);
+    };
+}());
 
 describe('Connection', function () {
     var producer = new Kafka.Producer({ requiredAcks: 0, clientId: 'producer' });
@@ -32,7 +52,7 @@ describe('Connection', function () {
     });
 
     it('should be able to grow receive buffer', function () {
-        var buf = new Buffer(384 * 1024), crc = crc32.signed(buf);
+        var buf = Buffer.alloc(384 * 1024), crc = (crc32(buf) | 0);
 
         dataHandlerSpy.reset();
 
@@ -41,7 +61,7 @@ describe('Connection', function () {
             partition: 0,
             message: { value: buf }
         })
-        .delay(300)
+        .then(promiseUtils.delayChain(300))
         .then(function () {
             dataHandlerSpy.should.have.been.called; // eslint-disable-line
             dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -51,7 +71,7 @@ describe('Connection', function () {
             dataHandlerSpy.lastCall.args[0][0].should.be.an('object');
             dataHandlerSpy.lastCall.args[0][0].should.have.property('message').that.is.an('object');
             dataHandlerSpy.lastCall.args[0][0].message.should.have.property('value');
-            crc32.signed(dataHandlerSpy.lastCall.args[0][0].message.value).should.be.eql(crc);
+            (crc32(dataHandlerSpy.lastCall.args[0][0].message.value) | 0).should.be.eql(crc);
         });
     });
 

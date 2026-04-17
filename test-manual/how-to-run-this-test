@@ -1,0 +1,7 @@
+in this dir:
+docker-compose up -d
+scripts/test-rack-awareness.sh
+./create-topic
+
+then run from top dir:
+npx mocha test-manual/rack_awareness_integration.js --timeout 60000

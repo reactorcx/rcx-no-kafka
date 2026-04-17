@@ -4,23 +4,26 @@
 
 // kafka-topics.sh --zookeeper 127.0.0.1:2181/kafka0.9 --create --topic kafka-test-topic --partitions 3 --replication-factor 1
 
-var Promise = require('bluebird');
+var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
-var _       = require('lodash');
 
+var groupId = 'no-kafka-group-v0.9-' + Date.now();
 var producer = new Kafka.Producer({ requiredAcks: 1, clientId: 'producer' });
 var consumers = [
     new Kafka.GroupConsumer({
+        groupId: groupId,
         idleTimeout: 100,
         heartbeatTimeout: 100,
         clientId: 'group-consumer1'
     }),
     new Kafka.GroupConsumer({
+        groupId: groupId,
         idleTimeout: 100,
         heartbeatTimeout: 100,
         clientId: 'group-consumer2'
     }),
     new Kafka.GroupConsumer({
+        groupId: groupId,
         idleTimeout: 100,
         heartbeatTimeout: 100,
         clientId: 'group-consumer3'
@@ -30,9 +33,9 @@ var dataHandlerSpies;
 
 function dataHandlerFactory(consumer) {
     return sinon.spy(function (messageSet, topic, partition) {
-        return Promise.each(messageSet, function (m) {
-            return consumer.commitOffset({ topic: topic, partition: partition, offset: m.offset });
-        });
+        return messageSet.reduce(function (p, m) {
+            return p.then(function () { return consumer.commitOffset({ topic: topic, partition: partition, offset: m.offset }); });
+        }, Promise.resolve());
     });
 }
 
@@ -50,15 +53,15 @@ describe('GroupConsumer', function () {
             consumers[0].init({
                 subscriptions: ['kafka-test-topic'],
                 handler: dataHandlerSpies[0]
-            }).delay(200) // let it consume previous messages in a topic (if any)
+            }).then(promiseUtils.delayChain(200)) // let it consume previous messages in a topic (if any)
         ]);
     });
 
     after(function () {
         return Promise.all([
-            Promise.map(consumers, function (c) {
+            Promise.all(consumers.map(function (c) {
                 return c.end();
-            }),
+            })),
             producer.end()
         ]);
     });
@@ -81,7 +84,7 @@ describe('GroupConsumer', function () {
             partition: 0,
             message: { value: 'p00' }
         })
-        .delay(200)
+        .then(promiseUtils.delayChain(200))
         .then(function () {
             /* jshint expr: true */
             dataHandlerSpies[0].should.have.been.called; //eslint-disable-line
@@ -147,10 +150,10 @@ describe('GroupConsumer', function () {
             result[1].should.have.property('metadata').that.is.a('string');
             result[0].should.have.property('error', null);
             result[1].should.have.property('error', null);
-            _.find(result, { topic: 'kafka-test-topic', partition: 0 }).offset.should.be.eql(1 + 1);
-            _.find(result, { topic: 'kafka-test-topic', partition: 1 }).offset.should.be.eql(2 + 1);
-            _.find(result, { topic: 'kafka-test-topic', partition: 0 }).metadata.should.be.eql('m1');
-            _.find(result, { topic: 'kafka-test-topic', partition: 1 }).metadata.should.be.eql('m2');
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 0; }).offset.should.be.eql(1 + 1);
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 1; }).offset.should.be.eql(2 + 1);
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 0; }).metadata.should.be.eql('m1');
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 1; }).metadata.should.be.eql('m2');
         });
     });
 
@@ -159,7 +162,8 @@ describe('GroupConsumer', function () {
             consumers[0].offset('kafka-test-topic', 0),
             consumers[0].offset('kafka-test-topic', 1),
             consumers[0].offset('kafka-test-topic', 2),
-        ]).spread(function (offset0, offset1, offset2) {
+        ]).then(function (r) {
+            var offset0 = r[0], offset1 = r[1], offset2 = r[2];
             offset0.should.be.a('number').and.be.gt(0);
             offset1.should.be.a('number').and.be.gt(0);
             offset2.should.be.a('number').and.be.gt(0);
@@ -185,7 +189,7 @@ describe('GroupConsumer', function () {
                 handler: dataHandlerSpies[2]
             }),
         ])
-        .delay(1000) // give some time to rebalance group
+        .then(promiseUtils.delayChain(1000)) // give some time to rebalance group
         .then(function () {
             dataHandlerSpies[0].reset();
             return producer.send([
@@ -205,7 +209,7 @@ describe('GroupConsumer', function () {
                     message: { value: 'p02' }
                 }
             ])
-            .delay(400)
+            .then(promiseUtils.delayChain(400))
             .then(function () {
                 /* jshint expr: true */
                 dataHandlerSpies[0].should.have.been.calledOnce; //eslint-disable-line
@@ -254,5 +258,171 @@ describe('GroupConsumer', function () {
                 handler: function () {}
             });
         }).should.throw('Invalid groupId');
+    });
+});
+
+describe('GroupConsumer (cooperative)', function () {
+    var coopGroupId = 'no-kafka-coop-test-' + Date.now();
+    var coopProducer = new Kafka.Producer({ requiredAcks: 1, clientId: 'coop-producer' });
+    var coopConsumers = [
+        new Kafka.GroupConsumer({
+            groupId: coopGroupId,
+            idleTimeout: 100,
+            heartbeatTimeout: 100,
+            clientId: 'coop-consumer1'
+        }),
+        new Kafka.GroupConsumer({
+            groupId: coopGroupId,
+            idleTimeout: 100,
+            heartbeatTimeout: 100,
+            clientId: 'coop-consumer2'
+        })
+    ];
+    var revokedPartitions, assignedPartitions;
+
+    before(function () {
+        this.timeout(6000);
+        return coopProducer.init();
+    });
+
+    after(function () {
+        return Promise.all([
+            Promise.all(coopConsumers.map(function (c) {
+                return c.end();
+            })),
+            coopProducer.end()
+        ]);
+    });
+
+    it('should work with cooperative mode enabled (single consumer)', function () {
+        this.timeout(10000);
+        revokedPartitions = [];
+        assignedPartitions = [];
+        return coopConsumers[0].init({
+            subscriptions: ['kafka-test-topic'],
+            handler: function () {},
+            cooperative: true,
+            onPartitionsRevoked: function (partitions) {
+                revokedPartitions = revokedPartitions.concat(partitions);
+            },
+            onPartitionsAssigned: function (partitions) {
+                assignedPartitions = assignedPartitions.concat(partitions);
+            }
+        })
+        .then(function () {
+            /* jshint expr: true */
+            coopConsumers[0]._cooperative.should.be.true; //eslint-disable-line
+            Object.keys(coopConsumers[0].subscriptions).length.should.be.gt(0);
+            coopConsumers[0].ownedPartitions.should.be.an('array');
+            assignedPartitions.should.have.length.gt(0);
+        });
+    });
+
+    it('should handle cooperative rebalance when second consumer joins', function () {
+        this.timeout(15000);
+        revokedPartitions = [];
+        assignedPartitions = [];
+        return coopConsumers[1].init({
+            subscriptions: ['kafka-test-topic'],
+            handler: function () {},
+            cooperative: true
+        })
+        .then(promiseUtils.delayChain(2000))
+        .then(function () {
+            var subs0 = Object.keys(coopConsumers[0].subscriptions).length;
+            var subs1 = Object.keys(coopConsumers[1].subscriptions).length;
+            // Total partitions across both consumers should equal 3 (kafka-test-topic has 3 partitions)
+            (subs0 + subs1).should.be.eql(3);
+            // Each should have at least 1
+            subs0.should.be.gte(1);
+            subs1.should.be.gte(1);
+            // Consumer 1 should have revoked at least 1 partition to make room for consumer 2
+            revokedPartitions.should.have.length.gte(1);
+            revokedPartitions.forEach(function (p) {
+                p.should.have.property('topic', 'kafka-test-topic');
+                p.should.have.property('partition').that.is.a('number');
+            });
+        });
+    });
+
+    it('should have ownedPartitions reflect current assignment', function () {
+        var totalOwned;
+        // After rebalancing, each consumer's ownedPartitions should reflect its actual subscriptions
+        totalOwned = 0;
+        coopConsumers.forEach(function (c) {
+            c.ownedPartitions.forEach(function (tp) {
+                totalOwned += tp.partitions.length;
+            });
+        });
+        totalOwned.should.be.eql(3);
+    });
+});
+
+describe('GroupConsumer (eager mode callbacks)', function () {
+    var eagerGroupId = 'no-kafka-eager-cb-' + Date.now();
+    var eagerConsumers = [
+        new Kafka.GroupConsumer({
+            groupId: eagerGroupId,
+            idleTimeout: 100,
+            heartbeatTimeout: 100,
+            clientId: 'eager-consumer1'
+        }),
+        new Kafka.GroupConsumer({
+            groupId: eagerGroupId,
+            idleTimeout: 100,
+            heartbeatTimeout: 100,
+            clientId: 'eager-consumer2'
+        })
+    ];
+    var assignedPartitions, revokedPartitions;
+
+    after(function () {
+        this.timeout(10000);
+        return Promise.all(eagerConsumers.map(function (c) {
+            return c.end();
+        }));
+    });
+
+    it('should fire onPartitionsAssigned on initial join', function () {
+        this.timeout(10000);
+        assignedPartitions = [];
+        revokedPartitions = [];
+        return eagerConsumers[0].init({
+            subscriptions: ['kafka-test-topic'],
+            handler: function () {},
+            onPartitionsRevoked: function (partitions) {
+                revokedPartitions = revokedPartitions.concat(partitions);
+            },
+            onPartitionsAssigned: function (partitions) {
+                assignedPartitions = assignedPartitions.concat(partitions);
+            }
+        })
+        .then(function () {
+            // First join — no prior subscriptions, so no revocations
+            revokedPartitions.should.have.length(0);
+            // Should be assigned all 3 partitions of kafka-test-topic
+            assignedPartitions.should.have.length(3);
+            assignedPartitions.forEach(function (p) {
+                p.should.have.property('topic', 'kafka-test-topic');
+                p.should.have.property('partition').that.is.a('number');
+            });
+        });
+    });
+
+    it('should fire onPartitionsRevoked when a second consumer triggers rebalance', function () {
+        this.timeout(15000);
+        revokedPartitions = [];
+        assignedPartitions = [];
+        return eagerConsumers[1].init({
+            subscriptions: ['kafka-test-topic'],
+            handler: function () {}
+        })
+        .then(promiseUtils.delayChain(2000))
+        .then(function () {
+            // Consumer 1 had all 3 partitions, then rebalanced — should have revoked all 3
+            revokedPartitions.should.have.length(3);
+            // After rebalance, consumer 1 gets re-assigned its share
+            assignedPartitions.length.should.be.gt(0);
+        });
     });
 });

@@ -96,16 +96,21 @@ export interface SimpleConsumerOptions {
     handlerConcurrency?: number;
     /**
       * connectionTimeout - timeout for establishing connection to Kafka in milliseconds
-      * 
+      *
       * defaults to 3000ms
       */
     connectionTimeout?: number
     /**
       * socketTimeout - timeout for Kafka connection socket in milliseconds
-      * 
+      *
       * defaults to 0 (disabled)
       */
     socketTimeout?: number
+    /**
+      * isolationLevel - controls how to read messages written transactionally.
+      * 0 = read_uncommitted (default), 1 = read_committed
+      */
+    isolationLevel?: 0 | 1;
 
     brokerRedirection?: Kafka.BrokerRedirectionFunction | Kafka.BrokerRedirectionMap;
 

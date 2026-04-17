@@ -2,7 +2,6 @@
 
 /* global describe, it, before, sinon, after  */
 
-var Promise = require('bluebird');
 var Kafka   = require('../lib/index');
 
 describe('GroupAdmin', function () {
@@ -114,16 +113,18 @@ describe('GroupAdmin', function () {
                     subscriptions: ['kafka-test-topic'],
                     metadata: 'consumer-metadata',
                     handler: function (messageSet, topic, partition) {
-                        return Promise.each(messageSet, function (m) {
-                            // commit offset
-                            return consumer.commitOffset(
-                                {
-                                    topic: topic,
-                                    partition: partition,
-                                    offset: m.offset
-                                }
-                            );
-                        }).then(function () {
+                        return messageSet.reduce(function (p, m) {
+                            return p.then(function () {
+                                // commit offset
+                                return consumer.commitOffset(
+                                    {
+                                        topic: topic,
+                                        partition: partition,
+                                        offset: m.offset
+                                    }
+                                );
+                            });
+                        }, Promise.resolve()).then(function () {
                             // All messages consumed,
                             // expecting lag to be 0 at this point
                             resolve();

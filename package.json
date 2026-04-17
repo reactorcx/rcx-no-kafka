@@ -1,12 +1,15 @@
 {
   "name": "no-kafka",
-  "description": "Apache Kafka 0.9 client for Node.JS",
+  "description": "Apache Kafka client for Node.JS",
   "homepage": "http://github.com/oleksiyk/kafka",
   "author": {
     "name": "Oleksiy Krivoshey",
     "email": "oleksiyk@gmail.com"
   },
-  "version": "3.4.4",
+  "version": "4.0.0",
+  "engines": {
+    "node": ">=16"
+  },
   "main": "./lib/index.js",
   "types": "./types/index.d.ts",
   "keywords": [
@@ -14,15 +17,13 @@
   ],
   "dependencies": {
     "bin-protocol": "^3.1.1",
-    "bluebird": "^3.3.3",
-    "buffer-crc32": "^0.2.5",
     "hashring": "^3.2.0",
-    "lodash": "=4.17.21",
     "murmur-hash-js": "^1.0.0",
-    "nice-simple-logger": "^1.0.1",
-    "wrr-pool": "^1.0.3",
-    "@types/lodash": "^4.14.55",
-    "@types/bluebird": "3.5.0"
+    "wrr-pool": "^1.0.3"
+  },
+  "optionalDependencies": {
+    "lz4": "^0.6.5",
+    "zstd-napi": "^0.0.12"
   },
   "devDependencies": {
     "chai": "^3.5.0",
@@ -34,7 +35,8 @@
     "mocha": "^3.1.2",
     "sinon": "^2.2.0",
     "sinon-chai": "^2.10.0",
-    "snappy": "^6.1.1"
+    "snappy": "^7.3.3",
+    "zstd-napi": "^0.0.12"
   },
   "bugs": {
     "url": "https://github.com/oleksiyk/kafka/issues"

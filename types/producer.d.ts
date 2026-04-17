@@ -6,9 +6,9 @@ export class Producer {
     constructor(options?: ProducerOptions);
     /**
       * Initializes the client for the producer.
-      * 
-      * @returns {Promise<Client>} 
-      * 
+      *
+      * @returns {Promise<Client>}
+      *
       * @memberOf Producer
       */
     init(): Promise<Client>;
@@ -18,6 +18,22 @@ export class Producer {
       * @memberOf Producer
       */
     send(data: Kafka.Message | Kafka.Message[], options?: SendOptions): Promise<Result[]>;
+    /**
+      * Begin a new transaction. Requires transactionalId option.
+      */
+    beginTransaction(): void;
+    /**
+      * Commit the current transaction.
+      */
+    commitTransaction(): Promise<void>;
+    /**
+      * Abort the current transaction.
+      */
+    abortTransaction(): Promise<void>;
+    /**
+      * Send consumer offsets within the current transaction.
+      */
+    sendOffsets(offsets: Array<{topic: string, partition: number, offset: number, metadata?: string}>, groupId: string): Promise<void>;
     /**
       * Close all connections.
       */
@@ -113,6 +129,20 @@ export interface ProducerOptions {
         max?: number;
     }
 
+    /**
+      * idempotent - enable idempotent producer mode.
+      * Forces requiredAcks=-1. Obtains a producer ID
+      * and tracks per-partition sequence numbers.
+      *
+      * default: false
+      */
+    idempotent?: boolean;
+    /**
+      * transactionalId - enable transactional producer.
+      * Implies idempotent: true. Required for
+      * beginTransaction/commitTransaction/abortTransaction.
+      */
+    transactionalId?: string;
     /**
       * codec - compression codec.
       */

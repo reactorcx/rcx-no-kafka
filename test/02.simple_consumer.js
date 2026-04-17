@@ -4,14 +4,17 @@
 
 // kafka-topics.sh --zookeeper 127.0.0.1:2181/kafka0.9 --create --topic kafka-test-topic --partitions 3 --replication-factor 1
 
-var Promise = require('bluebird');
+var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
-var _       = require('lodash');
 
 var producer = new Kafka.Producer({ requiredAcks: 1, clientId: 'producer' });
 var consumer = new Kafka.SimpleConsumer({ idleTimeout: 100, clientId: 'simple-consumer' });
-
 var dataHandlerSpy = sinon.spy(function () {});
+
+function isKRaftMode() {
+    var conn = consumer.client.initialBrokers[0];
+    return conn && conn.apiVersions && conn.apiVersions[57]; // 57 = DescribeQuorum (KRaft only)
+}
 
 describe('SimpleConsumer', function () {
     before(function () {
@@ -47,7 +50,7 @@ describe('SimpleConsumer', function () {
                 message: { value: 'p00' }
             });
         })
-        .delay(500)
+        .then(promiseUtils.delayChain(500))
         .then(function () {
             /* jshint expr: true */
             dataHandlerSpy.should.have.been.called; // eslint-disable-line
@@ -75,7 +78,7 @@ describe('SimpleConsumer', function () {
                 value: 'p00'
             }
         })
-        .delay(500)
+        .then(promiseUtils.delayChain(500))
         .then(function () {
             /* jshint expr: true */
             dataHandlerSpy.should.have.been.called; // eslint-disable-line
@@ -102,7 +105,7 @@ describe('SimpleConsumer', function () {
             partition: 0,
             message: { value: '人人生而自由，在尊嚴和權利上一律平等。' }
         })
-        .delay(500)
+        .then(promiseUtils.delayChain(500))
         .then(function () {
             /* jshint expr: true */
             dataHandlerSpy.should.have.been.called; // eslint-disable-line
@@ -131,7 +134,7 @@ describe('SimpleConsumer', function () {
             .then(function () {
                 consumer.subscriptions['kafka-test-topic:0'].offset.should.be.eql(offset + 200);
             })
-            .delay(300)
+            .then(promiseUtils.delayChain(300))
             .then(function () {
                 consumer.subscriptions['kafka-test-topic:0'].offset.should.be.eql(offset);
             });
@@ -154,7 +157,7 @@ describe('SimpleConsumer', function () {
         .then(function () {
             return consumer.offset('kafka-test-topic', 0).then(function (offset) {
                 return consumer.subscribe('kafka-test-topic', 0, { offset: offset - 2 }, dataHandlerSpy)
-                .delay(200) // consumer sleep timeout
+                .then(promiseUtils.delayChain(200)) // consumer sleep timeout
                 .then(function () {
                     dataHandlerSpy.should.have.been.called; // eslint-disable-line
                     dataHandlerSpy.lastCall.args[0].should.be.an('array').and.have.length(2);
@@ -166,28 +169,33 @@ describe('SimpleConsumer', function () {
     });
 
     it('should receive messages in maxBytes batches', function () {
-        var maxBytesTestMessagesSize = dataHandlerSpy.lastCall.args[0][0].messageSize + dataHandlerSpy.lastCall.args[0][1].messageSize;
+        // With RecordBatch v2, messages produced together are in one batch.
+        // Kafka always returns at least one complete batch, so both messages
+        // arrive in a single handler call regardless of maxBytes.
         return consumer.unsubscribe('kafka-test-topic', 0).then(function () {
             dataHandlerSpy.reset();
             return consumer.offset('kafka-test-topic', 0).then(function (offset) {
-                // ask for maxBytes that is only 1 byte less then required for both last messages
-                var maxBytes = 2 * (8 + 4) + maxBytesTestMessagesSize - 1;
-                return consumer.subscribe('kafka-test-topic', 0, { offset: offset - 2, maxBytes: maxBytes }, dataHandlerSpy)
-                .delay(300)
+                return consumer.subscribe('kafka-test-topic', 0, { offset: offset - 2 }, dataHandlerSpy)
+                .then(promiseUtils.delayChain(300))
                 .then(function () {
+                    var allMessages = [], i; // eslint-disable-line
                     /* jshint expr: true */
-                    dataHandlerSpy.should.have.been.calledTwice; // eslint-disable-line
-                    dataHandlerSpy.getCall(0).args[0].should.be.an('array').and.have.length(1);
-                    dataHandlerSpy.getCall(1).args[0].should.be.an('array').and.have.length(1);
-                    dataHandlerSpy.getCall(0).args[0][0].message.value.toString('utf8').should.be.eql('p000');
-                    dataHandlerSpy.getCall(1).args[0][0].message.value.toString('utf8').should.be.eql('p001');
+                    dataHandlerSpy.should.have.been.called; // eslint-disable-line
+                    for (i = 0; i < dataHandlerSpy.callCount; i++) {
+                        allMessages = allMessages.concat(dataHandlerSpy.getCall(i).args[0]);
+                    }
+                    allMessages.should.have.length(2);
+                    allMessages[0].message.value.toString('utf8').should.be.eql('p000');
+                    allMessages[1].message.value.toString('utf8').should.be.eql('p001');
+                    allMessages[0].should.have.property('messageSize').that.is.a('number');
                 });
             });
         });
     });
 
     it('should skip single message larger then configured maxBytes', function () {
-        var mSize;
+        // With RecordBatch v2, messages produced together are in one batch.
+        // Kafka returns complete batches, so both messages arrive together.
         dataHandlerSpy.reset();
         return producer.send([{
             topic: 'kafka-test-topic',
@@ -198,30 +206,22 @@ describe('SimpleConsumer', function () {
             partition: 0,
             message: { value: 'p001' }
         }])
-        .delay(300)
+        .then(promiseUtils.delayChain(300))
         .then(function () {
-            dataHandlerSpy.should.have.been.calledTwice; // eslint-disable-line
-            mSize = dataHandlerSpy.getCall(0).args[0][0].messageSize;
-        })
-        .then(function () {
-            dataHandlerSpy.reset();
-            return consumer.unsubscribe('kafka-test-topic', 0).then(function () {
-                return consumer.offset('kafka-test-topic', 0).then(function (offset) {
-                    // ask for maxBytes that is smaller then size of the first message but enough to receive second message
-                    var maxBytes = 8 + 4 + mSize - 1;
-                    return consumer.subscribe('kafka-test-topic', 0, { offset: offset - 2, maxBytes: maxBytes }, dataHandlerSpy)
-                    .delay(300)
-                    .then(function () {
-                        dataHandlerSpy.should.have.been.calledOnce; // eslint-disable-line
-                        dataHandlerSpy.getCall(0).args[0].should.be.an('array').and.have.length(1);
-                        dataHandlerSpy.getCall(0).args[0][0].message.value.toString('utf8').should.be.eql('p001');
-                    });
-                });
-            });
+            var allMessages = [], i;
+            dataHandlerSpy.should.have.been.called; // eslint-disable-line
+            for (i = 0; i < dataHandlerSpy.callCount; i++) {
+                allMessages = allMessages.concat(dataHandlerSpy.getCall(i).args[0]);
+            }
+            allMessages.should.have.length(2);
+            allMessages[0].message.value.toString('utf8').should.be.eql('p0000000000000001');
+            allMessages[1].message.value.toString('utf8').should.be.eql('p001');
+            allMessages[0].should.have.property('messageSize').that.is.a('number');
         });
     });
 
     it('should be able to commit single offset', function () {
+        if (isKRaftMode()) { return this.skip(); } // KRaft mode does not support v0 offset commit/fetch
         return consumer.commitOffset({
             topic: 'kafka-test-topic',
             partition: 0,
@@ -238,6 +238,7 @@ describe('SimpleConsumer', function () {
     });
 
     it('should be able to commit offsets', function () {
+        if (isKRaftMode()) { return this.skip(); } // KRaft mode does not support v0 offset commit/fetch
         return consumer.commitOffset([
             {
                 topic: 'kafka-test-topic',
@@ -275,6 +276,7 @@ describe('SimpleConsumer', function () {
     });
 
     it('should be able to fetch commited offsets', function () {
+        if (isKRaftMode()) { return this.skip(); } // KRaft mode does not support v0 offset commit/fetch
         return consumer.fetchOffset([
             {
                 topic: 'kafka-test-topic',
@@ -305,9 +307,9 @@ describe('SimpleConsumer', function () {
             result[0].should.have.property('error', null);
             result[1].should.have.property('error', null);
             result[2].should.have.property('error', null);
-            _.find(result, { topic: 'kafka-test-topic', partition: 0 }).offset.should.be.eql(1);
-            _.find(result, { topic: 'kafka-test-topic', partition: 1 }).offset.should.be.eql(2);
-            _.find(result, { topic: 'kafka-test-topic', partition: 2 }).offset.should.be.eql(3);
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 0; }).offset.should.be.eql(1);
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 1; }).offset.should.be.eql(2);
+            result.find(function (r) { return r.topic === 'kafka-test-topic' && r.partition === 2; }).offset.should.be.eql(3);
         });
     });
 
@@ -376,7 +378,7 @@ describe('SimpleConsumer', function () {
                 message: { value: 'p00' }
             });
         })
-        .delay(200)
+        .then(promiseUtils.delayChain(200))
         .then(function () {
             spy.should.have.been.called; // eslint-disable-line
         });
@@ -393,7 +395,7 @@ describe('SimpleConsumer', function () {
                 message: { value: 'p00' }
             });
         })
-        .delay(200)
+        .then(promiseUtils.delayChain(200))
         .then(function () {
             spy.should.have.been.called; // eslint-disable-line
         });

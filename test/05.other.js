@@ -2,7 +2,7 @@
 
 /* global describe, it, before, sinon, after  */
 
-var Promise = require('bluebird');
+var promiseUtils = require('../lib/promise-utils');
 var Kafka   = require('../lib/index');
 
 describe('requiredAcks: 0', function () {
@@ -33,7 +33,7 @@ describe('requiredAcks: 0', function () {
                 message: { value: 'p00' }
             });
         })
-        .delay(100)
+        .then(promiseUtils.delayChain(100))
         .then(function () {
             dataHanlderSpy.should.have.been.called; // eslint-disable-line
             dataHanlderSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -76,7 +76,7 @@ describe('null and empty', function () {
                 message: { value: null, key: null }
             });
         })
-        .delay(100)
+        .then(promiseUtils.delayChain(100))
         .then(function () {
             dataHanlderSpy.should.have.been.called; // eslint-disable-line
             dataHanlderSpy.lastCall.args[0].should.be.an('array').and.have.length(1);
@@ -97,7 +97,7 @@ describe('null and empty', function () {
             partition: 0,
             message: { value: '', key: '' }
         })
-        .delay(100)
+        .then(promiseUtils.delayChain(100))
         .then(function () {
             dataHanlderSpy.should.have.been.called; // eslint-disable-line
             dataHanlderSpy.lastCall.args[0].should.be.an('array').and.have.length(1);

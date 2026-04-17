@@ -1,0 +1,103 @@
+##############################################################################
+# Kafka 4.2 – 3-broker KRaft cluster with simulated multi-datacenter latency
+#
+# Uses Toxiproxy to inject latency between clients and brokers. Works on
+# macOS Docker Desktop — no kernel modules or tc netem needed.
+#
+# Architecture:
+#   Client → toxiproxy (:19092) → broker-east   (:9094)  [~2ms,  "local"]
+#   Client → toxiproxy (:29092) → broker-west   (:9094)  [~40ms, "cross-country"]
+#   Client → toxiproxy (:39092) → broker-central(:9094)  [~20ms, "regional"]
+#
+# Brokers advertise the Toxiproxy addresses, so after the initial metadata
+# fetch, all client traffic routes through the proxies automatically.
+# Inter-broker replication uses INTERNAL listeners and is NOT proxied.
+#
+# Usage:
+#   docker compose up -d
+#   sleep 15
+#   bash scripts/setup-proxies.sh        # create proxies + inject latency
+#   bash scripts/test-rack-awareness.sh  # verify rack-aware fetching
+##############################################################################
+
+x-kafka-common: &kafka-common
+  image: apache/kafka:4.2.0
+  restart: unless-stopped
+  environment: &kafka-env-common
+    KAFKA_PROCESS_ROLES: broker,controller
+    KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+    KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker-east:9093,2@broker-west:9093,3@broker-central:9093
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+    KAFKA_MIN_INSYNC_REPLICAS: 2
+    KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    KAFKA_LOG_DIRS: /var/lib/kafka/data
+    CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    KAFKA_REPLICA_SELECTOR_CLASS: org.apache.kafka.common.replica.RackAwareReplicaSelector
+
+services:
+  # ═══════════════════════════ BROKERS ═══════════════════════════════
+
+  broker-east:
+    <<: *kafka-common
+    container_name: broker-east
+    hostname: broker-east
+    environment:
+      <<: *kafka-env-common
+      KAFKA_NODE_ID: 1
+      KAFKA_BROKER_RACK: dc-east
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-east:9092,EXTERNAL://localhost:19092
+    volumes:
+      - broker-east-data:/var/lib/kafka/data
+
+  broker-west:
+    <<: *kafka-common
+    container_name: broker-west
+    hostname: broker-west
+    environment:
+      <<: *kafka-env-common
+      KAFKA_NODE_ID: 2
+      KAFKA_BROKER_RACK: dc-west
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-west:9092,EXTERNAL://localhost:29092
+    volumes:
+      - broker-west-data:/var/lib/kafka/data
+
+  broker-central:
+    <<: *kafka-common
+    container_name: broker-central
+    hostname: broker-central
+    environment:
+      <<: *kafka-env-common
+      KAFKA_NODE_ID: 3
+      KAFKA_BROKER_RACK: dc-central
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker-central:9092,EXTERNAL://localhost:39092
+    volumes:
+      - broker-central-data:/var/lib/kafka/data
+
+  # ═══════════════════════════ TOXIPROXY ═════════════════════════════
+  # Single instance fronting all three brokers' EXTERNAL listeners.
+  # Latency is configured per-proxy via the Toxiproxy REST API.
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    container_name: toxiproxy
+    hostname: toxiproxy
+    ports:
+      - "19092:19092"   # → broker-east:9094
+      - "29092:29092"   # → broker-west:9094
+      - "39092:39092"   # → broker-central:9094
+      - "8474:8474"     # Toxiproxy REST API
+    depends_on:
+      - broker-east
+      - broker-west
+      - broker-central
+
+volumes:
+  broker-east-data:
+  broker-west-data:
+  broker-central-data:

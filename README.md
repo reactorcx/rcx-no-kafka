@@ -6,11 +6,11 @@
 
 # no-kafka
 
-__no-kafka__ is [Apache Kafka](https://kafka.apache.org) 0.9 client for Node.js with [new unified consumer API](#groupconsumer-new-unified-consumer-api) support.
+__no-kafka__ is [Apache Kafka](https://kafka.apache.org) client for Node.js with [new unified consumer API](#groupconsumer-new-unified-consumer-api) support.
 
-Supports sync and async Gzip and Snappy compression, producer batching and controllable retries, offers few predefined group assignment strategies and producer partitioner option.
+Supports Kafka 0.9+ through 4.1+ protocol (automatic version negotiation via ApiVersions). Includes KIP-482 flexible version encoding, KIP-516 topic IDs (UUIDs), KIP-890 Transaction V2 (implicit partition/offset registration, epoch bumping), KIP-951 leader discovery optimizations, KIP-699 batch coordinator lookup, KIP-709 multi-group offset fetch, KIP-588 producer epoch recovery, KIP-899 client re-bootstrap, KIP-390 compression levels, sync and async Gzip, Snappy, LZ4, and Zstd compression, producer batching and controllable retries, rack-aware fetching, static group membership, cooperative/incremental rebalancing (KIP-429), and offers few predefined group assignment strategies and producer partitioner option.
 
-All methods will return a [promise](https://github.com/petkaantonov/bluebird)
+All methods will return a [Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise)
 
 __Please check a [CHANGELOG](CHANGELOG.md) for backward incompatible changes in version 3.x__
 
@@ -19,11 +19,14 @@ __Please check a [CHANGELOG](CHANGELOG.md) for backward incompatible changes in 
   * [Keyed Messages](#keyed-messages)
   * [Batching (grouping) produce requests](#batching-grouping-produce-requests)
   * [Custom Partitioner](#custom-partitioner)
+  * [Idempotent Producer](#idempotent-producer)
+  * [Transactional Producer](#transactional-producer)
   * [Producer options](#producer-options)
 * [Simple Consumer](#simpleconsumer)
   * [Simple Consumer options](#simpleconsumer-options)
 * [Group Consumer](#groupconsumer-new-unified-consumer-api)
   * [Assignment strategies](#assignment-strategies)
+  * [Cooperative Rebalancing](#cooperative-rebalancing)
   * [Group Consumer options](#groupconsumer-options)
 * [Group Admin](#groupadmin-consumer-groups-api)
 * [Compression](#compression)
@@ -179,7 +182,68 @@ return producer.init().then(function(){
 });
 ```
 
+### Idempotent Producer
+
+Ensures exactly-once delivery semantics per partition. Requires Kafka 0.11+.
+
+```javascript
+var producer = new Kafka.Producer({
+    idempotent: true
+});
+
+return producer.init().then(function () {
+    // Producer automatically obtains a producer ID from the broker.
+    // requiredAcks is forced to -1 (all replicas).
+    // Sequence numbers are tracked per topic:partition.
+    return producer.send({
+        topic: 'kafka-test-topic',
+        partition: 0,
+        message: { value: 'exactly-once message' }
+    });
+});
+```
+
+### Transactional Producer
+
+Enables atomic writes across multiple partitions. Requires Kafka 0.11+ with transactions enabled.
+
+```javascript
+var producer = new Kafka.Producer({
+    transactionalId: 'my-transactional-id'
+    // idempotent is automatically forced to true
+});
+
+return producer.init().then(function () {
+    producer.beginTransaction();
+
+    return producer.send({
+        topic: 'topic-a',
+        partition: 0,
+        message: { value: 'msg-1' }
+    })
+    .then(function () {
+        return producer.send({
+            topic: 'topic-b',
+            partition: 0,
+            message: { value: 'msg-2' }
+        });
+    })
+    .then(function () {
+        // commit atomically (or use abortTransaction() to discard)
+        return producer.commitTransaction();
+    });
+});
+```
+
+Transaction methods:
+* `beginTransaction()` - start a new transaction (synchronous)
+* `commitTransaction()` - commit the current transaction (returns Promise)
+* `abortTransaction()` - abort the current transaction (returns Promise)
+* `sendOffsets(offsets)` - commit consumer offsets as part of the transaction (returns Promise)
+
 ### Producer options:
+* `idempotent` - enable idempotent producer for exactly-once delivery, defaults to `false`. Forces `requiredAcks` to -1. Requires Kafka 0.11+
+* `transactionalId` - unique identifier for transactional producer. Setting this implies `idempotent: true`. Requires Kafka 0.11+ with transactions enabled
 * `requiredAcks` - require acknoledgments for produce request. If it is 0 the server will not send any response.  If it is 1 (default), the server will wait the data is written to the local log before sending a response. If it is -1 the server will block until the message is committed by all in sync replicas before sending a response. For any number > 1 the server will block waiting for this number of acknowledgements to occur (but the server will never wait for more acknowledgements than there are in-sync replicas).
 * `timeout` - timeout in ms for produce request
 * `clientId` - ID of this client, defaults to 'no-kafka-client'
@@ -193,7 +257,9 @@ return producer.init().then(function(){
   * `delay` - controls delay between retries, the delay is progressive and incrememented with each attempt with `min` value steps up to but not exceeding `max` value
     * `min` - minimum delay, used as increment value for next attempts, defaults to 1000ms
     * `max` - maximum delay value, defaults to 3000ms
-* `codec` - compression codec, one of Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP
+* `codec` - compression codec, one of Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP, Kafka.COMPRESSION_LZ4, Kafka.COMPRESSION_ZSTD
+* `compressionLevel` - compression level, defaults to -1 (codec default). Gzip: 0-9, Zstd: 1-22, LZ4: >= 0 enables high compression, Snappy: ignored
+* `rebootstrap` - boolean, re-resolve bootstrap servers when all known brokers are unavailable (KIP-899), defaults to `false`
 * `batch` - control batching (grouping) of requests
   * `size` - group messages together into single batch until their total size exceeds this value, defaults to 16384 bytes. Set to 0 to disable batching.
   * `maxWait` - send grouped messages after this amount of milliseconds expire even if their total size doesn't exceed `batch.size` yet, defaults to 10ms. Set to 0 to disable batching.
@@ -214,6 +280,9 @@ var consumer = new Kafka.SimpleConsumer();
 var dataHandler = function (messageSet, topic, partition) {
     messageSet.forEach(function (m) {
         console.log(topic, partition, m.offset, m.message.value.toString('utf8'));
+        // with Kafka 0.11+, messages also include:
+        // m.message.timestamp - message timestamp (milliseconds)
+        // m.message.headers   - array of {key, value} headers
     });
 };
 
@@ -288,6 +357,7 @@ consumer.fetchOffset([
 ```
 
 ### SimpleConsumer options
+* `isolationLevel` - controls visibility of transactional messages. `0` (default) for `read_uncommitted`, `1` for `read_committed`. Requires Kafka 0.11+
 * `groupId` - group ID for comitting and fetching offsets. Defaults to 'no-kafka-group-v0'
 * `maxWaitTime` - maximum amount of time in milliseconds to block waiting if insufficient data is available at the time the fetch request is issued, defaults to 100ms
 * `idleTimeout` - timeout between fetch calls, defaults to 1000ms
@@ -300,6 +370,7 @@ consumer.fetchOffset([
   * `max` - maximum delay value, defaults to 1000ms
 * `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
 * `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `false`
+* `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
 * `handlerConcurrency` - specify concurrency level for the consumer handler function, defaults to 10
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms
 * `socketTimeout` - timeout for Kafka connection socket in milliseconds, defaults to 0 (disabled)
@@ -311,15 +382,16 @@ Specify an assignment strategy (or use __no-kafka__ built-in consistent or round
 Example:
 
 ```javascript
-var Promise = require('bluebird');
 var consumer = new Kafka.GroupConsumer();
 
 var dataHandler = function (messageSet, topic, partition) {
-    return Promise.each(messageSet, function (m){
-        console.log(topic, partition, m.offset, m.message.value.toString('utf8'));
-        // commit offset
-        return consumer.commitOffset({topic: topic, partition: partition, offset: m.offset, metadata: 'optional'});
-    });
+    return messageSet.reduce(function (p, m) {
+        return p.then(function () {
+            console.log(topic, partition, m.offset, m.message.value.toString('utf8'));
+            // commit offset
+            return consumer.commitOffset({topic: topic, partition: partition, offset: m.offset, metadata: 'optional'});
+        });
+    }, Promise.resolve());
 };
 
 var strategies = [{
@@ -369,8 +441,39 @@ Note that each consumer in a group should have its own and consistent metadata.i
 
 You can also write your own assignment strategy by inheriting from Kafka.DefaultAssignmentStrategy and overwriting `assignment` method.
 
+### Cooperative Rebalancing
+
+By default, when a consumer group rebalances (member joins or leaves), all consumers stop consuming all partitions, rejoin, and get new assignments (eager/stop-the-world mode). With cooperative rebalancing (KIP-429), consumers only revoke partitions that are moving to a different owner, keeping unaffected partitions active throughout the rebalance.
+
+Enable cooperative mode by setting `cooperative: true` in the strategy options:
+
+```javascript
+var consumer = new Kafka.GroupConsumer();
+
+consumer.init({
+    subscriptions: ['kafka-test-topic'],
+    handler: dataHandler,
+    cooperative: true,
+    onPartitionsRevoked: function (partitions) {
+        // optional: called when partitions are revoked from this consumer
+        // partitions is an array of {topic, partition}
+        console.log('Revoked:', partitions);
+    },
+    onPartitionsAssigned: function (partitions) {
+        // optional: called when new partitions are assigned to this consumer
+        // partitions is an array of {topic, partition}
+        console.log('Assigned:', partitions);
+    }
+});
+```
+
+Cooperative rebalancing uses a two-phase approach: in phase 1 the leader identifies which partitions need to move and tells their current owners to give them up. In phase 2, freed partitions are assigned to their new owners. Partitions that are not moving continue being consumed throughout.
+
+This is a client-side-only feature and works with any Kafka broker version supported by no-kafka.
+
 ### GroupConsumer options
 
+* `isolationLevel` - controls visibility of transactional messages. `0` (default) for `read_uncommitted`, `1` for `read_committed`. Requires Kafka 0.11+
 * `groupId` - group ID for comitting and fetching offsets. Defaults to 'no-kafka-group-v0.9'
 * `maxWaitTime` - maximum amount of time in milliseconds to block waiting if insufficient data is available at the time the fetch request is issued, defaults to 100ms
 * `idleTimeout` - timeout between fetch calls, defaults to 1000ms
@@ -386,10 +489,17 @@ You can also write your own assignment strategy by inheriting from Kafka.Default
 * `retentionTime` - offset retention time in ms, defaults to 1 day (24 * 3600 * 1000)
 * `startingOffset` - starting position (time) when there is no commited offset, defaults to `Kafka.LATEST_OFFSET`
 * `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
+* `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
+* `groupInstanceId` - unique instance identifier for static group membership (KIP-345). When set, the consumer skips LeaveGroup on shutdown so it can rejoin the group without triggering a rebalance. If another consumer registers with the same `groupInstanceId`, the broker returns `FencedInstanceId` and the original consumer shuts down. Requires Kafka 2.4+
 * `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `false`
 * `handlerConcurrency` - specify concurrency level for the consumer handler function, defaults to 10
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms
 * `socketTimeout` - timeout for Kafka connection socket in milliseconds, defaults to 0 (disabled)
+
+Strategy-level options (passed in the strategy object to `init()`):
+* `cooperative` - boolean, enable cooperative/incremental rebalancing (KIP-429). Defaults to `false` (eager mode)
+* `onPartitionsRevoked` - function, optional callback invoked with an array of `{topic, partition}` when partitions are revoked during a cooperative rebalance
+* `onPartitionsAssigned` - function, optional callback invoked with an array of `{topic, partition}` when new partitions are assigned during a cooperative rebalance
 
 ## GroupAdmin (consumer groups API)
 
@@ -470,7 +580,7 @@ Note that group consumer has to commit offsets first, in order for consumerLag t
 
 ## Compression
 
-__no-kafka__ supports both SNAPPY and Gzip compression. To use SNAPPY you must install the `snappy` NPM module in your project.
+__no-kafka__ supports Snappy, Gzip, LZ4, and Zstd compression. To use Snappy you must install the `snappy` NPM module (`npm install snappy`). To use LZ4 you must install the `lz4` NPM module (`npm install lz4`). To use Zstd you must install the `zstd-napi` NPM module (`npm install zstd-napi`).
 
 Enable compression in Producer:
 
@@ -479,7 +589,17 @@ var Kafka = require('no-kafka');
 
 var producer = new Kafka.Producer({
     clientId: 'producer',
-    codec: Kafka.COMPRESSION_SNAPPY // Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP
+    codec: Kafka.COMPRESSION_SNAPPY // Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP, Kafka.COMPRESSION_LZ4, Kafka.COMPRESSION_ZSTD
+});
+```
+
+You can also specify a compression level to control the compression ratio vs. speed tradeoff:
+
+```javascript
+var producer = new Kafka.Producer({
+    clientId: 'producer',
+    codec: Kafka.COMPRESSION_GZIP,
+    compressionLevel: 9 // max compression (Gzip: 0-9, Zstd: 1-22, LZ4: >= 0 for HC mode)
 });
 ```
 
