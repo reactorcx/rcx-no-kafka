@@ -4,6 +4,7 @@ export * from "./client";
 export * from "./producer";
 export * from "./simple_consumer";
 export * from "./group_consumer";
+export * from "./consumer_group";
 
 export * from "./group_admin";
 export * from "./share_consumer";

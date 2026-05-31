@@ -8,7 +8,7 @@
 
 __no-kafka__ is [Apache Kafka](https://kafka.apache.org) client for Node.js with [new unified consumer API](#groupconsumer-new-unified-consumer-api) support.
 
-Supports Kafka 0.9+ through 4.1+ protocol (automatic version negotiation via ApiVersions). Includes KIP-482 flexible version encoding, KIP-516 topic IDs (UUIDs), KIP-890 Transaction V2 (implicit partition/offset registration, epoch bumping), KIP-951 leader discovery optimizations, KIP-699 batch coordinator lookup, KIP-709 multi-group offset fetch, KIP-588 producer epoch recovery, KIP-899 client re-bootstrap, KIP-390 compression levels, sync and async Gzip, Snappy, LZ4, and Zstd compression, producer batching and controllable retries, rack-aware fetching, static group membership, cooperative/incremental rebalancing (KIP-429), and offers few predefined group assignment strategies and producer partitioner option.
+Supports Kafka 0.9+ through 4.3+ protocol (automatic version negotiation via ApiVersions). Includes KIP-482 flexible version encoding, KIP-516 topic IDs (UUIDs), KIP-848 next-gen consumer rebalance protocol (server-side assignment, see [ConsumerGroup](#consumergroup-kip-848-next-gen-rebalance-protocol)), KIP-932 share groups, KIP-890 Transaction V2 (implicit partition/offset registration, epoch bumping), KIP-951 leader discovery optimizations, KIP-699 batch coordinator lookup, KIP-709 multi-group offset fetch, KIP-588 producer epoch recovery, KIP-899 client re-bootstrap, KIP-390 compression levels, sync and async Gzip, Snappy, LZ4, and Zstd compression, producer batching and controllable retries, rack-aware fetching, static group membership, cooperative/incremental rebalancing (KIP-429), and offers few predefined group assignment strategies and producer partitioner option.
 
 All methods will return a [Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise)
 
@@ -25,6 +25,7 @@ __Please check a [CHANGELOG](CHANGELOG.md) for backward incompatible changes in 
 * [Simple Consumer](#simpleconsumer)
   * [Simple Consumer options](#simpleconsumer-options)
 * [Group Consumer](#groupconsumer-new-unified-consumer-api)
+* [Consumer Group (KIP-848)](#consumergroup-kip-848-next-gen-rebalance-protocol)
   * [Assignment strategies](#assignment-strategies)
   * [Cooperative Rebalancing](#cooperative-rebalancing)
   * [Group Consumer options](#groupconsumer-options)
@@ -500,6 +501,50 @@ Strategy-level options (passed in the strategy object to `init()`):
 * `cooperative` - boolean, enable cooperative/incremental rebalancing (KIP-429). Defaults to `false` (eager mode)
 * `onPartitionsRevoked` - function, optional callback invoked with an array of `{topic, partition}` when partitions are revoked during a cooperative rebalance
 * `onPartitionsAssigned` - function, optional callback invoked with an array of `{topic, partition}` when new partitions are assigned during a cooperative rebalance
+
+## ConsumerGroup (KIP-848 next-gen rebalance protocol)
+
+`ConsumerGroup` implements the next-generation consumer rebalance protocol introduced by [KIP-848](https://cwiki.apache.org/confluence/display/KAFKA/KIP-848) (GA since Kafka 4.0, recommended going forward — the classic `GroupConsumer` protocol is deprecated by KIP-1274 in Kafka 4.3.0).
+
+Unlike `GroupConsumer`, there is no JoinGroup/SyncGroup dance and no client-side assignment strategy. Membership is driven by a single `ConsumerGroupHeartbeat` RPC: the client declares the topics it wants plus a **server-side assignor** (`uniform` or `range`), and the broker computes the assignment. The client only reconciles (revoke-before-acquire) the assignment it is handed. The client generates its own UUID member id (KIP-1082).
+
+Consumption, offset commit and offset fetch work exactly like `GroupConsumer` — offsets are committed manually from your handler.
+
+```javascript
+var Kafka = require('no-kafka');
+var consumer = new Kafka.ConsumerGroup({ groupId: 'my-group', assignor: 'uniform' });
+
+function dataHandler(messageSet, topic, partition) {
+    return Promise.all(messageSet.map(function (m) {
+        // process the message
+        console.log(topic, partition, m.offset, m.message.value.toString('utf8'));
+        // commit the consumed offset
+        return consumer.commitOffset({ topic: topic, partition: partition, offset: m.offset });
+    }));
+}
+
+consumer.init({
+    topics: ['kafka-test-topic'],
+    handler: dataHandler,
+    onPartitionsRevoked: function (partitions) { /* commit final offsets here */ },
+    onPartitionsAssigned: function (partitions) { /* partitions: [{topic, partition}] */ }
+});
+```
+
+ConsumerGroup options:
+* `groupId` - group ID for committing and fetching offsets, defaults to `no-kafka-group-v0.9`
+* `assignor` - server-side assignor name, `uniform` (sticky/cooperative) or `range`. Defaults to `uniform`
+* `sessionTimeout` - rebalance timeout in ms sent to the coordinator, defaults to `45000`
+* `startingOffset` - starting position (time) when there is no committed offset, defaults to `Kafka.LATEST_OFFSET`
+* `groupInstanceId` - static membership instance id (KIP-345). When set, `end()` leaves with a static-leave epoch so the broker preserves the assignment
+* `rackId` - rack identifier, enables rack-aware fetching from the closest replica (KIP-392)
+* plus the usual fetch/connection options (`maxWaitTime`, `idleTimeout`, `minBytes`, `maxBytes`, `handlerConcurrency`, `isolationLevel`, `clientId`, `connectionString`, ...)
+
+`init()` options:
+* `topics` - array of topic names to subscribe to (required)
+* `handler` - `function(messageSet, topic, partition, highwaterMarkOffset)` returning a Promise (required)
+* `onPartitionsRevoked` - optional `function([{topic, partition}])` called before partitions are released (commit final offsets here)
+* `onPartitionsAssigned` - optional `function([{topic, partition}])` called after newly assigned partitions are subscribed
 
 ## GroupAdmin (consumer groups API)
 
