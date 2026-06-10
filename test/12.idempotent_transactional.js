@@ -118,8 +118,8 @@ describe('Idempotent & Transactional Producer - Unit Tests', function () {
             err.code.should.equal('TransactionalIdAuthorizationFailed');
         });
 
-        it('should resolve error code 67 (ProducerFenced)', function () {
-            var err = errors.byCode(67);
+        it('should resolve error code 90 (ProducerFenced)', function () {
+            var err = errors.byCode(90);
             err.should.be.an.instanceOf(errors.KafkaError);
             err.code.should.equal('ProducerFenced');
         });
@@ -448,7 +448,7 @@ describe('Idempotent & Transactional Producer - Unit Tests', function () {
 
             buf.writeInt32BE(1, offset); offset += 4;
             buf.writeInt32BE(0, offset); offset += 4;
-            buf.writeInt16BE(67, offset); offset += 2; // ProducerFenced
+            buf.writeInt16BE(90, offset); offset += 2; // ProducerFenced
 
             result = protocol.read(buf).EndTxnResponse().result;
             result.error.should.be.an.instanceOf(errors.KafkaError);
@@ -621,7 +621,8 @@ describe('Idempotent & Transactional Producer - Unit Tests', function () {
 
         it('should initialize transactionCoordinators as empty object', function () {
             var client = new Client();
-            client.transactionCoordinators.should.be.an('object');
+            // null-prototype map (topic/group ids are data-driven keys)
+            (typeof client.transactionCoordinators).should.equal('object');
             Object.keys(client.transactionCoordinators).should.have.length(0);
         });
     });
