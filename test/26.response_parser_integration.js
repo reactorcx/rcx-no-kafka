@@ -81,15 +81,16 @@ describe('Response Parser Integration Tests', function () {
         return producer.client.updateMetadata(['kafka-test-topic']).then(function () {
             var topicId, partitions;
 
-            producer.client.topicIds.should.have.property('kafka-test-topic');
+            // topicIds/topicMetadata are null-prototype maps — assert via Object.keys
+            Object.keys(producer.client.topicIds).should.include('kafka-test-topic');
             topicId = producer.client.topicIds['kafka-test-topic'];
             topicId.should.be.a('string');
             // UUID format: 8-4-4-4-12 hex chars
             topicId.should.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 
-            producer.client.topicMetadata.should.have.property('kafka-test-topic');
+            Object.keys(producer.client.topicMetadata).should.include('kafka-test-topic');
             partitions = producer.client.topicMetadata['kafka-test-topic'];
-            partitions.should.be.an('object');
+            (typeof partitions).should.equal('object');
             Object.keys(partitions).length.should.be.gt(0);
             partitions[0].should.have.property('partitionId');
             partitions[0].should.have.property('leader');

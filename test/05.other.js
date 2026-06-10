@@ -116,9 +116,20 @@ describe('null and empty', function () {
 
 describe('connectionString', function () {
     it('should throw when connectionString is wrong', function () {
-        var producer = new Kafka.Producer({ connectionString: 'localhost' });
+        // hosts without an explicit port now default to 9092, so an empty
+        // string is used here as the genuinely-invalid connection string
+        var producer = new Kafka.Producer({ connectionString: '' });
 
         return producer.init().should.be.rejected;
+    });
+
+    it('should default the port to 9092 when connectionString has no port', function () {
+        var producer = new Kafka.Producer({ connectionString: 'localhost' });
+
+        return producer.init().then(function () {
+            producer.client.initialBrokers[0].server().should.eql('localhost:9092');
+            return producer.end();
+        });
     });
 });
 
