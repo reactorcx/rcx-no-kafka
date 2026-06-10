@@ -1,11 +1,11 @@
 import { Message } from "./kafka";
 
-export const enum ACKNOWLEDGE_TYPE {
-    GAP = 0,
-    ACCEPT = 1,
-    RELEASE = 2,
-    REJECT = 3
-}
+export declare const ACKNOWLEDGE_TYPE: {
+    GAP: 0;
+    ACCEPT: 1;
+    RELEASE: 2;
+    REJECT: 3;
+};
 
 export interface AcquiredRecord {
     firstOffset: number;
