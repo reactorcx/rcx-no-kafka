@@ -204,6 +204,11 @@ return producer.init().then(function () {
 });
 ```
 
+Notes on idempotent mode:
+* Idempotent (and transactional) sends are serialized — at most one produce request is in flight at a time — so stamped sequence numbers reach the broker in order. This trades some throughput for correctness, matching the Java client's safe behavior.
+* Retries resend the original sequence numbers so the broker can deduplicate. Do not re-send the same message *object* until its `send()` promise has settled (re-sending the same content as a new object is always fine).
+* If an attempt fails with an unknown outcome, the producer automatically re-initializes its producer id before the next send to obtain a fresh sequence space.
+
 ### Transactional Producer
 
 Enables atomic writes across multiple partitions. Requires Kafka 0.11+ with transactions enabled.
@@ -238,9 +243,12 @@ return producer.init().then(function () {
 
 Transaction methods:
 * `beginTransaction()` - start a new transaction (synchronous)
-* `commitTransaction()` - commit the current transaction (returns Promise)
-* `abortTransaction()` - abort the current transaction (returns Promise)
+* `commitTransaction()` - commit the current transaction (returns Promise). Batches still waiting on their `batch.maxWait` timer are flushed first so they are included in the transaction.
+* `abortTransaction()` - abort the current transaction (returns Promise). Also flushes queued batches first.
 * `sendOffsets(offsets)` - commit consumer offsets as part of the transaction (returns Promise)
+
+Other producer methods:
+* `flush()` - send out all batches currently waiting on their `batch.maxWait` timer and wait for them to settle (returns Promise)
 
 ### Producer options:
 * `idempotent` - enable idempotent producer for exactly-once delivery, defaults to `false`. Forces `requiredAcks` to -1. Requires Kafka 0.11+
@@ -286,6 +294,14 @@ var dataHandler = function (messageSet, topic, partition) {
         // m.message.headers   - array of {key, value} headers
     });
 };
+```
+
+If the handler throws or returns a rejected Promise, the consume offset is NOT
+advanced and the same batch is redelivered on the next fetch cycle
+(at-least-once delivery). Make handlers idempotent, and resolve (after logging /
+dead-lettering) for messages you want to skip.
+
+```javascript
 
 return consumer.init().then(function () {
     // Subscribe partitons 0 and 1 in a topic:
@@ -627,6 +643,8 @@ Note that group consumer has to commit offsets first, in order for consumerLag t
 
 __no-kafka__ supports Snappy, Gzip, LZ4, and Zstd compression. To use Snappy you must install the `snappy` NPM module (`npm install snappy`). To use LZ4 you must install the `lz4` NPM module (`npm install lz4`). To use Zstd you must install the `zstd-napi` NPM module (`npm install zstd-napi`).
 
+Decompressed batch output is capped at 128MB by default to protect consumers against decompression bombs. The limit can be tuned via `require('no-kafka/lib/protocol/misc/compression').maxOutputSize`.
+
 Enable compression in Producer:
 
 ```javascript
@@ -690,6 +708,13 @@ __no-kafka__ will connect to the hosts specified in `connectionString` construct
 ### Disconnect / Timeout Handling
 All network errors are handled by the library: producer will retry sending failed messages for configured amount of times, simple consumer and group consumer will try to reconnect to failed host, update metadata as needed as so on.
 
+Additional connection options:
+
+* `requestTimeout` - per-request cap in ms so a silent broker can't hang callers forever, set to 0 to disable. Defaults to 300000 (5 minutes).
+* `maxFrameSize` - maximum accepted response frame size in bytes; a frame larger than this (or with a malformed negative length) force-disconnects the connection. Defaults to 100MB (matches the broker's `socket.request.max.bytes` default).
+
+Fetched record batches are verified against their CRC-32C checksum; a corrupted batch fails the fetch (and is retried) rather than delivering corrupt data to the handler.
+
 ### SSL
 To connect to Kafka with [SSL endpoint enabled](http://kafka.apache.org/090/documentation.html#security_ssl) specify SSL certificate and key options to load cert/key from files or provide certificate/key directly as strings:
 
@@ -714,6 +739,15 @@ var producer = new Kafka.Producer({
     cert: '-----BEGIN CERTIFICATE-----\nMIIChTCCAe4C...............',
     key: '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBA.......'
   }
+});
+```
+
+To use TLS with a broker certificate signed by a publicly-trusted CA (no client certificate, no custom CA), explicitly enable TLS — it never silently falls back to plaintext:
+
+```javascript
+var producer = new Kafka.Producer({
+  connectionString: 'kafka://broker.example.com:9093',
+  ssl: true // or ssl: { enabled: true, ...other tls options }
 });
 ```
 

@@ -1,5 +1,4 @@
 export * from "./kafka";
-export * from "./client";
 
 export * from "./producer";
 export * from "./simple_consumer";
