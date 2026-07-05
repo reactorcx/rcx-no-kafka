@@ -69,8 +69,12 @@ describe('KIP-899: Client Re-bootstrap', function () {
             client = new Client({ connectionString: '127.0.0.1:9092', rebootstrap: false });
 
             return client.init().then(function () {
-                // close all initial connections — permanently dead (closed=true)
+                // close ALL connections — initial brokers and the live broker
+                // connections that metadata requests can now fall back to
                 client.initialBrokers.forEach(function (c) { c.close(); });
+                Object.keys(client.brokerConnections).forEach(function (k) {
+                    client.brokerConnections[k].close();
+                });
 
                 return client.updateMetadata().then(function () {
                     throw new Error('should have thrown');
