@@ -7,6 +7,7 @@ var fs = require('fs');
 var promiseUtils = require('../lib/promise-utils');
 var zlib    = require('zlib');
 var Kafka   = require('../lib/index');
+var Connection = require('../lib/connection');
 
 // CRC-32 (ISO 3309) — use native zlib.crc32 (Node 22+) or pure-JS fallback
 var crc32 = (typeof zlib.crc32 === 'function') ? zlib.crc32 : (function () {
@@ -29,8 +30,6 @@ var crc32 = (typeof zlib.crc32 === 'function') ? zlib.crc32 : (function () {
 }());
 
 describe('Connection receive buffer', function () {
-    var Connection = require('../lib/connection');
-
     // Feed a single framed response through _receive in TCP-sized chunks.
     // Returns the reassembled frame plus how much the buffer growth cost.
     function receiveFramed(frameBytes, chunkBytes, connectionOptions) {
@@ -78,14 +77,19 @@ describe('Connection receive buffer', function () {
         // growth keeps it near-linear. Guards the consumer's 25MB maxBytes default.
         var frameBytes = 25 * 1024 * 1024;
         var chunkBytes = 64 * 1024;
-        var chunks = Math.ceil((frameBytes + 4) / chunkBytes);
+        var initialBufferSize = 256 * 1024;
+        // doubling from the initial buffer needs ceil(log2(frame / initial)) steps;
+        // allow a couple spare, but far below the one-per-chunk of exact-fit growth
+        var maxGrows = Math.ceil(Math.log2(frameBytes / initialBufferSize)) + 2;
 
         var r = receiveFramed(frameBytes, chunkBytes);
 
         r.received.length.should.be.eql(frameBytes);
-        r.grows.should.be.below(chunks / 10);
+        r.grows.should.be.at.most(maxGrows);
         // total bytes re-copied must stay a small multiple of the frame, not O(n^2)
         r.copied.should.be.below(frameBytes * 4);
+        // doubling overshoots, but never past 2x — guards steady-state memory per connection
+        r.conn.buffer.length.should.be.below(frameBytes * 2);
     });
 
     it('should still fit a frame larger than the initial buffer size', function () {

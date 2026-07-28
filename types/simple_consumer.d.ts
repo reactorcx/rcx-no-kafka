@@ -38,8 +38,8 @@ export interface SimpleConsumerOptions {
     minBytes?: number;
     /**
       * `maxBytes` - maximum size of messages in a fetch response.
-      * 
-      * default: to 1MB
+      *
+      * default: to 25MB
       */
     maxBytes?: number;
     /**
