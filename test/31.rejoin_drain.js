@@ -73,9 +73,14 @@ describe('Rejoin drains in-flight commits before re-subscribe (mechanism C fix)'
         };
 
         var p = consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [0] }]);
-        subscribeArgs.should.have.length(0); // nothing subscribed while the drain is pending
-        release();
-        return p.then(function () { subscribeArgs.should.have.length(1); });
+        // _onPartitionsRevoked is now invoked from inside a .then (so a synchronous throw is
+        // caught), which defers the call by one microtask tick relative to this synchronous
+        // return — give that tick a chance to run before asserting/releasing.
+        return Promise.resolve().then(function () {
+            subscribeArgs.should.have.length(0); // nothing subscribed while the drain is pending
+            release();
+            return p;
+        }).then(function () { subscribeArgs.should.have.length(1); });
     });
 
     it('falls back to re-subscribe from committed if the drain rejects (degraded, no hang)', function () {
@@ -118,6 +123,59 @@ describe('Rejoin drains in-flight commits before re-subscribe (mechanism C fix)'
             revokedSeen.should.deep.equal([{ topic: 'reward-topic', partition: 0 }]);
             var addSub = subscribeArgs.filter(function (s) { return s.partition === 1; })[0];
             addSub.options.should.deep.equal({ offset: 110 }); // subscribed only after the drain
+        });
+    });
+
+    it('eager: a revoked partition cannot be re-fetched while the drain is pending', function () {
+        // Regression test for the race the fix closes: _fetch's own handler-completion logic
+        // (base_consumer.js) used to reset `paused` back to false once an in-flight handler
+        // resolved, which would let the fetch loop poll a revoked-but-not-yet-deleted partition
+        // again mid-drain. The fix hard-deletes the subscription entry up front, so _fetch (which
+        // only looks at Object.keys(self.subscriptions)) can't see it at all.
+        var fetchRequestCalls = 0, releaseDrain, updatePromise;
+        consumer.subscriptions = {
+            'reward-topic:0': { topic: 'reward-topic', partition: 0, offset: 110, leader: 0, handler: handler }
+        };
+        consumer.client.fetchRequest = function () {
+            fetchRequestCalls++;
+            return Promise.resolve([]);
+        };
+        consumer._onPartitionsRevoked = function () {
+            return new Promise(function (resolve) { releaseDrain = resolve; });
+        };
+        consumer.fetchOffset = function () {
+            return Promise.resolve([{ topic: 'reward-topic', partition: 0, offset: 110 }]);
+        };
+
+        updatePromise = consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [] }]);
+
+        return Promise.resolve().then(function () {
+            // The drain hasn't resolved yet: the partition must already be gone from the fetch loop.
+            (consumer.subscriptions['reward-topic:0'] === undefined).should.equal(true);
+            return consumer._fetch(); // simulates the idleTimeout tick firing mid-drain
+        }).then(function () {
+            fetchRequestCalls.should.equal(0, '_fetch polled a partition that is mid-revoke-drain');
+            clearTimeout(consumer._fetchTimeout); // don't let the real loop keep rescheduling
+            releaseDrain();
+            return updatePromise;
+        });
+    });
+
+    it('degrades to re-subscribe from committed if the drain never settles (revokeTimeout)', function () {
+        var warnedWith = null;
+        consumer.options.revokeTimeout = 20;
+        consumer.subscriptions = {
+            'reward-topic:0': { topic: 'reward-topic', partition: 0, offset: 110, leader: 0, handler: handler }
+        };
+        consumer.client.warn = function () { warnedWith = Array.prototype.slice.call(arguments); };
+        consumer._onPartitionsRevoked = function () { return new Promise(function () {}); }; // never settles
+        consumer.fetchOffset = function () {
+            return Promise.resolve([{ topic: 'reward-topic', partition: 0, offset: 100 }]);
+        };
+
+        return consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [0] }]).then(function () {
+            subscribeArgs[0].options.should.deep.equal({ offset: 100 }); // degraded, from committed
+            warnedWith[0].should.match(/onPartitionsRevoked drain failed/);
         });
     });
 });
