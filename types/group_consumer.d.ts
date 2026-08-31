@@ -85,6 +85,13 @@ export interface GroupConsumerOptions {
       */
     heartbeatTimeout?: number;
     /**
+      * revokeTimeout - maximum time in ms to wait for the onPartitionsRevoked callback to
+      * settle before continuing the rebalance without it.
+      * 
+      * defaults to half of sessionTimeout
+      */
+    revokeTimeout?: number;
+    /**
       * retentionTime - offset retention time in ms.
       * 
       * defaults to 1 day (24 * 3600 * 1000)

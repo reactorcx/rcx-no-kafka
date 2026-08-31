@@ -2,47 +2,31 @@
 
 /* global describe, it, beforeEach */
 
-// Unit tests for the mechanism-C FIX: `_updateSubscriptions` / `_updateSubscriptionsCooperative`
-// now AWAIT the `onPartitionsRevoked` callback before fetching offsets and re-subscribing.
-// rle-api's kafka-source.js makes that callback drain the in-flight, already-emitted batch (it
-// resolves only once those offsets commit), so the re-subscribe reads a committed offset PAST
-// the batch and the rejoin no longer re-delivers it (no "immutable field '_id'" duplicates).
-//
-// Counterpart to test/30 (which characterizes the un-drained replay). No broker — everything is
-// stubbed, like test/29 and test/30.
+// CORE-4239: `_updateSubscriptions` / `_updateSubscriptionsCooperative` await the
+// `onPartitionsRevoked` callback before fetching offsets and re-subscribing. The consumer uses
+// that callback to commit its in-flight, already-emitted batch, so the re-subscribe reads a
+// committed offset past the batch and the rejoin no longer re-delivers it.
 
-var Kafka = require('../lib/index');
+var helpers = require('./helpers');
 
-describe('Rejoin drains in-flight commits before re-subscribe (mechanism C fix)', function () {
+describe('Rejoin drains in-flight commits before re-subscribe', function () {
     var consumer, subscribeArgs, handler;
 
     beforeEach(function () {
-        var realSubscribe;
-        consumer = new Kafka.GroupConsumer({ connectionString: 'localhost:9092' });
-        handler = function () { return Promise.resolve(); };
+        var stub = helpers.stubbedGroupConsumer();
+        consumer = stub.consumer;
+        subscribeArgs = stub.subscribeArgs;
+        handler = stub.handler;
         consumer._cooperative = false;
-        consumer.strategyName = 'TestStrategy';
-        consumer.strategies = { TestStrategy: { handler: handler } };
-        consumer.topics = ['reward-topic'];
-        ['debug', 'log', 'warn', 'error'].forEach(function (m) { consumer.client[m] = function () {}; });
-        consumer.client.updateMetadata = function () { return Promise.resolve(); };
-        consumer.client.findLeader = function () { return Promise.resolve(0); };
-        realSubscribe = consumer.subscribe.bind(consumer);
-        subscribeArgs = [];
-        consumer.subscribe = function (topic, partition, options, h) {
-            subscribeArgs.push({ topic: topic, partition: partition, options: options });
-            return realSubscribe(topic, partition, options, h);
-        };
     });
 
     it('re-subscribes PAST the in-flight batch once the drain commits it (eager, no replay)', function () {
-        consumer.subscriptions = {
-            'reward-topic:0': { topic: 'reward-topic', partition: 0, offset: 110, leader: 0, handler: handler }
-        };
         // Batch [100..109] in flight; committed pointer at 100. The draining revoke callback
         // simulates the in-flight commit landing (committed -> 110) and resolves ASYNC, so the
-        // re-subscribe reads 110 only if it actually AWAITED the drain.
+        // re-subscribe sees 110 only if it actually awaited the drain.
         var committed = 100;
+
+        consumer.subscriptions = helpers.inFlightSubscription(handler);
         consumer._onPartitionsRevoked = function () {
             return new Promise(function (resolve) {
                 setTimeout(function () { committed = 110; resolve(); }, 5);
@@ -60,33 +44,29 @@ describe('Rejoin drains in-flight commits before re-subscribe (mechanism C fix)'
     });
 
     it('does not fetch offsets / re-subscribe until the revoke drain resolves', function () {
-        consumer.subscriptions = {
-            'reward-topic:0': { topic: 'reward-topic', partition: 0, offset: 110, leader: 0, handler: handler }
-        };
-        var drainResolved = false, release;
-        consumer._onPartitionsRevoked = function () {
-            return new Promise(function (resolve) { release = function () { drainResolved = true; resolve(); }; });
-        };
+        var drain = helpers.controllableDrain(), released = false, update;
+
+        consumer.subscriptions = helpers.inFlightSubscription(handler);
+        consumer._onPartitionsRevoked = drain.callback;
         consumer.fetchOffset = function () {
-            drainResolved.should.equal(true, 'fetchOffset ran before the drain resolved');
+            released.should.equal(true, 'fetchOffset ran before the drain resolved');
             return Promise.resolve([{ topic: 'reward-topic', partition: 0, offset: 110 }]);
         };
 
-        var p = consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [0] }]);
-        // _onPartitionsRevoked is now invoked from inside a .then (so a synchronous throw is
-        // caught), which defers the call by one microtask tick relative to this synchronous
-        // return — give that tick a chance to run before asserting/releasing.
-        return Promise.resolve().then(function () {
+        update = consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [0] }]);
+
+        return drain.invoked.then(function () {
             subscribeArgs.should.have.length(0); // nothing subscribed while the drain is pending
-            release();
-            return p;
-        }).then(function () { subscribeArgs.should.have.length(1); });
+            released = true;
+            drain.release();
+            return update;
+        }).then(function () {
+            subscribeArgs.should.have.length(1);
+        });
     });
 
     it('falls back to re-subscribe from committed if the drain rejects (degraded, no hang)', function () {
-        consumer.subscriptions = {
-            'reward-topic:0': { topic: 'reward-topic', partition: 0, offset: 110, leader: 0, handler: handler }
-        };
+        consumer.subscriptions = helpers.inFlightSubscription(handler);
         consumer._onPartitionsRevoked = function () { return Promise.reject(new Error('drain boom')); };
         consumer.fetchOffset = function () {
             return Promise.resolve([{ topic: 'reward-topic', partition: 0, offset: 100 }]);
@@ -98,12 +78,11 @@ describe('Rejoin drains in-flight commits before re-subscribe (mechanism C fix)'
     });
 
     it('cooperative: drains the revoked partition before subscribing the added partition', function () {
+        var committed = 100, revokedSeen = null, addSub;
+
         consumer._cooperative = true;
         consumer.ownedPartitions = [{ topic: 'reward-topic', partitions: [0] }];
-        consumer.subscriptions = {
-            'reward-topic:0': { topic: 'reward-topic', partition: 0, offset: 110, leader: 0, handler: handler }
-        };
-        var committed = 100, revokedSeen = null;
+        consumer.subscriptions = helpers.inFlightSubscription(handler);
         consumer._onPartitionsRevoked = function (parts) {
             revokedSeen = parts;
             return new Promise(function (resolve) {
@@ -121,52 +100,46 @@ describe('Rejoin drains in-flight commits before re-subscribe (mechanism C fix)'
             [{ topic: 'reward-topic', partitions: [1] }], handler
         ).then(function () {
             revokedSeen.should.deep.equal([{ topic: 'reward-topic', partition: 0 }]);
-            var addSub = subscribeArgs.filter(function (s) { return s.partition === 1; })[0];
+            addSub = subscribeArgs.filter(function (s) { return s.partition === 1; })[0];
             addSub.options.should.deep.equal({ offset: 110 }); // subscribed only after the drain
         });
     });
 
     it('eager: a revoked partition cannot be re-fetched while the drain is pending', function () {
-        // Regression test for the race the fix closes: _fetch's own handler-completion logic
-        // (base_consumer.js) used to reset `paused` back to false once an in-flight handler
-        // resolved, which would let the fetch loop poll a revoked-but-not-yet-deleted partition
-        // again mid-drain. The fix hard-deletes the subscription entry up front, so _fetch (which
-        // only looks at Object.keys(self.subscriptions)) can't see it at all.
-        var fetchRequestCalls = 0, releaseDrain, updatePromise;
-        consumer.subscriptions = {
-            'reward-topic:0': { topic: 'reward-topic', partition: 0, offset: 110, leader: 0, handler: handler }
-        };
+        // The subscriptions map is wiped up front, so _fetch (which only looks at
+        // Object.keys(self.subscriptions)) cannot poll a revoked partition mid-drain — not even
+        // via base_consumer's clearing of `paused` when an in-flight handler resolves.
+        var drain = helpers.controllableDrain(), fetchRequestCalls = 0, update;
+
+        consumer.subscriptions = helpers.inFlightSubscription(handler);
         consumer.client.fetchRequest = function () {
             fetchRequestCalls++;
             return Promise.resolve([]);
         };
-        consumer._onPartitionsRevoked = function () {
-            return new Promise(function (resolve) { releaseDrain = resolve; });
-        };
+        consumer._onPartitionsRevoked = drain.callback;
         consumer.fetchOffset = function () {
             return Promise.resolve([{ topic: 'reward-topic', partition: 0, offset: 110 }]);
         };
+        consumer._closed = true; // so the probe _fetch() below doesn't reschedule the real loop
 
-        updatePromise = consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [] }]);
+        update = consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [] }]);
 
-        return Promise.resolve().then(function () {
+        return drain.invoked.then(function () {
             // The drain hasn't resolved yet: the partition must already be gone from the fetch loop.
             (consumer.subscriptions['reward-topic:0'] === undefined).should.equal(true);
             return consumer._fetch(); // simulates the idleTimeout tick firing mid-drain
         }).then(function () {
             fetchRequestCalls.should.equal(0, '_fetch polled a partition that is mid-revoke-drain');
-            clearTimeout(consumer._fetchTimeout); // don't let the real loop keep rescheduling
-            releaseDrain();
-            return updatePromise;
+            drain.release();
+            return update;
         });
     });
 
     it('degrades to re-subscribe from committed if the drain never settles (revokeTimeout)', function () {
         var warnedWith = null;
+
         consumer.options.revokeTimeout = 20;
-        consumer.subscriptions = {
-            'reward-topic:0': { topic: 'reward-topic', partition: 0, offset: 110, leader: 0, handler: handler }
-        };
+        consumer.subscriptions = helpers.inFlightSubscription(handler);
         consumer.client.warn = function () { warnedWith = Array.prototype.slice.call(arguments); };
         consumer._onPartitionsRevoked = function () { return new Promise(function () {}); }; // never settles
         consumer.fetchOffset = function () {

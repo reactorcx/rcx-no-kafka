@@ -486,6 +486,7 @@ This is a client-side-only feature and works with any Kafka broker version suppo
   * `max` - maximum delay value, defaults to 1000ms
 * `sessionTimeout` - session timeout in ms, min 6000, max 30000, defaults to `15000`
 * `heartbeatTimeout` - delay between heartbeat requests in ms, defaults to `1000`
+* `revokeTimeout` - maximum time in ms to wait for the `onPartitionsRevoked` callback to settle before continuing the rebalance without it, defaults to half of `sessionTimeout`
 * `retentionTime` - offset retention time in ms, defaults to 1 day (24 * 3600 * 1000)
 * `startingOffset` - starting position (time) when there is no commited offset, defaults to `Kafka.LATEST_OFFSET`
 * `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
@@ -498,7 +499,7 @@ This is a client-side-only feature and works with any Kafka broker version suppo
 
 Strategy-level options (passed in the strategy object to `init()`):
 * `cooperative` - boolean, enable cooperative/incremental rebalancing (KIP-429). Defaults to `false` (eager mode)
-* `onPartitionsRevoked` - function, optional callback invoked with an array of `{topic, partition}` when partitions are revoked during a cooperative rebalance
+* `onPartitionsRevoked` - function, optional callback invoked with an array of `{topic, partition}` when partitions are revoked (on a cooperative rebalance, an eager rebalance, and a full rejoin). If it returns a promise, the rebalance waits for it before re-subscribing, so the callback can commit any in-flight work and avoid re-delivery of an already emitted batch. The wait is bounded by `revokeTimeout`; if the callback rejects or times out, a warning is logged and the rebalance continues
 * `onPartitionsAssigned` - function, optional callback invoked with an array of `{topic, partition}` when new partitions are assigned during a cooperative rebalance
 
 ## GroupAdmin (consumer groups API)
