@@ -33,19 +33,21 @@ function stubbedGroupConsumer() {
 }
 
 /**
- * A subscriptions map holding one partition with an in-flight batch: emitted up to `offset`
- * (default 110), not yet committed.
+ * A subscriptions map holding one partition (default 0) with an in-flight batch: emitted up to
+ * `offset` (default 110), not yet committed.
  */
-function inFlightSubscription(handler, offset) {
-    return {
-        'reward-topic:0': {
-            topic: 'reward-topic',
-            partition: 0,
-            offset: offset === undefined ? 110 : offset,
-            leader: 0,
-            handler: handler
-        }
+function inFlightSubscription(handler, offset, partition) {
+    var result = {}, p = partition === undefined ? 0 : partition;
+
+    result['reward-topic:' + p] = {
+        topic: 'reward-topic',
+        partition: p,
+        offset: offset === undefined ? 110 : offset,
+        leader: 0,
+        handler: handler
     };
+
+    return result;
 }
 
 /**
