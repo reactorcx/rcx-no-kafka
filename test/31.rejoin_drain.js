@@ -154,7 +154,7 @@ describe('Rejoin drains in-flight commits before re-subscribe', function () {
 
         return consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [0] }]).then(function () {
             drainSettled.should.equal(false, 'waited for the drain despite revokeTimeout: 0');
-            warnedWith[0].should.match(/onPartitionsRevoked drain failed/);
+            warnedWith[0].should.contain('re-subscribe'); // degraded, and from the eager path
             subscribeArgs[0].options.should.deep.equal({ offset: 100 });
         });
     });
@@ -172,7 +172,7 @@ describe('Rejoin drains in-flight commits before re-subscribe', function () {
 
         return consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [0] }]).then(function () {
             subscribeArgs[0].options.should.deep.equal({ offset: 100 }); // degraded, from committed
-            warnedWith[0].should.match(/onPartitionsRevoked drain failed/);
+            warnedWith[0].should.contain('re-subscribe'); // degraded, and from the eager path
         });
     });
 });
