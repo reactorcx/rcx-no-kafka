@@ -219,19 +219,19 @@ describe('Rejoin drains in-flight commits before re-subscribe', function () {
 describe('revokeTimeout option', function () {
     // The drain runs inside the rebalance, during which the heartbeat loop is suspended, so a
     // revokeTimeout at or above sessionTimeout guarantees eviction whenever the drain runs long.
-    it('warns when revokeTimeout is >= sessionTimeout', function () {
+    it('warns when revokeTimeout is more than half of sessionTimeout', function () {
         var logged = [], consumer;
 
         consumer = new Kafka.GroupConsumer({
             connectionString: 'localhost:9092',
             sessionTimeout: 10000,
-            revokeTimeout: 10000,
+            revokeTimeout: 6000, // > half of sessionTimeout
             logger: { logLevel: 5, logFunction: function () {
                 logged.push(Array.prototype.slice.call(arguments).join(' '));
             } }
         });
 
-        consumer.options.revokeTimeout.should.equal(10000); // kept as configured, just warned about
+        consumer.options.revokeTimeout.should.equal(6000); // kept as configured, just warned about
         logged.join(' ').should.contain('revokeTimeout');
     });
 
