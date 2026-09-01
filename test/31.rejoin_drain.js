@@ -255,6 +255,24 @@ describe('revokeTimeout option', function () {
         });
     });
 
+    it('warns at construction that revokeTimeout: 0 disables the drain', function () {
+        // A legitimate opt-out, but the drain is the whole point of the option — reaching 0 by
+        // accident otherwise gives pre-4.11 re-delivery with no signal anywhere.
+        var logged = [], consumer;
+
+        consumer = new Kafka.GroupConsumer({
+            connectionString: 'localhost:9092',
+            sessionTimeout: 10000,
+            revokeTimeout: 0,
+            logger: { logLevel: 5, logFunction: function () {
+                logged.push(Array.prototype.slice.call(arguments).join(' '));
+            } }
+        });
+
+        consumer.options.revokeTimeout.should.equal(0); // honoured, not overridden
+        logged.join(' ').should.contain('revokeTimeout is 0');
+    });
+
     it('does not warn for the default (half of sessionTimeout)', function () {
         var logged = [];
 
