@@ -155,6 +155,38 @@ export interface Strategy {
         weight?: number;
     }
     strategy?: Kafka.AbstractAssignmentStrategy;
+    /**
+      * cooperative - enable cooperative/incremental rebalancing (KIP-429), where only
+      * migrating partitions are revoked and unaffected partitions keep consuming.
+      *
+      * defaults to false (eager mode)
+      */
+    cooperative?: boolean;
+    /**
+      * onPartitionsRevoked - optional callback invoked with the partitions being revoked,
+      * on a cooperative rebalance, an eager rebalance and a full rejoin.
+      *
+      * If it returns a promise the rebalance waits for it before re-subscribing, so the
+      * callback can commit any in-flight work and avoid re-delivery of an already emitted
+      * batch. The wait is bounded by the `revokeTimeout` consumer option; if the callback
+      * rejects or times out, a warning is logged and the rebalance continues.
+      */
+    onPartitionsRevoked?: PartitionsChangedHandler;
+    /**
+      * onPartitionsAssigned - optional callback invoked with the newly assigned partitions
+      * once they have been subscribed. Its return value is not awaited.
+      */
+    onPartitionsAssigned?: PartitionsChangedHandler;
+}
+
+
+export interface TopicPartition {
+    topic: string;
+    partition: number;
+}
+
+export interface PartitionsChangedHandler {
+    (partitions: TopicPartition[]): Promise<any> | void;
 }
 
 

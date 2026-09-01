@@ -1,3 +1,12 @@
+## 4.11
+
+### Changed (CORE-4239 rebalance drain)
+- **`onPartitionsRevoked` is now awaited.** Previously invoked fire-and-forget on a cooperative rebalance only; it is now called on all three revoke paths (cooperative rebalance, eager rebalance, full rejoin) and, if it returns a promise, the rebalance **waits for it** before fetching offsets and re-subscribing. This lets the callback commit in-flight, already-emitted work so a rejoin does not re-deliver a batch. Existing callbacks that return a promise will now delay the rebalance by however long they take to settle.
+
+### Added
+- `revokeTimeout` — bound in ms on the `onPartitionsRevoked` wait, defaults to half of `sessionTimeout`. If the callback rejects or exceeds this, a warning naming the affected partitions is logged and the rebalance continues from the last committed offset (the pre-4.11 behaviour). An explicit `0` means "do not wait". A value at or above `sessionTimeout` is warned about at construction, since heartbeats are suspended for the duration of the drain.
+- TypeScript: `Strategy` now declares `cooperative`, `onPartitionsRevoked` and `onPartitionsAssigned`, which the runtime has always read but the types omitted.
+
 ## 4.10
 
 ### Added (KIP-899 Re-bootstrap, KIP-390 Compression Level)

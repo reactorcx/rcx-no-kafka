@@ -8,6 +8,7 @@
 // committed offset past the batch and the rejoin no longer re-delivers it.
 
 var helpers = require('./helpers');
+var Kafka = require('../lib/index');
 
 describe('Rejoin drains in-flight commits before re-subscribe', function () {
     var consumer, subscribeArgs, handler;
@@ -174,5 +175,39 @@ describe('Rejoin drains in-flight commits before re-subscribe', function () {
             subscribeArgs[0].options.should.deep.equal({ offset: 100 }); // degraded, from committed
             warnedWith[0].should.contain('re-subscribe'); // degraded, and from the eager path
         });
+    });
+});
+
+describe('revokeTimeout option', function () {
+    // The drain runs inside the rebalance, during which the heartbeat loop is suspended, so a
+    // revokeTimeout at or above sessionTimeout guarantees eviction whenever the drain runs long.
+    it('warns when revokeTimeout is >= sessionTimeout', function () {
+        var logged = [], consumer;
+
+        consumer = new Kafka.GroupConsumer({
+            connectionString: 'localhost:9092',
+            sessionTimeout: 10000,
+            revokeTimeout: 10000,
+            logger: { logLevel: 5, logFunction: function () {
+                logged.push(Array.prototype.slice.call(arguments).join(' '));
+            } }
+        });
+
+        consumer.options.revokeTimeout.should.equal(10000); // kept as configured, just warned about
+        logged.join(' ').should.contain('revokeTimeout');
+    });
+
+    it('does not warn for the default (half of sessionTimeout)', function () {
+        var logged = [];
+
+        new Kafka.GroupConsumer({
+            connectionString: 'localhost:9092',
+            sessionTimeout: 10000,
+            logger: { logLevel: 5, logFunction: function () {
+                logged.push(Array.prototype.slice.call(arguments).join(' '));
+            } }
+        }).options.revokeTimeout.should.equal(5000);
+
+        logged.join(' ').should.not.contain('revokeTimeout');
     });
 });
