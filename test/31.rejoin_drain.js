@@ -136,15 +136,17 @@ describe('Rejoin drains in-flight commits before re-subscribe', function () {
         });
     });
 
-    it('honours an explicit revokeTimeout of 0 as "do not wait"', function () {
-        // `revokeTimeout || default` used to read an explicit 0 as unset and wait the full
-        // default instead — the opposite of what the caller asked for.
-        var warnedWith = null, drainSettled = false;
+    it('honours an explicit revokeTimeout of 0 as "notify, do not wait"', function () {
+        // 0 is an opt-out, not a permanently-failing drain: the callback is still invoked so the
+        // consumer is told, but nothing is awaited and nothing is warned about — the caller has
+        // already accepted the re-delivery this implies.
+        var warnedWith = null, drainSettled = false, notified = null;
 
         consumer.options.revokeTimeout = 0;
         consumer.subscriptions = helpers.inFlightSubscription(handler);
         consumer.client.warn = function () { warnedWith = Array.prototype.slice.call(arguments); };
-        consumer._onPartitionsRevoked = function () {
+        consumer._onPartitionsRevoked = function (parts) {
+            notified = parts;
             return new Promise(function (resolve) {
                 setTimeout(function () { drainSettled = true; resolve(); }, 50);
             });
@@ -154,8 +156,9 @@ describe('Rejoin drains in-flight commits before re-subscribe', function () {
         };
 
         return consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [0] }]).then(function () {
+            notified.should.deep.equal([{ topic: 'reward-topic', partition: 0 }]); // still told
             drainSettled.should.equal(false, 'waited for the drain despite revokeTimeout: 0');
-            warnedWith[0].should.contain('re-subscribe'); // degraded, and from the eager path
+            (warnedWith === null).should.equal(true, 'warned about a deliberate opt-out');
             subscribeArgs[0].options.should.deep.equal({ offset: 100 });
         });
     });
@@ -195,6 +198,26 @@ describe('revokeTimeout option', function () {
 
         consumer.options.revokeTimeout.should.equal(10000); // kept as configured, just warned about
         logged.join(' ').should.contain('revokeTimeout');
+    });
+
+    [['abc'], [-5000], [NaN]].forEach(function (c) {
+        it('falls back to the default for an invalid revokeTimeout: ' + JSON.stringify(c[0]), function () {
+            // Unvalidated these reach setTimeout, which coerces them to 0 and silently turns the
+            // drain off rather than bounding it.
+            var logged = [], consumer;
+
+            consumer = new Kafka.GroupConsumer({
+                connectionString: 'localhost:9092',
+                sessionTimeout: 10000,
+                revokeTimeout: c[0],
+                logger: { logLevel: 5, logFunction: function () {
+                    logged.push(Array.prototype.slice.call(arguments).join(' '));
+                } }
+            });
+
+            consumer.options.revokeTimeout.should.equal(5000);
+            logged.join(' ').should.contain('Invalid revokeTimeout');
+        });
     });
 
     it('does not warn for the default (half of sessionTimeout)', function () {

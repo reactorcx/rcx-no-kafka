@@ -164,7 +164,9 @@ export interface Strategy {
     cooperative?: boolean;
     /**
       * onPartitionsRevoked - optional callback invoked with the partitions being revoked,
-      * on a cooperative rebalance, an eager rebalance and a full rejoin.
+      * on a cooperative rebalance, an eager rebalance and a full rejoin. The full-rejoin case
+      * only fires in cooperative mode, where ownedPartitions is tracked; in eager mode a full
+      * rejoin drains through its re-subscribe instead, still before any partition is re-fetched.
       *
       * If it returns a promise the rebalance waits for it before re-subscribing, so the
       * callback can commit any in-flight work and avoid re-delivery of an already emitted

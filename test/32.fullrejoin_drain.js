@@ -70,6 +70,49 @@ describe('Full rejoin drains previously-owned partitions before proceeding', fun
         });
     });
 
+    it('re-resolves the group coordinator before draining, not after', function () {
+        // The common trigger for a full rejoin is a heartbeat failure against a coordinator that
+        // is already unhealthy. Draining first meant issuing commits through that dead connection
+        // and burning the whole revokeTimeout to watch them fail.
+        var order = [];
+
+        consumer.ownedPartitions = [{ topic: 'reward-topic', partitions: [0] }];
+        consumer.client.updateGroupCoordinator = function () {
+            order.push('updateGroupCoordinator');
+            return Promise.resolve();
+        };
+        consumer._onPartitionsRevoked = function () {
+            order.push('drain');
+            return Promise.resolve();
+        };
+
+        return consumer._fullRejoin().then(function () {
+            order.should.deep.equal(['updateGroupCoordinator', 'drain']);
+        });
+    });
+
+    it('retries with ownedPartitions intact when the coordinator lookup fails', function () {
+        // The drain must not be skipped for good just because the first lookup failed — the next
+        // attempt still has something to drain.
+        var attempts = 0, drained = null;
+
+        consumer.options.maxRejoinAttempts = 2;
+        consumer.ownedPartitions = [{ topic: 'reward-topic', partitions: [0] }];
+        consumer.client.updateGroupCoordinator = function () {
+            attempts++;
+            return attempts === 1 ? Promise.reject(new Error('no coordinator')) : Promise.resolve();
+        };
+        consumer._onPartitionsRevoked = function (parts) {
+            drained = parts;
+            return Promise.resolve();
+        };
+
+        return consumer._fullRejoin().then(function () {
+            attempts.should.equal(2);
+            drained.should.deep.equal([{ topic: 'reward-topic', partition: 0 }]);
+        });
+    });
+
     it('does not call onPartitionsRevoked when nothing was owned', function () {
         var called = false;
 
