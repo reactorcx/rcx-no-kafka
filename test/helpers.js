@@ -5,13 +5,13 @@
 var Kafka = require('../lib/index');
 
 /**
- * A GroupConsumer with no broker: loggers silenced, metadata/leader lookups stubbed, and
+ * A GroupConsumer with no broker: logging off via logLevel 0, metadata/leader lookups stubbed, and
  * `subscribe` wrapped so a test can assert what got re-subscribed and from which offset.
  *
  * @return {Object} { consumer, subscribeArgs, handler }
  */
 function stubbedGroupConsumer() {
-    var consumer = new Kafka.GroupConsumer({ connectionString: 'localhost:9092' }),
+    var consumer = new Kafka.GroupConsumer({ connectionString: 'localhost:9092', logger: { logLevel: 0 } }),
         handler = function () { return Promise.resolve(); },
         subscribeArgs = [],
         realSubscribe;
@@ -19,7 +19,6 @@ function stubbedGroupConsumer() {
     consumer.strategyName = 'TestStrategy';
     consumer.strategies = { TestStrategy: { handler: handler } };
     consumer.topics = ['reward-topic'];
-    ['debug', 'log', 'warn', 'error'].forEach(function (m) { consumer.client[m] = function () {}; });
     consumer.client.updateMetadata = function () { return Promise.resolve(); };
     consumer.client.findLeader = function () { return Promise.resolve(0); };
 
