@@ -106,6 +106,41 @@ describe('Rejoin drains in-flight commits before re-subscribe', function () {
         });
     });
 
+    it('cooperative: a partition re-added mid-drain is still dropped after it', function () {
+        // unsubscribe() runs before the drain, but a subscribe() already past its guard when it
+        // ran lands after the delete — base_consumer.subscribe writes the entry only once
+        // findLeader resolves. Nothing else removed it, so the partition kept being fetched
+        // after being given up, while its new owner consumed it too. The eager path already
+        // guards this with its second wipe; the cooperative path did not.
+        var handler2 = function () { return Promise.resolve(); };
+
+        consumer._cooperative = true;
+        consumer.ownedPartitions = [{ topic: 'reward-topic', partitions: [0] }];
+        consumer.subscriptions = helpers.inFlightSubscription(handler);
+        consumer._onPartitionsRevoked = function () {
+            return new Promise(function (resolve) {
+                setTimeout(function () {
+                    // an in-flight subscribe() for the revoked partition landing mid-drain
+                    consumer.subscriptions['reward-topic:0'] = {
+                        topic: 'reward-topic', partition: 0, offset: 100, leader: 0, handler: handler2
+                    };
+                    resolve();
+                }, 5);
+            });
+        };
+        consumer.fetchOffset = function (reqs) {
+            return Promise.resolve(reqs.map(function (r) {
+                return { topic: r.topic, partition: r.partition, offset: 500 };
+            }));
+        };
+
+        return consumer._updateSubscriptionsCooperative(
+            [{ topic: 'reward-topic', partitions: [1] }], handler
+        ).then(function () {
+            Object.keys(consumer.subscriptions).should.deep.equal(['reward-topic:1']);
+        });
+    });
+
     it('eager: a revoked partition cannot be re-fetched while the drain is pending', function () {
         // The subscriptions map is wiped up front, so _fetch (which only looks at
         // Object.keys(self.subscriptions)) cannot poll a revoked partition mid-drain — not even
@@ -200,8 +235,8 @@ describe('revokeTimeout option', function () {
         logged.join(' ').should.contain('revokeTimeout');
     });
 
-    [['abc'], [-5000], [NaN]].forEach(function (c) {
-        it('falls back to the default for an invalid revokeTimeout: ' + JSON.stringify(c[0]), function () {
+    [['abc', '"abc"'], [-5000, '-5000'], [NaN, 'NaN']].forEach(function (c) {
+        it('falls back to the default for an invalid revokeTimeout: ' + c[1], function () {
             // Unvalidated these reach setTimeout, which coerces them to 0 and silently turns the
             // drain off rather than bounding it.
             var logged = [], consumer;
