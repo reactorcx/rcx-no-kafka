@@ -45,6 +45,32 @@ describe('Full rejoin drains previously-owned partitions before proceeding', fun
         });
     });
 
+    it('drains with a usable memberId so the callback can actually commit', function () {
+        // Regression: memberId was nulled before the drain, and commitOffset rejects outright
+        // while memberId is null — so every full-rejoin drain failed before it could commit.
+        var committed = null;
+
+        consumer.memberId = 'member-1';
+        consumer.generationId = 7;
+        consumer.client.offsetCommitRequestV2 = function (groupId, memberId, generationId, reqs) {
+            committed = { memberId: memberId, reqs: reqs };
+            return Promise.resolve();
+        };
+        consumer.ownedPartitions = [{ topic: 'reward-topic', partitions: [0] }];
+        consumer._onPartitionsRevoked = function (parts) {
+            return consumer.commitOffset(parts.map(function (p) {
+                return { topic: p.topic, partition: p.partition, offset: 109 };
+            }));
+        };
+
+        return consumer._fullRejoin().then(function () {
+            (committed === null).should.equal(false, 'revoke callback could not commit during the drain');
+            committed.memberId.should.equal('member-1');
+            committed.reqs[0].partitions[0].offset.should.equal(110); // commits last consumed + 1
+            (consumer.memberId === null).should.equal(true); // still cleared before the rejoin
+        });
+    });
+
     it('does not call onPartitionsRevoked when nothing was owned', function () {
         var called = false;
 

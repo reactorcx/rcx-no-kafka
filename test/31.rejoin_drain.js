@@ -135,6 +135,30 @@ describe('Rejoin drains in-flight commits before re-subscribe', function () {
         });
     });
 
+    it('honours an explicit revokeTimeout of 0 as "do not wait"', function () {
+        // `revokeTimeout || default` used to read an explicit 0 as unset and wait the full
+        // default instead — the opposite of what the caller asked for.
+        var warnedWith = null, drainSettled = false;
+
+        consumer.options.revokeTimeout = 0;
+        consumer.subscriptions = helpers.inFlightSubscription(handler);
+        consumer.client.warn = function () { warnedWith = Array.prototype.slice.call(arguments); };
+        consumer._onPartitionsRevoked = function () {
+            return new Promise(function (resolve) {
+                setTimeout(function () { drainSettled = true; resolve(); }, 50);
+            });
+        };
+        consumer.fetchOffset = function () {
+            return Promise.resolve([{ topic: 'reward-topic', partition: 0, offset: 100 }]);
+        };
+
+        return consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [0] }]).then(function () {
+            drainSettled.should.equal(false, 'waited for the drain despite revokeTimeout: 0');
+            warnedWith[0].should.match(/onPartitionsRevoked drain failed/);
+            subscribeArgs[0].options.should.deep.equal({ offset: 100 });
+        });
+    });
+
     it('degrades to re-subscribe from committed if the drain never settles (revokeTimeout)', function () {
         var warnedWith = null;
 
