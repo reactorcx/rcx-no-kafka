@@ -486,6 +486,7 @@ This is a client-side-only feature and works with any Kafka broker version suppo
   * `max` - maximum delay value, defaults to 1000ms
 * `sessionTimeout` - session timeout in ms, min 6000, max 30000, defaults to `15000`
 * `heartbeatTimeout` - delay between heartbeat requests in ms, defaults to `1000`
+* `revokeTimeout` - budget in ms for waiting on the `onPartitionsRevoked` callback across one rebalance, defaults to half of `sessionTimeout`. It is shared, not per-drain: a cooperative rebalance can revoke in two phases within a single heartbeat-suspended rejoin, so the first drain gets the full window and a later one gets whatever remains; once the budget is spent the callback is still invoked but not awaited, with a warning. `0` means notify but do not wait (the callback still runs, nothing is awaited). Invalid values fall back to the default with a warning. Heartbeats are suspended for the duration of the wait and the drain is only one step of a rebalance, so a value above half of `sessionTimeout` leaves little budget for JoinGroup/SyncGroup/fetchOffset and risks eviction; that case is warned about at construction
 * `retentionTime` - offset retention time in ms, defaults to 1 day (24 * 3600 * 1000)
 * `startingOffset` - starting position (time) when there is no commited offset, defaults to `Kafka.LATEST_OFFSET`
 * `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
@@ -498,7 +499,7 @@ This is a client-side-only feature and works with any Kafka broker version suppo
 
 Strategy-level options (passed in the strategy object to `init()`):
 * `cooperative` - boolean, enable cooperative/incremental rebalancing (KIP-429). Defaults to `false` (eager mode)
-* `onPartitionsRevoked` - function, optional callback invoked with an array of `{topic, partition}` when partitions are revoked during a cooperative rebalance
+* `onPartitionsRevoked` - function, optional callback invoked with an array of `{topic, partition}` when partitions are revoked: on a cooperative rebalance, on an eager rebalance, and on a full rejoin. The full-rejoin case only fires in cooperative mode, where `ownedPartitions` is tracked; in eager mode a full rejoin drains through its re-subscribe instead, which still happens before any partition is re-fetched. If it returns a promise, the rebalance waits for it before re-subscribing, so the callback can commit any in-flight work and avoid re-delivery of an already emitted batch. The wait is bounded by `revokeTimeout`; if the callback rejects or times out, a warning is logged and the rebalance continues. **The drain reduces re-delivery, it does not eliminate it** — a rejected or timed-out drain, no registered callback, or `revokeTimeout: 0` all fall back to re-subscribing from the last committed offset, and a handler that is still running when the drain completes is not waited for. Message handlers must remain idempotent
 * `onPartitionsAssigned` - function, optional callback invoked with an array of `{topic, partition}` when new partitions are assigned during a cooperative rebalance
 
 ## GroupAdmin (consumer groups API)
