@@ -173,4 +173,82 @@ describe('Full rejoin drains previously-owned partitions before proceeding', fun
             warnedWith[0].should.contain('full rejoin'); // degraded, and from the full-rejoin path
         });
     });
+
+    it('removes owned partitions from the fetch loop before the drain runs (cooperative)', function () {
+        // _fetch polls anything still in self.subscriptions that is not `paused`. An owned
+        // partition sitting idle when the rejoin starts is not paused, so without this it keeps
+        // being fetched for the whole drain and parks work the drain has already stopped looking
+        // at — which then commits for a partition this member no longer owns.
+        var subscribedDuringDrain = null;
+
+        consumer.subscriptions = {
+            'reward-topic:0': { topic: 'reward-topic', partition: 0, offset: 110, leader: 0 },
+            'reward-topic:1': { topic: 'reward-topic', partition: 1, offset: 90, leader: 0 }
+        };
+        consumer.ownedPartitions = [{ topic: 'reward-topic', partitions: [0, 1] }];
+        consumer._onPartitionsRevoked = function () {
+            subscribedDuringDrain = Object.keys(consumer.subscriptions);
+            return Promise.resolve();
+        };
+
+        return consumer._fullRejoin().then(function () {
+            subscribedDuringDrain.should.deep.equal([]);
+        });
+    });
+
+    it('leaves subscriptions alone in eager mode, so the eager drain still sees them', function () {
+        // Guard against "fix" it by wiping self.subscriptions. ownedPartitions is only ever
+        // assigned in _updateSubscriptionsCooperative, so in eager mode it stays empty and the
+        // full-rejoin drain no-ops by design — the real eager drain is in _updateSubscriptions,
+        // which derives previousPartitions from Object.keys(self.subscriptions). Emptying that map
+        // here would silently disable drain-on-rejoin for every eager consumer.
+        var drainCalls = 0, eagerDrainSaw = null;
+
+        consumer._cooperative = false; // beforeEach sets it true for the other cases
+        consumer.subscriptions = helpers.inFlightSubscription(function () { return Promise.resolve(); }, 110, 0);
+        consumer.ownedPartitions = [];
+        consumer.fetchOffset = function (reqs) {
+            return Promise.resolve(reqs.map(function (r) {
+                return { topic: r.topic, partition: r.partition, offset: 110 };
+            }));
+        };
+        consumer._onPartitionsRevoked = function (parts) {
+            drainCalls += 1;
+            eagerDrainSaw = parts;
+            return Promise.resolve();
+        };
+        consumer._rejoin = function () {
+            return consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [0] }]);
+        };
+
+        return consumer._fullRejoin().then(function () {
+            drainCalls.should.equal(1);
+            eagerDrainSaw.should.deep.equal([{ topic: 'reward-topic', partition: 0 }]);
+        });
+    });
+
+    it('does not leave a partition subscribed after it is reassigned away', function () {
+        // Everything owned is dropped before the drain, and the rejoin re-subscribes only what the
+        // new assignment contains — so a partition handed to another member does not linger in the
+        // fetch loop with nothing left to remove it.
+        consumer.subscriptions = {
+            'reward-topic:0': { topic: 'reward-topic', partition: 0, offset: 110, leader: 0 },
+            'reward-topic:1': { topic: 'reward-topic', partition: 1, offset: 90, leader: 0 }
+        };
+        consumer.ownedPartitions = [{ topic: 'reward-topic', partitions: [0, 1] }];
+        consumer.fetchOffset = function (reqs) {
+            return Promise.resolve(reqs.map(function (r) {
+                return { topic: r.topic, partition: r.partition, offset: 90 };
+            }));
+        };
+        consumer._onPartitionsRevoked = function () { return Promise.resolve(); };
+        consumer._rejoin = function () {
+            // partition 0 went to another member; only partition 1 comes back.
+            return consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [1] }]);
+        };
+
+        return consumer._fullRejoin().then(function () {
+            Object.keys(consumer.subscriptions).should.deep.equal(['reward-topic:1']);
+        });
+    });
 });
