@@ -287,3 +287,94 @@ describe('revokeTimeout option', function () {
         logged.join(' ').should.not.contain('revokeTimeout');
     });
 });
+
+
+// A cooperative rebalance can revoke in two phases, and the whole thing runs inside one
+// _heartbeat() chain — no heartbeat is sent until _rejoin() resolves. Bounding each drain
+// independently therefore let one rebalance spend 2 x revokeTimeout, which at the default
+// (sessionTimeout / 2) is the entire session budget: the broker evicts the member, and the
+// eviction causes another rebalance. The budget is now shared across the rejoin.
+describe('drain budget across one rebalance', function () {
+    var consumer, bound;
+
+    // Drives a two-phase cooperative rebalance: phase 1 revokes p0 and sets _needsRejoin, phase 2
+    // revokes p1. `plan` is consumed one entry per _syncGroup.
+    function twoPhase(onRevoked) {
+        var h = helpers.stubbedGroupConsumer(), plan = [[1], []];
+
+        consumer = h.consumer;
+        bound = 60;
+        consumer.options.revokeTimeout = bound;
+        consumer._cooperative = true;
+        consumer.ownedPartitions = [{ topic: 'reward-topic', partitions: [0, 1] }];
+        consumer.fetchOffset = function (reqs) {
+            return Promise.resolve(reqs.map(function (r) {
+                return { topic: r.topic, partition: r.partition, offset: 5 };
+            }));
+        };
+        consumer._onPartitionsRevoked = onRevoked;
+        consumer._joinGroup = function () { return Promise.resolve(); };
+        consumer._syncGroup = function () {
+            var next = plan.shift();
+            if (next === undefined) { return Promise.resolve(); }
+            return consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: next }]);
+        };
+        return consumer;
+    }
+
+    it('two revoke phases in one rebalance share a single revokeTimeout', function () {
+        var invoked = 0, startedAt = Date.now();
+
+        twoPhase(function () {
+            invoked += 1;
+            return new Promise(function () {}); // wedged: each drain runs to whatever bound it gets
+        });
+
+        return consumer._rejoin().then(function () {
+            var elapsed = Date.now() - startedAt;
+            invoked.should.equal(2, 'both phases must still be told their partitions are revoked');
+            elapsed.should.be.below(bound * 2,
+                'the two drains together outlasted one revokeTimeout (' + elapsed + 'ms)');
+        });
+    });
+
+    it('still notifies onPartitionsRevoked once the budget is spent, without awaiting it', function () {
+        // The callback must run even with no budget left: consumers use it to invalidate work
+        // already in flight for the revoked partitions, and skipping it would leave that undone.
+        var phases = [], warned = null;
+
+        twoPhase(function (parts) {
+            phases.push(parts);
+            return new Promise(function () {});
+        });
+        consumer.client.warn = function (msg) { if (/budget/i.test(msg)) { warned = msg; } };
+
+        return consumer._rejoin().then(function () {
+            phases.should.have.length(2);
+            phases[1].should.deep.equal([{ topic: 'reward-topic', partition: 1 }]);
+            (warned === null).should.equal(false, 'no warning that the drain budget was spent');
+        });
+    });
+
+    it('releases the budget so a later rebalance gets a full window', function () {
+        var warned = null;
+
+        twoPhase(function () { return new Promise(function () {}); });
+
+        return consumer._rejoin().then(function () {
+            // Leaked deadlines would silently shorten every subsequent rebalance to nothing.
+            (consumer._drainDeadline === null).should.equal(true, 'drain budget was not released');
+
+            consumer.ownedPartitions = [{ topic: 'reward-topic', partitions: [0] }];
+            consumer._syncGroup = function () {
+                return consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [] }]);
+            };
+            consumer.client.warn = function (msg) { if (/budget/i.test(msg)) { warned = msg; } };
+            consumer._onPartitionsRevoked = function () { return Promise.resolve(); };
+
+            return consumer._rejoin();
+        }).then(function () {
+            (warned === null).should.equal(true, 'the next rebalance inherited a spent budget');
+        });
+    });
+});

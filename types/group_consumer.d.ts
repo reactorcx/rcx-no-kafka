@@ -85,8 +85,10 @@ export interface GroupConsumerOptions {
       */
     heartbeatTimeout?: number;
     /**
-      * revokeTimeout - maximum time in ms to wait for the onPartitionsRevoked callback to
-      * settle before continuing the rebalance without it.
+      * revokeTimeout - budget in ms for waiting on the onPartitionsRevoked callback across one
+      * rebalance, shared rather than applied per drain: a cooperative rebalance can revoke in two
+      * phases within one heartbeat-suspended rejoin, so the first drain gets the full window and a
+      * later one gets whatever remains. Once spent, the callback is invoked but not awaited.
       * 
       * defaults to half of sessionTimeout
       */
