@@ -174,8 +174,13 @@ export interface Strategy {
       * callback can commit any in-flight work and avoid re-delivery of an already emitted
       * batch. The wait is bounded by the `revokeTimeout` consumer option; if the callback
       * rejects or times out, a warning is logged and the rebalance continues.
+      *
+      * The second argument is the time in ms this rebalance will wait for the returned promise.
+      * It is what remains of the shared `revokeTimeout` budget, which JoinGroup/SyncGroup also
+      * spend, so it can be well under `revokeTimeout`; 0 means the callback is not awaited. A
+      * callback that bounds its own drain should stay under it.
       */
-    onPartitionsRevoked?: PartitionsChangedHandler;
+    onPartitionsRevoked?: PartitionsRevokedHandler;
     /**
       * onPartitionsAssigned - optional callback invoked with the newly assigned partitions
       * once they have been subscribed. Its return value is not awaited.
@@ -191,6 +196,10 @@ export interface TopicPartition {
 
 export interface PartitionsChangedHandler {
     (partitions: TopicPartition[]): Promise<any> | void;
+}
+
+export interface PartitionsRevokedHandler {
+    (partitions: TopicPartition[], remainingMs: number): Promise<any> | void;
 }
 
 

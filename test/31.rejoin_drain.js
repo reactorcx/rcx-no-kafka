@@ -175,13 +175,14 @@ describe('Rejoin drains in-flight commits before re-subscribe', function () {
         // 0 is an opt-out, not a permanently-failing drain: the callback is still invoked so the
         // consumer is told, but nothing is awaited and nothing is warned about — the caller has
         // already accepted the re-delivery this implies.
-        var warnedWith = null, drainSettled = false, notified = null;
+        var warnedWith = null, drainSettled = false, notified = null, remaining = null;
 
         consumer.options.revokeTimeout = 0;
         consumer.subscriptions = helpers.inFlightSubscription(handler);
         consumer.client.warn = function () { warnedWith = Array.prototype.slice.call(arguments); };
-        consumer._onPartitionsRevoked = function (parts) {
+        consumer._onPartitionsRevoked = function (parts, remainingMs) {
             notified = parts;
+            remaining = remainingMs;
             return new Promise(function (resolve) {
                 setTimeout(function () { drainSettled = true; resolve(); }, 50);
             });
@@ -192,6 +193,7 @@ describe('Rejoin drains in-flight commits before re-subscribe', function () {
 
         return consumer._updateSubscriptions([{ topic: 'reward-topic', partitions: [0] }]).then(function () {
             notified.should.deep.equal([{ topic: 'reward-topic', partition: 0 }]); // still told
+            remaining.should.equal(0, 'told it would be awaited despite revokeTimeout: 0');
             drainSettled.should.equal(false, 'waited for the drain despite revokeTimeout: 0');
             (warnedWith === null).should.equal(true, 'warned about a deliberate opt-out');
             subscribeArgs[0].options.should.deep.equal({ offset: 100 });
@@ -335,6 +337,42 @@ describe('drain budget across one rebalance', function () {
             invoked.should.equal(2, 'both phases must still be told their partitions are revoked');
             elapsed.should.be.below(bound * 2,
                 'the two drains together outlasted one revokeTimeout (' + elapsed + 'ms)');
+        });
+    });
+
+    it('tells the callback what is left of the budget once JoinGroup has spent some of it', function () {
+        // The budget opens before JoinGroup, so the drain gets less than revokeTimeout. A callback
+        // that sized its own drain from revokeTimeout would outlast this side's timeout and let the
+        // rebalance move on while its in-flight work could still commit a revoked partition.
+        var remaining = [], join = 25;
+
+        twoPhase(function (parts, remainingMs) {
+            remaining.push(remainingMs);
+            return new Promise(function () {});
+        });
+        consumer._joinGroup = function () {
+            return new Promise(function (resolve) { setTimeout(resolve, join); });
+        };
+
+        return consumer._rejoin().then(function () {
+            remaining.should.have.length(2);
+            remaining[0].should.be.above(0);
+            remaining[0].should.be.at.most(bound - join,
+                'phase 1 was told more than this side will wait (' + remaining[0] + 'ms)');
+            remaining[1].should.equal(0, 'phase 2 runs on a spent budget and is not awaited');
+        });
+    });
+
+    it('passes the full revokeTimeout when draining outside a rejoin', function () {
+        var remaining = null;
+
+        twoPhase(function (parts, remainingMs) {
+            remaining = remainingMs;
+            return Promise.resolve();
+        });
+
+        return consumer._drainRevoked([{ topic: 'reward-topic', partition: 0 }], 'test').then(function () {
+            remaining.should.equal(bound);
         });
     });
 
