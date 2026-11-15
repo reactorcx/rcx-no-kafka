@@ -147,6 +147,14 @@ Producer:
 - [ ] 2.12 Types and docs: `Result` has no `error` field although failures resolve as `{error}`;
       `SendOptions` lists options `send()` ignores; `asyncCompression` documented false, default
       true; `sendOffsets` signature and next-offset semantics; GroupAdmin and partitioner typings.
+- [ ] 2.13 **[read]** June S3 is incomplete: lz4 and zstd decode the whole batch before `checkOutput`
+      (`lib/protocol/misc/compression.js:110-134`). Reviewer measured a 32 KB zstd frame taking RSS
+      48 MB -> 1,073 MB before rejection. Needs a declared-size pre-check or streaming decode.
+- [ ] 2.14 The 128 MB cap is per batch with no per-fetch total (`lib/client.js:2102`): 8 gzip batches
+      in one 1 MB partition fetch held ~1 GB (reviewer measurement). Design choice: per-response budget.
+- [ ] 2.15 Group leader `topicMap = {}` (`lib/group_consumer.js:147`): a member subscribing to
+      `__proto__` makes `_syncGroup` throw on every rejoin, so the group never stabilises. Also on
+      master. One-line fix: `Object.create(null)`.
 
 Design question for CORE-4239, not a plain bug: the drain budget opens before JoinGroup
 (`lib/group_consumer.js:326-328`), so a slow JoinGroup or the 1 s retry backoffs can spend it and
@@ -203,4 +211,14 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
 
 ## Review
 
-(to be filled in as phases complete)
+### Phase 0 (2026-11-15), branch `fix-audit-2026-06-port`
+
+- 8 June commits plus bd04ed8 (test topic setup) cherry-picked off `master`; conflicts resolved as noted
+  under Phase 0. Lockfile resynced (`npm audit` prod: 0).
+- Review fixes: rewrote the end()-during-join test for GroupConsumer and ShareConsumer (it was
+  ConsumerGroup-only); grew the receive buffer geometrically. The S1 shrink-after-drain made every
+  large frame quadratic (50 MB: 2.9 s per frame -> 15 ms). Same change as PR #4.
+- Verification: eslint 0 errors; unit tests 31-38: 85 pass; S1/S2/C1 repro re-run; full suite on a
+  fresh 4.2.0 broker: same 10 failures as `master` on a fresh broker (SSL 9093 x2, group coordinator
+  timeouts x7, producer unknown-topic x1), none new.
+- Security review found 2.13-2.15 (not port regressions; added to Phase 2).
