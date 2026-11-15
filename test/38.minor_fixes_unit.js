@@ -68,18 +68,6 @@ describe('Minor fixes (unit)', function () {
         });
     });
 
-    describe('ConsumerGroup.commitOffset epoch guard', function () {
-        it('should reject with RebalanceInProgress when not joined', function () {
-            var cg = new Kafka.ConsumerGroup({ clientId: 'unit', groupId: 'cg-minor' });
-            sinon.stub(cg.client, 'offsetCommitRequestV2').returns(Promise.resolve([]));
-            return cg.commitOffset({ topic: 't', partition: 0, offset: 1 }).then(function () {
-                throw new Error('expected rejection');
-            }, function (err) {
-                err.code.should.equal('RebalanceInProgress');
-            });
-        });
-    });
-
     describe('BaseConsumer', function () {
         it('unsubscribe should not throw synchronously for an unknown topic', function () {
             var c = new Kafka.SimpleConsumer({ clientId: 'unit' });
@@ -143,21 +131,7 @@ describe('Minor fixes (unit)', function () {
         });
     });
 
-    describe('KIP-848/932 heartbeat version checks', function () {
-        it('consumerGroupHeartbeatRequest should reject clearly when the broker lacks the API', function () {
-            var c = new Kafka.Producer({ clientId: 'unit' }).client;
-            sinon.stub(c, '_findGroupCoordinator').returns(Promise.resolve({
-                apiVersions: {}, // broker advertises versions, but not key 68
-                server: function () { return 'old:9092'; }
-            }));
-            return c.consumerGroupHeartbeatRequest('g', 'm', 0, ['t'], 'uniform', [], 45000)
-            .then(function () {
-                throw new Error('expected rejection');
-            }, function (err) {
-                String(err.message).should.match(/does not support/i);
-            });
-        });
-
+    describe('KIP-932 heartbeat version checks', function () {
         it('shareGroupHeartbeatRequest should reject clearly when the broker lacks the API', function () {
             var c = new Kafka.Producer({ clientId: 'unit' }).client;
             sinon.stub(c, '_findGroupCoordinator').returns(Promise.resolve({

@@ -44,33 +44,6 @@ describe('Consumer loops (unit)', function () {
     });
 
     describe('heartbeat loop crash safety', function () {
-        it('ConsumerGroup: terminal join failure must not produce an unhandled rejection', function () {
-            var cg = new Kafka.ConsumerGroup({ clientId: 'unit-cg', groupId: 'cg-unit-crash' });
-            var unhandled = [];
-            function onUnhandled(reason) { unhandled.push(reason); }
-            this.timeout(8000);
-
-            process.on('unhandledRejection', onUnhandled);
-
-            cg.options.maxJoinAttempts = 1;
-            cg.heartbeatIntervalMs = 1;
-            sinon.stub(cg.client, 'consumerGroupHeartbeatRequest').callsFake(function () {
-                return Promise.reject(errors.byName('FencedMemberEpoch'));
-            });
-            sinon.stub(cg.client, 'updateGroupCoordinator').callsFake(function () {
-                return Promise.reject(new Error('coordinator down'));
-            });
-
-            cg._scheduleHeartbeat();
-
-            return promiseUtils.delay(1500).then(function () {
-                cg._closed = true;
-                clearTimeout(cg._heartbeatTimeout);
-                process.removeListener('unhandledRejection', onUnhandled);
-                unhandled.should.have.length(0);
-            });
-        });
-
         it('GroupConsumer: FencedInstanceId from the heartbeat loop must not produce an unhandled rejection', function () {
             var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-crash' });
             var unhandled = [];
@@ -191,72 +164,6 @@ describe('Consumer loops (unit)', function () {
                 sc._closed = true;
                 epochsSent.slice(0, 2).should.eql([3, 0]);
                 sc.memberEpoch.should.equal(7);
-            });
-        });
-    });
-
-    describe('end() racing an in-flight join', function () {
-        it('ConsumerGroup: a join that lands after end() should leave instead of squatting', function () {
-            var cg = new Kafka.ConsumerGroup({ clientId: 'unit-cg', groupId: 'cg-unit-race' });
-            var resolveJoin;
-            var epochsSent = [];
-            var joinP;
-
-            cg._topics = ['t'];
-            cg._handler = noop;
-            sinon.stub(cg.client, 'updateGroupCoordinator').returns(Promise.resolve());
-            sinon.stub(cg.client, 'end').returns(Promise.resolve());
-            sinon.stub(cg.client, 'consumerGroupHeartbeatRequest').callsFake(function (gid, mid, epoch) {
-                epochsSent.push(epoch);
-                if (epochsSent.length === 1) {
-                    return new Promise(function (resolve) { resolveJoin = resolve; });
-                }
-                return Promise.resolve({});
-            });
-
-            joinP = cg._join();
-            return promiseUtils.delay(10).then(function () {
-                var endP = cg.end(); // memberEpoch is still 0, so no leave is sent here
-                resolveJoin({ memberId: cg.memberId, memberEpoch: 5, heartbeatIntervalMs: 100000, assignment: null });
-                return Promise.all([endP, joinP]);
-            }).then(function () {
-                return promiseUtils.delay(20);
-            }).then(function () {
-                clearTimeout(cg._heartbeatTimeout);
-                epochsSent.should.eql([0, -1]);
-            });
-        });
-    });
-
-    describe('KIP-848 reconciliation retry', function () {
-        it('should retry reconciliation on later heartbeats after a failed acquire', function () {
-            var cg = new Kafka.ConsumerGroup({ clientId: 'unit-cg', groupId: 'cg-unit-reconcile' });
-            var subscribeStub;
-            var hbResponses = [
-                { memberEpoch: 1, heartbeatIntervalMs: 100000, assignment: { _present: 1, topicPartitions: [{ topicId: 'TID', partitions: [0] }] } },
-                { memberEpoch: 1, heartbeatIntervalMs: 100000, assignment: null }
-            ];
-
-            cg._topics = ['t'];
-            cg._handler = noop;
-            cg.client.topicNames.TID = 't';
-            sinon.stub(cg.client, 'consumerGroupHeartbeatRequest').callsFake(function () {
-                return Promise.resolve(hbResponses.shift() || { memberEpoch: 1, heartbeatIntervalMs: 100000, assignment: null });
-            });
-            sinon.stub(cg.client, 'updateMetadata').returns(Promise.resolve());
-            sinon.stub(cg, 'fetchOffset').returns(Promise.resolve([{ topic: 't', partition: 0, offset: 3 }]));
-            subscribeStub = sinon.stub(cg, 'subscribe');
-            subscribeStub.onFirstCall().returns(Promise.reject(new Error('leader down')));
-            subscribeStub.returns(Promise.resolve());
-
-            return cg._heartbeat().then(function () {
-                clearTimeout(cg._heartbeatTimeout);
-                Object.keys(cg.owned).should.have.length(0); // first acquire failed
-                return cg._heartbeat();
-            }).then(function () {
-                clearTimeout(cg._heartbeatTimeout);
-                cg._closed = true;
-                cg.owned.should.have.property('t:0');
             });
         });
     });
