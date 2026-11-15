@@ -25,7 +25,7 @@ None of the new findings below are fixed on `feature-KIP-848` either.
 The June findings are in `git show feature-KIP-848:tasks/codebase-review-2026-06-09.md`
 and are referenced below by their IDs (S1-S4, C1-C6, N1-N9, P1-P6, D1-D7, E1-E4).
 
-## Decision needed before any work starts
+## Decision (2026-11-15: option A chosen)
 
 How should the June fixes reach `master`?
 
@@ -38,15 +38,26 @@ How should the June fixes reach `master`?
 
 ## Phase 0 — June fixes (after the decision above)
 
-- [ ] 0.1 Cherry-pick the 4 clean commits: 8e5c785 (S1, S2, S4, N1, N2), 0a84a89 (S3),
+- [x] 0.1 Cherry-pick the 4 clean commits: 8e5c785 (S1, S2, S4, N1, N2), 0a84a89 (S3),
       4bc186f (C2, C3, E1-E4), 09773ab (C6, P1-P6)
-- [ ] 0.2 Hand-port 3c6d8db (C1 error codes) and 656ec3b (N3-N9 client resilience)
-- [ ] 0.3 Hand-port 798a353 onto the reworked consumers: C4 (detached heartbeat promise exits the
+- [x] 0.2 Hand-port 3c6d8db (C1 error codes) and 656ec3b (N3-N9 client resilience)
+- [x] 0.3 Hand-port 798a353 onto the reworked consumers: C4 (detached heartbeat promise exits the
       process on FencedInstanceId), C5, D1 (handler rejection advances the offset), D3-D7.
       All re-confirmed still present at HEAD.
-- [ ] 0.4 Hand-port c0284d8 (minor hardening, types)
-- [ ] 0.5 `npm audit fix` — lodash (high) and protocol-buffers-schema (moderate) reach production
+- [x] 0.4 Hand-port c0284d8 (minor hardening, types)
+- [x] 0.5 `npm audit fix` — lodash (high) and protocol-buffers-schema (moderate) reach production
       through `bin-protocol`. The other 25 advisories are dev-only (mocha 3, eslint 2, istanbul 0.4).
+- [ ] 0.6 Follow-up: the June S2 fix still connects in plaintext for `ssl: { rejectUnauthorized: true }`
+      or `{ servername }` alone (only `ssl: true`, `ssl.enabled`, cert+key or ca select TLS).
+
+Done on branch `fix-audit-2026-06-port` (off `master`): all 8 commits cherry-picked in order with `-x`.
+Against `master` only errors.js (took the corrected table), client.js (dropped the KIP-848
+`consumerGroupHeartbeatRequest` hunk), consumer_group.js (KIP-848 only, removed) and todo.md
+conflicted; base_consumer/group_consumer changes applied identically to the original commit.
+KIP-848 ConsumerGroup tests removed from test 35/38. `lib/` + `types/` now equal
+`feature-KIP-848` minus exactly the KIP-848 feature. Lockfile resynced; prod deps 0 advisories.
+PR #2 (CORE-4239) conflicts with this branch in base_consumer.js and group_consumer.js (verified with
+`git merge-tree`); resolve when one of the two lands.
 
 Still-live June criticals re-run at HEAD **[R]**: S1 frame length -4 hangs the event loop, length 0
 throws inside the socket handler (`lib/connection.js:221`); S2 `ssl: true`, `ssl: {}`,
