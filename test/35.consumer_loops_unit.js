@@ -168,6 +168,61 @@ describe('Consumer loops (unit)', function () {
         });
     });
 
+    describe('end() racing an in-flight join', function () {
+        it('GroupConsumer: a rejoin that lands after end() should leave instead of squatting', function () {
+            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-race' });
+            var resolveJoin, rejoinP;
+
+            sinon.stub(gc.client, 'updateGroupCoordinator').returns(Promise.resolve());
+            sinon.stub(gc.client, 'leaveGroupRequest').returns(Promise.resolve());
+            sinon.stub(gc.client, 'end').returns(Promise.resolve());
+            sinon.stub(gc, '_runHeartbeat').returns(Promise.resolve());
+            sinon.stub(gc, '_rejoin').callsFake(function () {
+                return new Promise(function (resolve) {
+                    resolveJoin = function () { gc.memberId = 'me'; resolve(); };
+                });
+            });
+
+            rejoinP = gc._fullRejoin();
+            return promiseUtils.delay(10).then(function () {
+                var endP = gc.end(); // memberId is still null here
+                resolveJoin();
+                return Promise.all([endP, rejoinP]);
+            }).then(function () {
+                gc.client.leaveGroupRequest.lastCall.args.should.eql(['gc-unit-race', 'me']);
+                gc._runHeartbeat.callCount.should.equal(0);
+            });
+        });
+
+        it('ShareConsumer: a join that lands after end() should leave instead of squatting', function () {
+            var sc = new Kafka.ShareConsumer({ clientId: 'unit-sc', groupId: 'sc-unit-race' });
+            var epochsSent = [];
+            var resolveJoin, joinP;
+
+            sc._topics = ['t'];
+            sc._handler = noop;
+            sinon.stub(sc.client, 'updateGroupCoordinator').returns(Promise.resolve());
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sinon.stub(sc.client, 'shareGroupHeartbeatRequest').callsFake(function (gid, mid, epoch) {
+                epochsSent.push(epoch);
+                if (epochsSent.length === 1) {
+                    return new Promise(function (resolve) { resolveJoin = resolve; });
+                }
+                return Promise.resolve({});
+            });
+
+            joinP = sc._join();
+            return promiseUtils.delay(10).then(function () {
+                var endP = sc.end(); // memberEpoch is still 0, so end() sends no leave
+                resolveJoin({ memberId: sc.memberId, memberEpoch: 5, heartbeatIntervalMs: 100000, assignment: null });
+                return Promise.all([endP, joinP]);
+            }).then(function () {
+                clearTimeout(sc._heartbeatTimeout);
+                epochsSent.should.eql([0, -1]);
+            });
+        });
+    });
+
     describe('classic group leader with foreign topics', function () {
         it('should skip topics missing from metadata instead of crashing the leader', function () {
             var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-leader' });

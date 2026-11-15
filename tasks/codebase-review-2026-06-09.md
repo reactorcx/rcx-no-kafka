@@ -1,5 +1,9 @@
 # Full Codebase Review — Bugs & Security (2026-06-09)
 
+> Branch note (2026-11-15): on `fix-audit-2026-06-port` and anything merged from it, the parts of
+> items that refer to `lib/consumer_group.js` / `ConsumerGroup` (KIP-848) do not apply. That class
+> exists only on `feature-KIP-848`; the classic `GroupConsumer` and `ShareConsumer` fixes were ported.
+
 Five parallel review agents covered: (A) connection/client networking, (B) protocol core,
 (C) group/admin/transaction protocol, (D) consumer classes, (E) producer/errors/utils.
 Top Critical findings were independently re-verified against the source before inclusion.
