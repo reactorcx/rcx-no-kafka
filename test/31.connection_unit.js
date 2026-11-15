@@ -95,6 +95,22 @@ describe('Connection (unit)', function () {
             c.offset.should.equal(0);
             c.buffer.length.should.equal(64);
         });
+        it('should grow the receive buffer geometrically, not once per chunk', function () {
+            var c = connectedConnection({ initialBufferSize: 64 });
+            var frame = Buffer.alloc(4 + 100000);
+            var i;
+
+            c.queue[7] = { resolve: function () {}, reject: function () {} };
+            frame.writeInt32BE(100000, 0);
+            frame.writeInt32BE(7, 4);
+            sinon.spy(c, '_growBuffer');
+            for (i = 0; i < frame.length; i += 100) {
+                c._receive(frame.slice(i, i + 100));
+            }
+
+            c.offset.should.equal(0);
+            c._growBuffer.callCount.should.be.below(20); // log2(100004 / 64) ~ 11; exact-size growth ~ 1000
+        });
     });
 
     describe('request lifecycle', function () {
