@@ -62,6 +62,22 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should not re-wrap the handler on every re-subscribe', function () {
+            var c = new Kafka.SimpleConsumer({ clientId: 'unit-consumer' });
+            var handler = noop, i;
+            sinon.stub(c.client, 'findLeader').returns(Promise.resolve(0));
+            function again() {
+                return c.subscribe('t', 0, { offset: 5 }, handler).then(function () {
+                    handler = c.subscriptions['t:0'].handler; // what _updateSubscription passes back
+                });
+            }
+            return again().then(function () {
+                var first = handler, p = Promise.resolve();
+                for (i = 0; i < 3; i++) { p = p.then(again); }
+                return p.then(function () { handler.should.equal(first); });
+            });
+        });
+
         it('should move past a fetch with nothing deliverable (e.g. a transaction marker)', function () {
             var c = makeConsumer(noop);
             var p;

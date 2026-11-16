@@ -118,12 +118,38 @@ describe('Fetch RecordBatch decoding (unit)', function () {
         });
     });
 
-    it('should report share-fetch decode failures as the partition error', function () {
+    it('should skip an undecodable batch in a share fetch and deliver the rest', function () {
         var c = new Client({ connectionString: '127.0.0.1:1', logger: { logLevel: 0 } });
         var bad = { header: { baseOffset: 5, lastOffsetDelta: 0, attributes: 1, codec: 1, recordCount: 1 }, recordsRaw: Buffer.from('not gzip') };
-        return c._decompressShareFetchResults([{ topic: 't', partition: 0, messageSet: [bad], acquiredRecords: [] }]).then(function (r) {
-            r[0].messageSet.should.eql([]);
-            should.exist(r[0].error);
+        var raw = batch({ base: 6, recs: records(2) });
+        var good = protocol.read(raw).RecordBatch(null, raw.length).result[0];
+        return c._decompressShareFetchResults([{ topic: 't', partition: 0, messageSet: [bad, good], acquiredRecords: [] }]).then(function (r) {
+            offsets(r[0]).should.eql([6, 7]);
+            should.not.exist(r[0].error);
+        });
+    });
+
+    it('should never move the position backwards, whatever the batch headers say', function () {
+        return fetch(response([
+            batch({ base: 1000, recs: records(2) }),
+            batch({ base: 0, recs: records(1) })
+        ]), 1000).then(function (p) {
+            offsets(p).should.eql([1000, 1001]);
+            p.nextOffset.should.equal(1002);
+        });
+    });
+
+    it('should match aborted transactions in linear time', function () {
+        var c = new Client({ connectionString: '127.0.0.1:1', logger: { logLevel: 0 } });
+        var aborted = [], batches = [], i, t;
+        for (i = 0; i < 200000; i++) { aborted.push({ producerId: i, firstOffset: i }); }
+        for (i = 0; i < 1000; i++) {
+            batches.push({ header: { baseOffset: i * 200, lastOffsetDelta: 199, attributes: 0, codec: 0, recordCount: 0 }, recordsRaw: Buffer.alloc(0) });
+        }
+        t = Date.now();
+        return c._decompressRecordBatches(batches, 0, aborted).then(function (r) {
+            r.nextOffset.should.equal(200000);
+            (Date.now() - t).should.be.below(2000); // shift() per entry was quadratic: ~3 s here
         });
     });
 
