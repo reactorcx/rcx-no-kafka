@@ -242,7 +242,7 @@ return producer.init().then(function () {
 
 Transaction methods:
 * `beginTransaction()` - start a new transaction (synchronous)
-* `commitTransaction()` - commit the current transaction (returns Promise). Batches still waiting on their `batch.maxWait` timer are flushed first so they are included in the transaction.
+* `commitTransaction()` - commit the current transaction (returns Promise). Batches still waiting on their `batch.maxWait` timer are flushed first so they are included in the transaction. Rejects without committing if any send in the transaction failed; call `abortTransaction()` then.
 * `abortTransaction()` - abort the current transaction (returns Promise). Also flushes queued batches first.
 * `sendOffsets(offsets)` - commit consumer offsets as part of the transaction (returns Promise)
 
@@ -599,6 +599,8 @@ Note that group consumer has to commit offsets first, in order for consumerLag t
 __no-kafka__ supports Snappy, Gzip, LZ4, and Zstd compression. To use Snappy you must install the `snappy` NPM module (`npm install snappy`). To use LZ4 you must install the `lz4` NPM module (`npm install lz4`). To use Zstd you must install the `zstd-napi` NPM module (`npm install zstd-napi`).
 
 Decompressed batch output is capped at 128MB by default to protect consumers against decompression bombs. The limit can be tuned via `require('no-kafka/lib/protocol/misc/compression').maxOutputSize`.
+
+A Simple or Group consumer never skips a batch it cannot decompress or decode (over the cap, a codec module that isn't installed, corrupt data): it delivers the records before it and then stops at that offset, retrying every `idleTimeout` and logging a warning, so no record is lost. To get past it, raise `maxOutputSize` or install the missing codec. A ShareConsumer skips such a batch instead and leaves its offsets out of `acquiredRecords`; the broker redelivers those records and archives them once they reach the delivery limit.
 
 Enable compression in Producer:
 

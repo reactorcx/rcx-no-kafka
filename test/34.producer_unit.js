@@ -216,6 +216,51 @@ describe('Producer (unit)', function () {
                 order.should.eql(['produce-done', 'endTxn']);
             });
         });
+
+        it('should refuse to commit a transaction in which a send failed', function () {
+            var p = new Kafka.Producer({
+                clientId: 'producer-unit',
+                transactionalId: 'tx-unit-3',
+                batch: { size: 1024 * 1024, maxWait: 5000 },
+                retries: FAST_RETRIES
+            });
+            var ends = [];
+
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p._transactionV2 = true;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                return Promise.resolve(requests.map(function (r) {
+                    return r.topic === 'bad'
+                        ? { topic: r.topic, partition: r.partition, error: new errors.NoKafkaConnectionError('b:9092', 'down') }
+                        : { topic: r.topic, partition: r.partition, error: null, offset: 0 }; // as parsed off the wire
+                }));
+            });
+            sinon.stub(p.client, 'endTxnRequest').callsFake(function (id, pid, epoch, committed) {
+                ends.push(committed);
+                return Promise.resolve();
+            });
+
+            p.beginTransaction();
+            p.send({ topic: 'ok', partition: 0, message: { value: 'a' } }).catch(function () { return null; });
+            p.send({ topic: 'bad', partition: 0, message: { value: 'b' } }).catch(function () { return null; });
+
+            return p.commitTransaction().then(function () {
+                throw new Error('expected commitTransaction to reject');
+            }, function (err) {
+                err.message.should.match(/abortTransaction/);
+                ends.should.eql([]); // nothing committed
+                return p.abortTransaction();
+            }).then(function () {
+                // the next transaction starts clean
+                p.beginTransaction();
+                p.send({ topic: 'ok', partition: 0, message: { value: 'c' } }).catch(function () { return null; });
+                return p.commitTransaction();
+            }).then(function () {
+                ends.should.eql([false, true]);
+            });
+        });
     });
 
     describe('end()', function () {

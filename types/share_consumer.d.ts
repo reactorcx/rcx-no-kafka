@@ -6,6 +6,7 @@ export declare const ACKNOWLEDGE_TYPE: {
     RELEASE: 2;
     REJECT: 3;
 };
+export type ACKNOWLEDGE_TYPE = typeof ACKNOWLEDGE_TYPE[keyof typeof ACKNOWLEDGE_TYPE];
 
 export interface AcquiredRecord {
     firstOffset: number;
