@@ -67,48 +67,48 @@ C1 code 90 maps to TransactionAbortable and 120-123 are unmapped.
 ## Phase 1 — New data-loss and ordering bugs
 
 Consume path (one function, `_decompressRecordBatches`, `lib/client.js:2041-2077`):
-- [ ] 1.1 **[R]** A batch that fails to decode is replaced by `[]`; later batches are delivered and
+- [x] 1.1 **[R]** A batch that fails to decode is replaced by `[]`; later batches are delivered and
       the offset moves past it. Missing optional codec (snappy is only a devDependency) is enough.
       Fix: surface it as the partition's `error`, deliver nothing after the failed batch.
       (Contradicts June N7, which called this path correct.)
-- [ ] 1.2 **[R]** Records below the requested fetch offset are delivered (brokers return whole
+- [x] 1.2 **[R]** Records below the requested fetch offset are delivered (brokers return whole
       batches). Fix: pass the requested offset in, drop `record.offset < fetchOffset`.
-- [ ] 1.3 **[R]** Transaction control markers are delivered as messages (`attributes & 0x20` never
+- [x] 1.3 **[R]** Transaction control markers are delivered as messages (`attributes & 0x20` never
       checked). Fix: skip control batches.
-- [ ] 1.4 **[R]** `isolationLevel: 1` does not filter aborted records; `abortedTransactions` is
+- [x] 1.4 **[R]** `isolationLevel: 1` does not filter aborted records; `abortedTransactions` is
       parsed and never read. Fix: implement the Java client's filter, or stop documenting it.
-- [ ] 1.5 **[R, single step]** Position advances from the last record, not the batch's
+- [x] 1.5 **[R, single step]** Position advances from the last record, not the batch's
       `lastOffsetDelta`, so a compacted batch is refetched and redelivered. Fix: return
       `nextOffset` from the decode and use it in `base_consumer.js:96`. Needed by 1.3.
-- [ ] 1.6 **[R]** `[].concat.apply([], r)` overflows the stack above ~110k batches (8.6 MB of
+- [x] 1.6 **[R]** `[].concat.apply([], r)` overflows the stack above ~110k batches (8.6 MB of
       single-record batches), rejecting the fetch forever. Unreachable at 1 MB `maxBytes`;
       reachable at PR #4's 25 MB default. Fix: `.flat()` at `lib/client.js:2076` and `:1077`.
 
 Consumers:
-- [ ] 1.7 **[R]** A partition with no leader when a rebalance completes is never consumed:
+- [x] 1.7 **[R]** A partition with no leader when a rebalance completes is never consumed:
       `findLeader` reports `UnknownTopicOrPartition`, the subscribe failure is swallowed
       (`lib/group_consumer.js:666-668`), and in cooperative mode it already counts as owned.
       Fix: store the same retry placeholder `_subscribePartition` uses for LeaderNotAvailable.
-- [ ] 1.8 **[R]** A fetch response is applied to whichever entry holds the key when it arrives
+- [x] 1.8 **[R]** A fetch response is applied to whichever entry holds the key when it arrives
       (`lib/base_consumer.js:70`). After a rebalance re-subscribes at the committed offset, an
       in-flight fetch moves the new entry past the uncommitted batch. Defeats CORE-4239's
       fallback. Fix: drop results whose entry is no longer the one the request was built from.
 
 Producer:
-- [ ] 1.9 **[R]** Leader lookup is per message; a partial failure splits one partition's batch,
+- [x] 1.9 **[R]** Leader lookup is per message; a partial failure splits one partition's batch,
       reordering it, and a retriable error then resends messages already queued for retry
       (15 sent, 25 produced). `lib/producer.js:174-175, 237`. Fix: retry the whole partition.
-- [ ] 1.10 **[R]** No metadata refresh on retry, so a dead leader is retried forever
+- [x] 1.10 **[R]** No metadata refresh on retry, so a dead leader is retried forever
       (`lib/producer.js:253-257`; removed upstream in 2018). Fix: `updateMetadata(topics)` before
       the retry.
-- [ ] 1.11 **[read]** Commit/abort resets `sequenceNumbers` even when EndTxn < v5 did not bump the
+- [x] 1.11 **[read]** Commit/abort resets `sequenceNumbers` even when EndTxn < v5 did not bump the
       epoch (`lib/producer.js:378, 405`) — brokers before 4.0. Fix: reset only on a new epoch.
-- [ ] 1.12 Transaction state: partitions marked registered before AddPartitionsToTxn completes and
+- [x] 1.12 Transaction state: partitions marked registered before AddPartitionsToTxn completes and
       never unmarked on failure (`:199-218`); `send()` outside a transaction is still flagged
       transactional (`lib/client.js:624`); a rejected EndTxn leaves `_inTransaction` stuck.
-- [ ] 1.13 **[read]** All `send()` calls in one linger window share one promise and one result
+- [x] 1.13 **[read]** All `send()` calls in one linger window share one promise and one result
       array (`lib/producer.js:305-336`): callers see each other's results and errors.
-- [ ] 1.14 Idempotent/transactional producer silently downgrades to legacy produce with no
+- [x] 1.14 Idempotent/transactional producer silently downgrades to legacy produce with no
       producerId when a leader's API versions are unknown (`lib/client.js:596, 665-675`).
 
 ## Phase 2 — New security and robustness findings
@@ -222,3 +222,24 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   fresh 4.2.0 broker: same 10 failures as `master` on a fresh broker (SSL 9093 x2, group coordinator
   timeouts x7, producer unknown-topic x1), none new.
 - Security review found 2.13-2.15 (not port regressions; added to Phase 2).
+
+### Phase 1 (2026-11-16), branch `fix-audit-phase1` (stacked on PR #5)
+
+- 1.1-1.8 (consume path): `_decompressRecordBatches` follows Java's CompletedFetch and returns
+  `{messageSet, nextOffset, error?}`; `_fetch` uses `nextOffset` and drops responses for replaced
+  subscription entries; `findLeader` reports leader -1 as LeaderNotAvailable. New broker test: a
+  read_committed consumer gets only the committed record (old code delivered 4 values: the aborted
+  record, 2 markers and the committed one).
+- 1.9-1.14 (producer): partitions held back whole on partial leader failure; metadata refreshed
+  before retries; per-send results; sequences reset only on an epoch bump; empty transactions skip
+  EndTxn (broker answers InvalidTxnState, verified); AddPartitionsToTxn failure unmarks partitions;
+  no legacy-format fallback for idempotent producers; transactional `send()` outside a transaction
+  rejects (verified on 4.2: acknowledged then aborted).
+- Review fixes: abort after failed AddPartitionsToTxn re-inits the producer id; aborting a txn the
+  broker never opened completes; `send()` during commit rejects; per-call topic validation; position
+  never moves backwards; aborted-txn match is linear; share fetch skips a bad batch; handler no
+  longer re-wrapped per re-subscribe; prototype-free `newTopics`.
+- Every fix has a unit test that fails without it. Verification: eslint 0 errors; unit tests 31-39:
+  112 pass; full suite on a fresh 4.2.0 broker: 624 pass, same 10 failures as `master`.
+- Still open (not done here): an undecodable batch halts its partition until fixed or skipped by
+  hand (by design, matches Java, but the app only sees log lines) — consider an error callback.
