@@ -118,6 +118,15 @@ describe('Fetch RecordBatch decoding (unit)', function () {
         });
     });
 
+    it('should report share-fetch decode failures as the partition error', function () {
+        var c = new Client({ connectionString: '127.0.0.1:1', logger: { logLevel: 0 } });
+        var bad = { header: { baseOffset: 5, lastOffsetDelta: 0, attributes: 1, codec: 1, recordCount: 1 }, recordsRaw: Buffer.from('not gzip') };
+        return c._decompressShareFetchResults([{ topic: 't', partition: 0, messageSet: [bad], acquiredRecords: [] }]).then(function (r) {
+            r[0].messageSet.should.eql([]);
+            should.exist(r[0].error);
+        });
+    });
+
     it('should handle a response with more batches than fit in a call stack', function () {
         var c = new Client({ connectionString: '127.0.0.1:1', logger: { logLevel: 0 } });
         var batches = [], i;

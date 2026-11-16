@@ -343,7 +343,7 @@ describe('Producer (unit)', function () {
 
         it('should commit an empty transaction without calling EndTxn', function () {
             var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-empty' });
-            sinon.stub(p.client, 'endTxnRequest').returns(Promise.reject(errors.byName('InvalidTxnState')));
+            sinon.stub(p.client, 'endTxnRequest').callsFake(function () { return Promise.reject(errors.byName('InvalidTxnState')); });
             p.beginTransaction();
             return p.commitTransaction().then(function () {
                 p._inTransaction.should.equal(false);
@@ -373,6 +373,79 @@ describe('Producer (unit)', function () {
             }).then(function () {
                 add.should.equal(2); // registered again on the next send
                 p._txnPartitions.should.eql({ 't:0': true });
+            });
+        });
+
+        it('should start a fresh sequence space when aborting after a failed AddPartitionsToTxn', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-reinit' });
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p._transactionV2 = false;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'addPartitionsToTxnRequest').callsFake(function () { return Promise.reject(errors.byName('ConcurrentTransactions')); });
+            sinon.stub(p, '_initProducerId').returns(Promise.resolve({ producerId: 1, producerEpoch: 1 }));
+
+            p.beginTransaction();
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).catch(function () {
+                return p.abortTransaction();
+            }).then(function () {
+                p._initProducerId.callCount.should.equal(1);
+                p.client.producerEpoch.should.equal(1);
+                p.sequenceNumbers.should.eql({});
+                p._inTransaction.should.equal(false);
+            });
+        });
+
+        it('should treat aborting a transaction the broker never opened as done', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-never' });
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            sinon.stub(p.client, 'endTxnRequest').callsFake(function () { return Promise.reject(errors.byName('InvalidTxnState')); });
+            sinon.stub(p, '_initProducerId').returns(Promise.resolve({ producerId: 1, producerEpoch: 1 }));
+
+            p.beginTransaction();
+            p._txnPartitions = { 't:0': true }; // marked, but every produce failed
+            return p.abortTransaction().then(function () {
+                p._inTransaction.should.equal(false);
+                p._initProducerId.callCount.should.equal(1);
+                p.beginTransaction(); // usable again
+            });
+        });
+
+        it('should reject a send made while the transaction is being committed', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-race' });
+            var late;
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            sinon.stub(p.client, 'endTxnRequest').returns(Promise.resolve());
+            sinon.stub(p.client, 'produceRequest').returns(Promise.resolve([]));
+
+            p.beginTransaction();
+            p._txnPartitions = { 't:0': true };
+            return Promise.all([
+                p.commitTransaction(),
+                late = p.send({ topic: 't', partition: 0, message: { value: 'late' } }).then(function () {
+                    throw new Error('expected rejection');
+                }, function (err) { err.message.should.match(/beginTransaction/); })
+            ]).then(function () {
+                p.client.produceRequest.callCount.should.equal(0);
+                return late;
+            });
+        });
+
+        it('should not fail other callers in the batch when one send has a bad topic', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 1024 * 1024, maxWait: 5 } });
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').callsFake(okResponse);
+
+            return Promise.all([
+                p.send({ topic: 'a', partition: 0, message: { value: 'x' } }),
+                p.send({ topic: '', partition: 0, message: { value: 'y' } }).then(function () {
+                    throw new Error('expected rejection');
+                }, function (err) { return err.message; })
+            ]).then(function (r) {
+                r[0].map(function (x) { return x.topic; }).should.eql(['a']);
+                r[1].should.match(/topic/);
             });
         });
 
