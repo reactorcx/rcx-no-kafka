@@ -330,6 +330,17 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should reject a transactional send outside a transaction', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-outside' });
+            sinon.stub(p.client, 'produceRequest').returns(Promise.resolve([]));
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function () {
+                throw new Error('expected rejection');
+            }, function (err) {
+                err.message.should.match(/beginTransaction/);
+                p.client.produceRequest.callCount.should.equal(0);
+            });
+        });
+
         it('should commit an empty transaction without calling EndTxn', function () {
             var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-empty' });
             sinon.stub(p.client, 'endTxnRequest').returns(Promise.reject(errors.byName('InvalidTxnState')));
