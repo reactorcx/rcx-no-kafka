@@ -41,6 +41,37 @@ describe('Consumer loops (unit)', function () {
                 c.subscriptions['t:0'].paused.should.equal(false);
             });
         });
+        it('should not apply an in-flight fetch to an entry re-subscribed meanwhile', function () {
+            var delivered = [];
+            var c = new Kafka.SimpleConsumer({ clientId: 'unit-consumer' });
+            var p;
+            c.subscriptions['t:0'] = { topic: 't', partition: 0, offset: 110, leader: 0, maxBytes: 1024, handler: noop };
+            sinon.stub(c.client, 'fetchRequest').callsFake(function () {
+                // a rebalance re-subscribes at the committed offset while this fetch is in flight
+                c.subscriptions['t:0'] = {
+                    topic: 't', partition: 0, offset: 100, leader: 0, maxBytes: 1024,
+                    handler: function (ms) { delivered.push(ms); return Promise.resolve(); }
+                };
+                return Promise.resolve([{ topic: 't', partition: 0, messageSet: [{ offset: 110 }], nextOffset: 111, highwaterMarkOffset: 120 }]);
+            });
+            p = c._fetch();
+            c._closed = true;
+            return p.then(function () {
+                delivered.should.have.length(0);
+                c.subscriptions['t:0'].offset.should.equal(100);
+            });
+        });
+
+        it('should move past a fetch with nothing deliverable (e.g. a transaction marker)', function () {
+            var c = makeConsumer(noop);
+            var p;
+            c.client.fetchRequest.returns(Promise.resolve([{ topic: 't', partition: 0, messageSet: [], nextOffset: 6, highwaterMarkOffset: 6 }]));
+            p = c._fetch();
+            c._closed = true;
+            return p.then(function () {
+                c.subscriptions['t:0'].offset.should.equal(6);
+            });
+        });
     });
 
     describe('heartbeat loop crash safety', function () {
