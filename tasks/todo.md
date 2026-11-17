@@ -265,53 +265,133 @@ PR #6 review of 586a588 (2026-11-17):
 
 ## Phase 2 — New security and robustness findings
 
-- [ ] 2.1 **[R]** One lookup of a topic named `constructor` throws inside `updateMetadata` after
-      the pending latch is set (`lib/client.js:295-296`); every later refresh sends nothing.
-      A topic named `hasOwnProperty` breaks `getTopicPartitions` for all topics (`:528`).
-      Fix: exception-safe latch plus null-prototype maps (wider than June's `__proto__` item).
-- [ ] 2.2 **[R]** `ssl: {cert: <path>, key: <PEM text>}` puts the private key in the `init()`
-      error message and `err.path` (`lib/client.js:127-137`). Fix: test cert and key separately.
-- [ ] 2.3 **[R, partly]** Numeric message keys: `Buffer(key)` allocates N zero bytes, so the
-      partition is computed from the wrong bytes, memory scales with the key's value, and negative
-      keys throw (`lib/assignment/partitioners/default.js:34`). Fix: `Buffer.from(String(key))`.
-      Changes key-to-partition mapping for anyone already sending numeric keys.
-- [ ] 2.4 Sync throws inside the linger timer crash the process: a null element passed to
-      `send()`, or >120k queued sends (`lib/producer.js:164, 320-323`).
-- [ ] 2.5 **[read]** A failed metadata refresh rejects unrelated in-flight requests
-      (`lib/client.js:375-383`). Fix: `.catch(noop)` in `_waitMetadata`.
-- [ ] 2.6 Topic errors in metadata are cached as "zero partitions": partitioner returns NaN and is
-      never recomputed; `subscribe()` resolves with nothing (`lib/client.js:334-342`).
-- [ ] 2.7 A deleted and recreated topic stays broken until restart: the stale topic ID is re-sent
-      and re-cached (`lib/client.js:436-447`). Broker half read from source.
-- [ ] 2.8 Group-coordinator cache never invalidated for `sendOffsets` and GroupAdmin; transaction
-      coordinator sockets dropped without `close()` (`lib/client.js:2340, 2398, 2462, 2471`).
-- [ ] 2.9 ShareConsumer: **[read]** top-level ShareFetch error discarded (`lib/client.js:2754`);
-      delivers records outside `acquiredRecords` (`lib/share_consumer.js:261`); drops queued acks
-      on `end()` and for partitions absent from the next fetch; never fetches an assigned
-      partition missing from cached metadata.
-- [ ] 2.10 `GroupConsumer.end()` skips `client.end()` when LeaveGroup fails
-      (`lib/group_consumer.js:583-586`); `onPartitionsAssigned` is called unguarded (`:715, 803,
-      816`); `revokeTimeout` above 2^31-1 becomes a 1 ms drain.
-- [ ] 2.11 Minor protocol: MetadataResponse v13 omits the top-level ErrorCode (**[R]** against the
-      4.2 spec); InitProducerId v6 request paired with the v2 response reader; negotiated Fetch v5
-      sends v6; LogAppendTime ignored; async lz4/zstd/snappy decode can throw synchronously;
-      legacy MessageSet path hands a shared writer buffer to async compression.
-- [ ] 2.12 Types and docs: `Result` has no `error` field although failures resolve as `{error}`;
-      `SendOptions` lists options `send()` ignores; `asyncCompression` documented false, default
-      true; `sendOffsets` signature and next-offset semantics; GroupAdmin and partitioner typings.
-- [ ] 2.13 **[read]** June S3 is incomplete: lz4 and zstd decode the whole batch before `checkOutput`
-      (`lib/protocol/misc/compression.js:110-134`). Reviewer measured a 32 KB zstd frame taking RSS
-      48 MB -> 1,073 MB before rejection. Needs a declared-size pre-check or streaming decode.
-- [ ] 2.14 The 128 MB cap is per batch with no per-fetch total (`lib/client.js:2102`): 8 gzip batches
-      in one 1 MB partition fetch held ~1 GB (reviewer measurement). Design choice: per-response budget.
-- [ ] 2.15 Group leader `topicMap = {}` (`lib/group_consumer.js:147`): a member subscribing to
-      `__proto__` makes `_syncGroup` throw on every rejoin, so the group never stabilises. Also on
-      master. One-line fix: `Object.create(null)`.
+Branch `fix-audit-phase2`, off `fix-audit-phase1` (PR #6) at aa086b0. Re-checked against this
+branch on 2026-11-17 and reviewed by a Fable 5.2 agent (xhigh); its corrections are folded in and
+the main ones spot-checked. Line numbers are this branch's.
 
-Design question for CORE-4239, not a plain bug: the drain budget opens before JoinGroup
-(`lib/group_consumer.js:326-328`), so a slow JoinGroup or the 1 s retry backoffs can spend it and
-the revoke callback is then not awaited. The comment at `:349` records this as deliberate
-(commit 6590f49). Alternative: charge only time spent inside drains.
+Already fixed by Phase 0/1: the top-level ShareFetch error (`lib/client.js:2957`), the
+`getTopicPartitions` own-property check, null-prototype client maps, `utils.groupBy`, producer
+`newTopics`, and both 2.4 crashes (`send()` rejects a null element; `.flat()` replaced the
+overflowing `apply`). Not on this branch: `revokeTimeout` (2.10) and the CORE-4239 drain-budget
+question. Dropped: 2.11e (async snappy is already wrapped in `attempt()`, `compression.js:193`) and
+2.8's ApiVersions leak (`apiVersionsRequest` never rejects).
+
+Each item: a broker-free test written first and seen failing, then the fix, one commit per item.
+Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12.
+
+- [ ] 2.1 **[R]** `updateMetadata` sets its pending latch, then calls `metadataRequest` synchronously
+      (`lib/client.js:313-314`). A non-array `topicNames` throws there (`ShareConsumer.init({topics:
+      'name'})` reaches it, `share_consumer.js:75` only checks `.length`); the latch stays set, later
+      refreshes send nothing and `updateMetadata(['x'])` re-enters itself in microtasks, starving
+      timers. Fix: start the chain with `Promise.resolve().then(_try)`. Test asserts a second
+      `metadataRequest` call (the stuck path would hang mocha).
+- [ ] 2.15 Plain `{}` maps keyed by topic name (`__proto__`, `constructor` and `toString` are legal
+      topic names) become `Object.create(null)`: `lib/base_consumer.js:54-55` (one subscription to
+      `constructor` makes every fetch throw, so the consumer fetches nothing),
+      `lib/group_consumer.js:147` (the group never stabilises), and `lib/share_consumer.js` fetch
+      `retry`, `_buildFetchRequests` and `_drainPendingAcks` (writes `Object.prototype[partition]`).
+- [ ] 2.2 **[R]** If `ssl.cert` isn't PEM text, cert and key are both read as files
+      (`lib/client.js:126-137`), so a PEM key lands in the ENOENT message and `err.path`.
+      Fix: decide per value, with an unanchored PEM test (a template-literal PEM starts with `\n`).
+- [ ] 2.3 **[R]** `Buffer(key)` on a numeric key allocates that many zero bytes
+      (`lib/assignment/partitioners/default.js:34`): key 5 and "5" go to different partitions though
+      both are sent as "5"; negative, boolean and timestamp keys throw and reject the whole linger
+      batch; key 314,572,800 took 327 ms and 360 MB. `HashCRC32Partitioner`
+      (`hash_crc32.js:20`): numeric keys always give partition 0, Buffer keys throw.
+      Fix: hash the bytes sent, `Buffer.isBuffer(key) ? key : Buffer.from(String(key))`, in both.
+      **Decision (2026-11-17): fix it.** Numeric keys move partition (during a rolling deploy old
+      and new producers split a key across two partitions; compacted topics keep stale values in
+      the old one). README and release note: overriding `hashKey` restores the old mapping.
+- [ ] 2.4 Tests only: a null element and more than 120k queued sends (neither has one).
+- [ ] 2.5 **[read]** `_waitMetadata` returns the in-flight refresh (`lib/client.js:393-399`) and 11
+      request paths start with it, so one failed refresh rejects unrelated requests.
+      Fix: `.catch(function () { return null; })` there. Before 2.11a.
+- [ ] 2.6 Topic-level metadata errors are cached as zero partitions (`lib/client.js:352-364`): the
+      partitioner returns NaN, which is never recomputed (`typeof NaN === 'number'`,
+      `producer.js:179`; this also breaks the first send to an auto-created topic), and
+      `subscribe()` resolves with nothing. Fix: don't cache an errored topic, log its error (it
+      surfaces as UnknownTopicOrPartition, hiding e.g. TopicAuthorizationFailed).
+- [ ] 2.7 A deleted and recreated topic stays broken until restart:
+  - [ ] a. Metadata v12+ sends cached topic IDs (`lib/client.js:463-480`); any non-zero ID makes the
+        broker ignore names (`KafkaApis.scala:889-903`), so the stale ID gets UNKNOWN_TOPIC_ID and
+        named-only topics in the same request are dropped (a group leader refreshing `[cached A,
+        new B]` never sees B). Fix: ask by name only, as Java does for explicit topics; remove the
+        then-dead `:354-356`.
+  - [ ] b. The producer treats `UnknownTopicId` as fatal (`RETRIABLE_ERROR_CODES`,
+        `producer.js:13`), so it never refreshes. Fix: add it and `InconsistentTopicId`, and check
+        the retry refreshes metadata. (Consumers already refresh on both via
+        `base_consumer.js:164`.)
+  - [ ] c. `ShareConsumer._partitionError` (`share_consumer.js:425`) doesn't refresh on either.
+  Live check on 4.2.0: delete and recreate a topic under a running producer and consumer.
+- [ ] 2.8 Coordinators:
+  - [ ] a. Never invalidated: `txnOffsetCommitRequest` (`client.js:2658`), GroupAdmin, InitProducerId
+        on the transaction coordinator (`:2391`), and `describeGroupRequest`, whose NotCoordinator
+        is inside `groups[0].error` (`:2155`). Fix: one helper for "coordinator error or lost
+        connection -> invalidate", used by these and the existing catch blocks.
+  - [ ] b. Transaction-coordinator errors `delete` the entry without closing its socket
+        (`:2524, 2582, 2649`). Fix: the helper calls `updateTransactionCoordinator` (no callers yet).
+  - [ ] c. `_find*Coordinator`'s failure path deletes the cache entry unconditionally
+        (`:1599, 2470, 2867`), possibly a newer one. Fix: delete only if it is still its own promise.
+- [ ] 2.9 ShareConsumer:
+  - [ ] a. Records outside `acquiredRecords` are delivered (`client.js:3039` trims the ranges to
+        the decoded batches, not the records to the ranges; noted, not fixed, at the PR #5 review).
+        Fix: filter each record to the acquired ranges, as Java's `ShareCompletedFetch` does.
+  - [ ] b. `end()` drops queued acks (`share_consumer.js:532`). Fix: send them with ShareAcknowledge
+        at epoch -1 to each leader with an open session (the broker accepts it and closes the
+        session; Java does the same on close), catch and warn so `client.end()` always runs.
+        `shareAcknowledgeRequest` takes one epoch for all leaders today; give it a per-leader map
+        like `shareFetchRequest`.
+  - [ ] c. Acks for a partition not in the next fetch are drained and never sent
+        (`share_consumer.js:288`, `client.js:2937`). Fix: drain only acks the fetch will carry;
+        acks for partitions no longer assigned go out with ShareAcknowledge (the 2.9b path).
+  - [ ] d. An assigned partition missing from cached metadata is never fetched
+        (`share_consumer.js:383`). Fix: refresh metadata (by name, so after 2.7a) for assigned
+        topics it lacks.
+  Live check: acks queued before `end()` are applied.
+- [ ] 2.10 GroupConsumer:
+  - [ ] a. `end()` skips `BaseConsumer.end()` when LeaveGroup rejects
+        (`group_consumer.js:403-406`), leaving sockets and timers. Fix: catch and warn as
+        `ShareConsumer.end()` does; skip LeaveGroup when `memberId` is null (as `:320` does).
+  - [ ] b. `onPartitionsAssigned` / `onPartitionsRevoked` are called unguarded (`:475, 513, 561,
+        571, 603`): a throw fails the rebalance and the consumer rejoins over and over (at `:561` it
+        also skips `_needsRejoin` and `ownedPartitions`); a rejecting async callback is an unhandled
+        rejection. Fix: one helper that logs both.
+- [ ] 2.11 Protocol:
+  - [ ] a. MetadataResponse v13's top-level ErrorCode (last field, after Topics) isn't read
+        (`lib/protocol/metadata.js:506`; the comment at `:489` has its position wrong). Read it and
+        fail the refresh before the broker list is replaced (`client.js:333`). Java acts only on
+        REBOOTSTRAP_REQUIRED and only with rebootstrap enabled, so this is stricter (accepted
+        2026-11-17); with 2.5 a
+        failed refresh no longer breaks other requests. Update the `test/25` fixture.
+  - [ ] b. An InitProducerId v6 request is read with the v2 reader (`client.js:2379`) and fails
+        ("Malformed varint"). v6 is unstable (brokers advertise it only with
+        `unstable.api.versions.enable`). Fix: cap at v5, delete the v6 writer and its test.
+  - [ ] c. A negotiated Fetch v5 is sent as v6 (`client.js:1088-1089`); the wire format is the same
+        but the version isn't (0.11.0 brokers). Fix: send v5.
+  - [ ] d. LogAppendTime batches (attributes bit 3) should give every record the batch
+        `maxTimestamp`; ignored today. Fix at `client.js:2194`, where record timestamps are set.
+  - [ ] f. Legacy MessageSet compression hands a slice of the shared protocol writer to async
+        compression (`client.js:2266`); the next request overwrites it first (reproduced).
+        Fix: `Buffer.from(...)`, as `:718` does.
+- [ ] 2.12 Types and docs: `Result` has no `error` (`types/producer.d.ts:218`); `asyncCompression`
+      is documented as defaulting to false (`README.md:274, 388, 510`; `types/producer.d.ts:186,
+      339`; `group_consumer.d.ts:107`; `simple_consumer.d.ts:84`), the code says true; `SendOptions`
+      fields `send()` ignores get a doc note (removing them breaks callers' compiles); `sendOffsets`
+      typing; GroupAdmin methods typed as returning non-Promises (`group_admin.d.ts:9, 13, 17`);
+      `Message.key` is `string` only (`kafka.d.ts:25`).
+- [ ] 2.13 **[read]** lz4 and zstd decode the whole batch before `checkOutput`
+      (`lib/protocol/misc/compression.js:110-134`): a 32 KB zstd frame declaring 1 GiB took RSS
+      48 MB -> 1,073 MB. Also a truncated lz4 frame crashes the process: the decoder emits `error`
+      on the next tick with no listener.
+      Fix: zstd streams through `zstd-napi/binding`'s `DCtx.decompressStream` with a context per
+      call (one abandoned mid-frame corrupts the next decode), stops past `maxOutputSize`, and
+      rejects a frame that doesn't end (`ret !== 0`; today a truncated one returns 0 bytes); lz4
+      uses `lz4.createDecoderStream()` with a byte-counting listener and an `error` listener.
+      Live check: RSS with the bomb, and the truncated frame.
+- [x] 2.14 Moved to Phase 3 as 3.11 (decision 2026-11-17); documented in the README for now.
+Verification: per item as above; then eslint, `tsc`, unit tests 31-39, full suite on a fresh 4.2.0
+broker (same 10 failures as `master`), the live checks for 2.7, 2.9 and 2.13, review subagents
+(security, maintainability, style), then Codex (gpt-6.1-sol, xhigh) until clean.
 
 ## Phase 3 — Performance (never audited before)
 
@@ -339,6 +419,12 @@ Produce:
       batches. Reviewer measured 2.3x less CPU at 256 KB with 12 partitions.
 - [ ] 3.9 11-19 promises per message in leader lookup (`lib/producer.js:120-157`).
 - [ ] 3.10 Every protocol read/write goes through lodash-bound wrappers (bin-protocol `define`).
+
+- [ ] 3.11 (from 2.14) The decompression cap is per batch with no total: 8 gzip batches in one
+      1 MB partition fetch held ~1 GB. Budget `maxOutputSize` per partition response; needs
+      sequential decode in `_decompressRecordBatches` (today `Promise.all` spends the memory before
+      the truncation runs); later batches wait for the next fetch. Not a process bound (partitions x
+      cap). Share fetch and the legacy MessageSet path stay out. Measure throughput before/after.
 
 Not recommended now: one fetch loop per leader (structural, touches the drain invariants);
 producer in-flight backpressure (behaviour change); fetch sessions (negligible below ~1,000
