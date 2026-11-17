@@ -143,4 +143,19 @@ describe('Client (unit)', function () {
             return u;
         });
     });
+
+    describe('findLeader', function () {
+        it('should report a known partition with no leader as LeaderNotAvailable (retriable)', function () {
+            var c = makeClient();
+            c.topicMetadata = Object.create(null);
+            c.topicMetadata.t = { 0: { partitionId: 0, leader: -1 } };
+            sinon.stub(c, 'updateMetadata').returns(Promise.resolve());
+            return c.findLeader('t', 0).then(function () { throw new Error('expected rejection'); }, function (err) {
+                err.code.should.equal('LeaderNotAvailable');
+                return c.findLeader('t', 5);
+            }).then(function () { throw new Error('expected rejection'); }, function (err) {
+                err.code.should.equal('UnknownTopicOrPartition');
+            });
+        });
+    });
 });

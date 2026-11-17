@@ -349,6 +349,7 @@ describe('Producer (unit)', function () {
             });
 
             p.beginTransaction(); // A
+            p._txnPartitions = { 't:9': true }; // something to abort
             return p.abortTransaction().then(function () {
                 return late.then(function () {
                     throw new Error('expected the late send to reject');
@@ -361,34 +362,6 @@ describe('Producer (unit)', function () {
             }).then(function () {
                 ends.should.eql([false, true]);
                 p.client.produceRequest.callCount.should.equal(1); // only B's send was produced
-            });
-        });
-
-        it('should count a failed send against the transaction it was written into', function () {
-            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-into', batch: { maxWait: 0 } });
-            var ends = [], sent;
-            p.client.producerId = 1;
-            p.client.producerEpoch = 0;
-            p._transactionV2 = true;
-            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
-            sinon.stub(p.client, 'produceRequest').callsFake(function () {
-                return Promise.reject(new Error('connection lost'));
-            });
-            sinon.stub(p.client, 'endTxnRequest').callsFake(function (id, pid, epoch, committed) {
-                ends.push(committed);
-                return Promise.resolve();
-            });
-
-            sent = p.send({ topic: 't', partition: 0, message: { value: 'a' } }).catch(function () { return null; });
-            p.beginTransaction(); // same tick: the batch is dispatched, but registers into this transaction
-            return sent.then(function () {
-                p._txnPartitions.should.eql({ 't:0': true });
-                return p.commitTransaction();
-            }).then(function () {
-                throw new Error('expected commitTransaction to reject');
-            }, function (err) {
-                err.message.should.match(/abortTransaction/);
-                ends.should.eql([]);
             });
         });
 
@@ -442,6 +415,7 @@ describe('Producer (unit)', function () {
             });
             sinon.stub(p.client, 'endTxnRequest').callsFake(function (id, pid, epoch, committed) {
                 ends.push(committed);
+                p.client.producerEpoch = epoch + 1; // EndTxn v5 (V2) bumps the epoch
                 return Promise.resolve();
             });
 
@@ -484,6 +458,439 @@ describe('Producer (unit)', function () {
             });
 
             return Promise.all([p.end(), pending]);
+        });
+    });
+
+    describe('audit 2026-11 producer fixes', function () {
+        function okResponse(requests) {
+            return Promise.resolve(requests.map(function (r) { return { topic: r.topic, partition: r.partition, offset: 0 }; }));
+        }
+
+        it('should retry a partition whose leader lookup partly failed as one batch, in order', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit' });
+            var calls = [], lookups = 0;
+            var msgs = [0, 1, 2, 3, 4].map(function (i) { return { topic: 't', partition: 0, message: { value: 'm' + i } }; });
+
+            sinon.stub(p.client, 'updateMetadata').returns(Promise.resolve());
+            sinon.stub(p.client, 'findLeader').callsFake(function () {
+                lookups++;
+                return lookups === 3 ? Promise.reject(errors.byName('LeaderNotAvailable')) : Promise.resolve(0);
+            });
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                calls.push(requests.map(function (r) { return r.message.value; }));
+                return okResponse(requests);
+            });
+
+            return p.send(msgs, { retries: FAST_RETRIES }).then(function (result) {
+                calls.should.eql([['m0', 'm1', 'm2', 'm3', 'm4']]); // never split, never duplicated
+                result.filter(function (r) { return r.error; }).should.eql([]);
+            });
+        });
+
+        it('should not resend messages already queued for retry when the produce also fails', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit' });
+            var calls = [], lookups = 0;
+            var msgs = [0, 1, 2, 3, 4].map(function (i) { return { topic: 't', partition: 0, message: { value: 'm' + i } }; });
+
+            sinon.stub(p.client, 'updateMetadata').returns(Promise.resolve());
+            sinon.stub(p.client, 'findLeader').callsFake(function () {
+                lookups++;
+                return lookups === 3 ? Promise.reject(errors.byName('LeaderNotAvailable')) : Promise.resolve(0);
+            });
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                calls.push(requests.map(function (r) { return r.message.value; }));
+                if (calls.length === 1) {
+                    return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('NotLeaderForPartition') }]);
+                }
+                return okResponse(requests);
+            });
+
+            return p.send(msgs, { retries: FAST_RETRIES }).then(function () {
+                calls.forEach(function (c) { c.should.eql(['m0', 'm1', 'm2', 'm3', 'm4']); }); // no duplicates, in order
+            });
+        });
+
+        it('should refresh metadata before retrying', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit' });
+            var refreshed = [];
+
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'updateMetadata').callsFake(function (topics) {
+                refreshed.push(topics);
+                return Promise.resolve();
+            });
+            sinon.stub(p.client, 'produceRequest').returns(Promise.resolve([
+                { topic: 't', partition: 0, error: errors.byName('NotLeaderForPartition') }
+            ]));
+
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }, { retries: FAST_RETRIES }).then(function () {
+                refreshed.should.eql([['t'], ['t']]); // before each of the 2 retries
+            });
+        });
+
+        it('should not reset sequences on commit when EndTxn did not bump the epoch', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-epoch' });
+            var calls = 0;
+            p.client.producerId = 1;
+            p.client.producerEpoch = 3;
+            sinon.stub(p.client, 'endTxnRequest').callsFake(function () {
+                calls++;
+                if (calls === 2) { p.client.producerEpoch++; } // EndTxn v5 bumps the epoch; pre-4.0 doesn't
+                return Promise.resolve();
+            });
+
+            p.beginTransaction();
+            p._txnPartitions = { 't:0': true };
+            p.sequenceNumbers = { 't:0': 5 };
+            return p.commitTransaction().then(function () {
+                p.sequenceNumbers.should.eql({ 't:0': 5 });
+                p.beginTransaction();
+                p._txnPartitions = { 't:0': true };
+                return p.abortTransaction();
+            }).then(function () {
+                p.sequenceNumbers.should.eql({});
+            });
+        });
+
+        it('should reject a transactional send outside a transaction', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-outside' });
+            sinon.stub(p.client, 'produceRequest').returns(Promise.resolve([]));
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function () {
+                throw new Error('expected rejection');
+            }, function (err) {
+                err.message.should.match(/beginTransaction/);
+                p.client.produceRequest.callCount.should.equal(0);
+            });
+        });
+
+        it('should commit an empty transaction without calling EndTxn', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-empty' });
+            sinon.stub(p.client, 'endTxnRequest').callsFake(function () { return Promise.reject(errors.byName('InvalidTxnState')); });
+            p.beginTransaction();
+            return p.commitTransaction().then(function () {
+                p._inTransaction.should.equal(false);
+                p.client.endTxnRequest.callCount.should.equal(0);
+            });
+        });
+
+        it('should unmark partitions when AddPartitionsToTxn fails', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-add' });
+            var add = 0;
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p._transactionV2 = false;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').callsFake(okResponse);
+            sinon.stub(p.client, 'addPartitionsToTxnRequest').callsFake(function () {
+                add++;
+                return add === 1 ? Promise.reject(errors.byName('ConcurrentTransactions')) : Promise.resolve([]);
+            });
+            sinon.stub(p, '_initProducerId').returns(Promise.resolve({ producerId: 1, producerEpoch: 1 }));
+
+            p.beginTransaction();
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function () {
+                throw new Error('expected rejection');
+            }, function () {
+                p._txnPartitions.should.eql({});
+                return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
+            }).then(function () {
+                add.should.equal(2); // registered again on the next send
+                p._txnPartitions.should.eql({ 't:0': true });
+                // the failed attempt's sequence was stamped: a fresh space before registering again
+                p._initProducerId.callCount.should.equal(1);
+                p.client.producerEpoch.should.equal(1);
+            });
+        });
+
+        it('should start a fresh sequence space when aborting after a failed AddPartitionsToTxn', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-reinit' });
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p._transactionV2 = false;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'addPartitionsToTxnRequest').callsFake(function () { return Promise.reject(errors.byName('ConcurrentTransactions')); });
+            sinon.stub(p, '_initProducerId').returns(Promise.resolve({ producerId: 1, producerEpoch: 1 }));
+
+            p.beginTransaction();
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).catch(function () {
+                return p.abortTransaction();
+            }).then(function () {
+                p._initProducerId.callCount.should.equal(1);
+                p.client.producerEpoch.should.equal(1);
+                p.sequenceNumbers.should.eql({});
+                p._inTransaction.should.equal(false);
+            });
+        });
+
+        it('should treat aborting a transaction the broker never opened as done', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-never' });
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            sinon.stub(p.client, 'endTxnRequest').callsFake(function () { return Promise.reject(errors.byName('InvalidTxnState')); });
+            sinon.stub(p, '_initProducerId').returns(Promise.resolve({ producerId: 1, producerEpoch: 1 }));
+
+            p.beginTransaction();
+            p._txnPartitions = { 't:0': true }; // marked, but every produce failed
+            return p.abortTransaction().then(function () {
+                p._inTransaction.should.equal(false);
+                p._initProducerId.callCount.should.equal(1);
+                p.beginTransaction(); // usable again
+            });
+        });
+
+        it('should not report an abort as done when a failed commit may have gone through', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-lost-commit' });
+            var ends = [];
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            sinon.stub(p.client, 'endTxnRequest').callsFake(function (id, pid, epoch, committed) {
+                ends.push(committed);
+                if (ends.length === 1) { // committed on the broker, but the response is lost
+                    return Promise.reject(new errors.NoKafkaConnectionError('b:9092', 'response lost'));
+                }
+                // as a V1 broker after the commit: retrying it succeeds, aborting it is invalid
+                return committed ? Promise.resolve() : Promise.reject(errors.byName('InvalidTxnState'));
+            });
+            sinon.stub(p, '_initProducerId').returns(Promise.resolve({ producerId: 1, producerEpoch: 1 }));
+
+            p.beginTransaction();
+            p._txnPartitions = { 't:0': true };
+            function refused(call) {
+                return call.then(function () {
+                    throw new Error('expected a rejection');
+                }, function (err) { return err.message; });
+            }
+            return p.commitTransaction().then(function () {
+                throw new Error('expected commitTransaction to reject');
+            }, function (err) {
+                err.message.should.match(/response lost/);
+                // if it did commit, these would fail and leave the transaction impossible to end
+                return Promise.all([
+                    refused(p.send({ topic: 't', partition: 0, message: { value: 'late' } })),
+                    refused(p.sendOffsets([{ topic: 'in', partition: 0, offset: 5 }], 'g'))
+                ]);
+            }).then(function (messages) {
+                messages.forEach(function (m) { m.should.match(/retry it first/); });
+                return refused(p.abortTransaction());
+            }).then(function (message) {
+                message.should.match(/retry it instead of aborting/);
+                p._inTransaction.should.equal(true);
+                p._initProducerId.callCount.should.equal(0);
+                return p.commitTransaction(); // the retry
+            }).then(function () {
+                ends.should.eql([true, false, true]);
+                p._inTransaction.should.equal(false);
+                // that's over: a later transaction the broker never opened aborts as usual
+                p.beginTransaction();
+                p._txnPartitions = { 't:0': true };
+                return p.abortTransaction();
+            }).then(function () {
+                ends.should.eql([true, false, true, false]);
+                p._initProducerId.callCount.should.equal(1);
+            });
+        });
+
+        [[true, 'send'], [false, 'send'], [false, 'sendOffsets']].forEach(function (c) {
+            var committed = c[0], first = c[1];
+            it('should not fail ' + (committed ? 'a commit' : 'an abort') + ' that went through when re-initializing then fails (next: ' + first + ' first)', function () {
+                var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-reinit-fail', batch: { maxWait: 0 }, logger: { logLevel: 0 } });
+                var inits = 0, seqs = [];
+                p.client.producerId = 1;
+                p.client.producerEpoch = 0;
+                p._transactionV2 = false;
+                sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+                sinon.stub(p.client, 'addPartitionsToTxnRequest').returns(Promise.resolve([]));
+                sinon.stub(p.client, 'endTxnRequest').returns(Promise.resolve()); // V1: the epoch stays
+                sinon.stub(p, '_initProducerId').callsFake(function () {
+                    return ++inits === 1 ? Promise.reject(new errors.NoKafkaConnectionError('b:9092', 'down')) : Promise.resolve({ producerId: 1, producerEpoch: 1 });
+                });
+                sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                    return Promise.resolve(requests.map(function (r) {
+                        seqs.push([p.client.producerEpoch, r._baseSequence]);
+                        return { topic: r.topic, partition: r.partition, error: null, offset: 0 };
+                    }));
+                });
+                sinon.stub(p.client, 'addOffsetsToTxnRequest').callsFake(function (id, pid, epoch) {
+                    seqs.push(['offsets', epoch]);
+                    return Promise.resolve();
+                });
+                sinon.stub(p.client, 'txnOffsetCommitRequest').returns(Promise.resolve());
+
+                p.beginTransaction();
+                p._txnPartitions = { 't:0': true };
+                p.sequenceNumbers = { 't:0': 3 };
+                p._needsReinit = true; // a send in it failed
+                return (committed ? p.commitTransaction() : p.abortTransaction()).then(function () {
+                    var offsets;
+                    p._inTransaction.should.equal(false);
+                    p._needsReinit.should.equal(true); // still owed
+                    p.beginTransaction();
+                    if (first === 'sendOffsets') {
+                        offsets = p.sendOffsets([{ topic: 'in', partition: 0, offset: 5 }], 'g');
+                    }
+                    return Promise.all([p.send({ topic: 't', partition: 0, message: { value: 'b' } }), offsets]);
+                }).then(function () {
+                    inits.should.equal(2); // before the next transaction registered anything
+                    seqs.should.eql(first === 'sendOffsets' ? [['offsets', 1], [1, 0]] : [[1, 0]]);
+                });
+            });
+        });
+
+        it('should retry re-initializing the producer id while the coordinator completes the transaction', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-reinit-retry' });
+            var calls = 0;
+            this.timeout(5000); // one 1 s backoff
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            sinon.stub(p.client, '_findTransactionCoordinator').returns(Promise.resolve({}));
+            sinon.stub(p.client, 'endTxnRequest').returns(Promise.resolve()); // V1: the epoch stays
+            sinon.stub(p.client, 'initProducerIdRequest').callsFake(function () {
+                // the coordinator is still writing the markers of the transaction that just ended
+                return ++calls === 1 ? Promise.reject(errors.byName('ConcurrentTransactions')) : Promise.resolve({ producerId: 1, producerEpoch: 1 });
+            });
+
+            p.beginTransaction();
+            p._txnPartitions = { 't:0': true };
+            p._needsReinit = true; // a send in it ran out of retries
+            return p.abortTransaction().then(function () {
+                calls.should.equal(2);
+                p.client.producerEpoch.should.equal(1);
+                p._needsReinit.should.equal(false);
+            });
+        });
+
+        [
+            ['ran out of retries', function () { return new errors.NoKafkaConnectionError('b:9092', 'down'); }],
+            ['was rejected', function () { return errors.byName('MessageSizeTooLarge'); }]
+        ].forEach(function (c) {
+            it('should start a fresh sequence space when aborting after a send that ' + c[0] + ' (V1)', function () {
+                var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-gap', batch: { maxWait: 0 }, retries: FAST_RETRIES });
+                var expected = 0, seqs = [];
+                p.client.producerId = 1;
+                p.client.producerEpoch = 0;
+                p._transactionV2 = false;
+                sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+                sinon.stub(p.client, 'addPartitionsToTxnRequest').returns(Promise.resolve([]));
+                sinon.stub(p.client, 'endTxnRequest').returns(Promise.resolve()); // V1: the epoch stays
+                sinon.stub(p.client, 'updateMetadata').returns(Promise.resolve());
+                sinon.stub(p, '_initProducerId').callsFake(function () {
+                    expected = 0; // a new epoch starts a new sequence space
+                    return Promise.resolve({ producerId: 1, producerEpoch: 1 });
+                });
+                sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                    // a broker's sequence check; A's batch is never appended
+                    return Promise.resolve(requests.map(function (r) {
+                        seqs.push(r._baseSequence);
+                        if (r.message.value === 'a') { return { topic: r.topic, partition: r.partition, error: c[1]() }; }
+                        if (r._baseSequence !== expected) { return { topic: r.topic, partition: r.partition, error: errors.byName('OutOfOrderSequenceNumber') }; }
+                        expected++;
+                        return { topic: r.topic, partition: r.partition, error: null, offset: 0 };
+                    }));
+                });
+
+                p.beginTransaction(); // A
+                return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function (r) {
+                    r[0].error.should.have.property('message');
+                    return p.abortTransaction();
+                }).then(function () {
+                    p.beginTransaction(); // B
+                    return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
+                }).then(function (r) {
+                    r[0].should.have.property('error', null);
+                    seqs[seqs.length - 1].should.equal(0); // B's batch starts the new sequence space
+                    p._initProducerId.callCount.should.equal(1);
+                });
+            });
+        });
+
+        it('should reject a send made while the transaction is being committed', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-race' });
+            var commit, late;
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            sinon.stub(p.client, 'endTxnRequest').returns(Promise.resolve());
+            sinon.stub(p.client, 'produceRequest').returns(Promise.resolve([]));
+
+            p.beginTransaction();
+            p._txnPartitions = { 't:0': true };
+            commit = p.commitTransaction();
+            late = p.send({ topic: 't', partition: 0, message: { value: 'late' } }).then(function () {
+                throw new Error('expected rejection');
+            }, function (err) { err.message.should.match(/being committed or aborted/); });
+            return Promise.all([commit, late]).then(function () {
+                p.client.produceRequest.callCount.should.equal(0);
+                return late;
+            });
+        });
+
+        it('should refuse to commit after a send with a bad topic in the transaction', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-bad-topic', batch: { maxWait: 0 } });
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p._transactionV2 = true;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').callsFake(okResponse);
+            sinon.stub(p.client, 'endTxnRequest').returns(Promise.resolve());
+
+            p.beginTransaction();
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function () {
+                return p.send({ topic: '', partition: 0, message: { value: 'b' } }).then(function () {
+                    throw new Error('expected the bad send to reject');
+                }, function (err) { err.message.should.match(/topic/); });
+            }).then(function () {
+                return p.commitTransaction();
+            }).then(function () {
+                throw new Error('expected commitTransaction to reject');
+            }, function (err) {
+                err.message.should.match(/abortTransaction/);
+                p.client.endTxnRequest.callCount.should.equal(0);
+            });
+        });
+
+        it('should not fail other callers in the batch when one send has a bad topic', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 1024 * 1024, maxWait: 5 } });
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').callsFake(okResponse);
+
+            return Promise.all([
+                p.send({ topic: 'a', partition: 0, message: { value: 'x' } }),
+                p.send({ topic: '', partition: 0, message: { value: 'y' } }).then(function () {
+                    throw new Error('expected rejection');
+                }, function (err) { return err.message; })
+            ]).then(function (r) {
+                r[0].map(function (x) { return x.topic; }).should.eql(['a']);
+                r[1].should.match(/topic/);
+            });
+        });
+
+        it('should give each send() call only its own results', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 1024 * 1024, maxWait: 5 } });
+
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                return Promise.resolve(requests.map(function (r) {
+                    return { topic: r.topic, partition: r.partition, offset: 0, error: r.topic === 'bad' ? errors.byName('InvalidTopicException') : undefined };
+                }).map(function (r) { if (!r.error) { delete r.error; } return r; }));
+            });
+
+            return Promise.all([
+                p.send({ topic: 'a', partition: 0, message: { value: 'x' } }),
+                p.send({ topic: 'bad', partition: 0, message: { value: 'y' } })
+            ]).then(function (r) {
+                r[0].map(function (x) { return x.topic; }).should.eql(['a']);
+                r[1].map(function (x) { return x.topic; }).should.eql(['bad']);
+            });
+        });
+
+        it('should not produce idempotently through a leader whose API versions are unknown', function () {
+            var c = new Kafka.Producer({ clientId: 'producer-unit', idempotent: true }).client;
+            c.producerId = 1;
+            c.producerEpoch = 0;
+            c.brokerConnections = { 0: { apiVersions: null, server: function () { return 'b:9092'; }, send: function () { throw new Error('must not send'); } } };
+            return c.produceRequest([{ topic: 't', partition: 0, leader: 0, message: { value: 'a' }, _baseSequence: 0 }], 0)
+            .then(function (r) {
+                r[0].error.code.should.equal('LeaderNotAvailable');
+            });
         });
     });
 });

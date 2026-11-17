@@ -247,10 +247,40 @@ describe('Transactional Producer Integration', function () {
         .then(function () {
             txnProducer._inTransaction.should.equal(false);
             txnProducer._txnPartitions.should.deep.equal({});
-            // Note: full read_committed filtering of aborted messages requires
-            // client-side processing of the abortedTransactions list from FetchResponseV4,
-            // which is not yet implemented. The isolationLevel=1 option does tell the broker
-            // to limit the fetch to the Last Stable Offset.
+        });
+    });
+
+    it('read_committed consumer should skip aborted records and transaction markers', function () {
+        var tag = Date.now(), startOffset, spy = sinon.spy(function () {});
+
+        function send(value) {
+            return txnProducer.send({ topic: 'kafka-test-topic', partition: 0, message: { value: value } });
+        }
+
+        return readCommittedConsumer.offset('kafka-test-topic', 0, Kafka.LATEST_OFFSET).then(function (offset) {
+            startOffset = offset;
+            txnProducer.beginTransaction();
+            return send('rc-aborted-' + tag);
+        })
+        .then(function () { return txnProducer.abortTransaction(); })
+        .then(function () {
+            txnProducer.beginTransaction();
+            return send('rc-committed-' + tag);
+        })
+        .then(function () { return txnProducer.commitTransaction(); })
+        .then(function () {
+            return readCommittedConsumer.subscribe('kafka-test-topic', 0, { offset: startOffset }, spy);
+        })
+        .then(promiseUtils.delayChain(1000))
+        .then(function () {
+            var values = [], i;
+            for (i = 0; i < spy.callCount; i++) {
+                values = values.concat(spy.getCall(i).args[0].map(function (m) {
+                    return m.message.value ? m.message.value.toString('utf8') : null;
+                }));
+            }
+            values.should.eql(['rc-committed-' + tag]); // no aborted record, no marker
+            return readCommittedConsumer.unsubscribe('kafka-test-topic', 0);
         });
     });
 
