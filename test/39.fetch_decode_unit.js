@@ -2,9 +2,11 @@
 
 /* global describe, it, should */
 
-var Protocol = require('../lib/protocol');
-var Client   = require('../lib/client');
-var crc32c   = require('../lib/protocol/misc/crc32c');
+var Protocol    = require('../lib/protocol');
+var Client      = require('../lib/client');
+var crc32c      = require('../lib/protocol/misc/crc32c');
+var compression = require('../lib/protocol/misc/compression');
+var zlib        = require('zlib');
 
 var protocol = new Protocol({ bufferSize: 262144 });
 
@@ -105,6 +107,31 @@ describe('Fetch RecordBatch decoding (unit)', function () {
         ], [[9, 300]]), 300).then(function (p) {
             offsets(p).should.eql([303, 304]);
             p.nextOffset.should.equal(306);
+        });
+    });
+
+    it('should drop an aborted batch without decompressing it, but still check its CRC', function () {
+        var limit = compression.maxOutputSize;
+        var big = Buffer.from(protocol.write().Record({
+            attributes: 0, timestampDelta: 0, offsetDelta: 0, key: null, value: Buffer.alloc(2048), headers: []
+        }).result);
+        var aborted = Buffer.from(protocol.write().RecordBatch({
+            baseOffset: 0, codec: 1, compressedRecords: zlib.gzipSync(big), recordCount: 1, timestamp: 1e12,
+            producerId: 7, producerEpoch: 0, baseSequence: 0, isTransactional: true
+        }).result);
+        var corrupt = Buffer.from(aborted);
+        corrupt[corrupt.length - 1] ^= 0xff;
+        compression.maxOutputSize = 1024; // the aborted batch inflates past it
+        return fetch(response([aborted, marker(1, 7, 0), batch({ base: 2, recs: records(1) })], [[7, 0]]), 0).then(function (p) {
+            should.not.exist(p.error);
+            offsets(p).should.eql([2]);
+            p.nextOffset.should.equal(3);
+            return fetch(response([corrupt, marker(1, 7, 0), batch({ base: 2, recs: records(1) })], [[7, 0]]), 0);
+        }).then(function (p) {
+            p.error.message.should.match(/CRC/i);
+            offsets(p).should.eql([]);
+        }).finally(function () {
+            compression.maxOutputSize = limit;
         });
     });
 

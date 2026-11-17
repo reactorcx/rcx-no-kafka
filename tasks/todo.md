@@ -211,6 +211,50 @@ Producer:
 - [x] 1.14 Idempotent/transactional producer silently downgrades to legacy produce with no
       producerId when a leader's API versions are unknown (`lib/client.js:596, 665-675`).
 
+PR #6 review of 586a588 (2026-11-17):
+- [x] P1 Abort after a commit with an unknown outcome reported success. 1.12's abort recovery
+      took `InvalidTxnState` to mean "never opened", but the broker also answers it once the
+      commit went through, so an app retrying after the "abort" duplicated its output. Now a
+      failed EndTxn(commit) sets `_commitFailed`; an abort that then gets `InvalidTxnState`
+      rejects and says to retry the commit (Java refuses that abort too). Live, with the commit
+      response dropped on 3.9.2 (V1) and 4.2.0 (V2): 586a588's abort resolves while
+      read_committed sees the record; the fix refuses, the retried commit succeeds, and the record
+      is seen once.
+- [x] P2 A failed send left a sequence gap in the next V1 transaction. 1.11 keeps sequences across
+      transactions on the same epoch, but a stamped batch that ran out of retries or was rejected
+      reserved sequences the broker never appended, and nothing set `_needsReinit`, so the next
+      transaction got OutOfOrderSequenceNumber. Such a batch now sets it; abort re-initializes.
+- [x] P2 read_committed decompressed aborted batches before dropping them, so an aborted batch
+      over `maxOutputSize` or with a missing codec stalled the partition. Control batches are
+      decoded first, the aborted ones found from the headers (as in `CompletedFetch`), and those
+      are dropped without decompressing; their CRC is still checked.
+- Our review of these fixes:
+  - [x] Re-initializing right after a V1 EndTxn can meet ConcurrentTransactions (the coordinator
+        answers before it writes the markers), and InitProducerId wasn't retried, so the abort
+        rejected after ending and the gap stayed. `_initProducerId` now retries it (with the two
+        coordinator-loading errors `init()` already retried), as Java's InitProducerIdHandler does.
+  - [x] After a failed commit, a `send()` or `sendOffsets()` failing because the commit did go
+        through left the producer unable to commit or abort. Both now reject until the commit is
+        retried (Java refuses sends while committing too).
+  - [x] Test that `_commitFailed` is cleared once the transaction ends.
+  - [x] If that re-init still failed (connection lost), the commit or abort rejected though it had
+        gone through: a retried commit duplicates the output, and the next V1 transaction's sends
+        reused the gapped sequences. Commit and abort now resolve and log it; `_needsReinit`
+        stays set and a transaction's first send re-initializes while nothing is registered yet.
+- Verification: each new test fails on 586a588 (4); removing any of the 10 new pieces fails a
+  test; the CRC check moved after the drop fails the new decode test; live on 3.9.2 and 4.2.0
+  with the commit response dropped: 586a588's abort resolves after the commit went through, the
+  fix refuses it and the retried commit succeeds; our differential fuzz of the decode rewrite
+  against 586a588 (6,000 runs): identical except that undecodable aborted batches no longer stall.
+- Noted, not fixed:
+  - EndTxn doesn't retry ConcurrentTransactions (Java does; pre-existing). An abort or commit retry
+    sent while the coordinator is still writing the commit's markers rejects with it (seen live on
+    3.9.2 and 4.2.0); the app has to retry.
+  - A non-transactional idempotent producer now takes a new producer id after each batch that
+    failed with sequences stamped (it used to fail the next send with OutOfOrderSequenceNumber).
+    Java rewinds sequences for batches the broker definitely rejected; add that if failures are
+    frequent.
+
 ## Phase 2 — New security and robustness findings
 
 - [ ] 2.1 **[R]** One lookup of a topic named `constructor` throws inside `updateMetadata` after

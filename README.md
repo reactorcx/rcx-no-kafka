@@ -242,7 +242,7 @@ return producer.init().then(function () {
 
 Transaction methods:
 * `beginTransaction()` - start a new transaction (synchronous). A transactional producer's `send()` rejects outside a transaction.
-* `commitTransaction()` - commit the current transaction (returns Promise). Batches still waiting on their `batch.maxWait` timer are flushed first so they are included in the transaction, and pending `sendOffsets()` calls are waited for. Rejects without committing if any send or `sendOffsets()` call in the transaction failed; call `abortTransaction()` then.
+* `commitTransaction()` - commit the current transaction (returns Promise). Batches still waiting on their `batch.maxWait` timer are flushed first so they are included in the transaction, and pending `sendOffsets()` calls are waited for. Rejects without committing if any send or `sendOffsets()` call in the transaction failed; call `abortTransaction()` then. If it rejects after sending the commit (for example the connection dropped), the transaction may have committed: retry `commitTransaction()`. `abortTransaction()` then rejects if the commit went through.
 * `abortTransaction()` - abort the current transaction (returns Promise). Also flushes queued batches and waits for pending `sendOffsets()` calls first.
 * `sendOffsets(offsets)` - commit consumer offsets as part of the transaction (returns Promise). Rejects while `commitTransaction()` or `abortTransaction()` is running, as do `send()` and a second commit or abort.
 
