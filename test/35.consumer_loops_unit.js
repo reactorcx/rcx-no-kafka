@@ -549,4 +549,75 @@ describe('Consumer loops (unit)', function () {
             });
         });
     });
+
+    describe('GroupConsumer end() and rebalance callbacks', function () {
+        it('should close the client even when LeaveGroup fails', function () {
+            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-end' });
+            gc.memberId = 'me';
+            sinon.stub(gc.client, 'leaveGroupRequest').callsFake(function () {
+                return Promise.reject(new errors.NoKafkaConnectionError('coord:1', 'down'));
+            });
+            sinon.stub(gc.client, 'end').returns(Promise.resolve());
+
+            return gc.end().then(function () {
+                gc.client.end.callCount.should.equal(1);
+            });
+        });
+
+        it('should not send LeaveGroup before it has joined', function () {
+            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-end' });
+            sinon.stub(gc.client, 'leaveGroupRequest').returns(Promise.resolve());
+            sinon.stub(gc.client, 'end').returns(Promise.resolve());
+
+            return gc.end().then(function () {
+                gc.client.leaveGroupRequest.callCount.should.equal(0);
+                gc.client.end.callCount.should.equal(1);
+            });
+        });
+
+        [
+            ['throws', function () { throw new Error('callback bug'); }],
+            ['rejects', function () { return Promise.reject(new Error('callback bug')); }]
+        ].forEach(function (c) {
+            it('should finish the rebalance when a callback ' + c[0], function () {
+                var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-cb' });
+                var unhandled = [];
+                function onUnhandled(reason) { unhandled.push(reason); }
+
+                process.on('unhandledRejection', onUnhandled);
+                gc.strategyName = 'S';
+                gc.strategies = { S: { handler: noop } };
+                gc.topics = ['t'];
+                gc._onPartitionsRevoked = c[1];
+                gc._onPartitionsAssigned = c[1];
+                gc.subscriptions['t:0'] = { topic: 't', partition: 0 };
+                sinon.stub(gc.client, 'updateMetadata').returns(Promise.resolve());
+                sinon.stub(gc, 'fetchOffset').returns(Promise.resolve([{ topic: 't', partition: 1, offset: 5 }]));
+                sinon.stub(gc, 'subscribe').returns(Promise.resolve());
+
+                return gc._updateSubscriptions([{ topic: 't', partitions: [1] }]).then(function () {
+                    return promiseUtils.delay(10);
+                }).then(function () {
+                    process.removeListener('unhandledRejection', onUnhandled);
+                    gc.subscribe.callCount.should.equal(1);
+                    unhandled.should.have.length(0);
+                });
+            });
+        });
+
+        it('should finish a cooperative rebalance when onPartitionsRevoked throws', function () {
+            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-cb' });
+            gc._cooperative = true;
+            gc.strategyName = 'S';
+            gc.strategies = { S: { handler: noop } };
+            gc.ownedPartitions = [{ topic: 't', partitions: [0, 1] }];
+            gc._onPartitionsRevoked = function () { throw new Error('callback bug'); };
+            sinon.stub(gc, 'unsubscribe').returns(Promise.resolve());
+
+            return gc._updateSubscriptions([{ topic: 't', partitions: [1] }]).then(function () {
+                gc._needsRejoin.should.equal(true); // KIP-429: rejoin to release the revoked partition
+                gc.ownedPartitions.should.eql([{ topic: 't', partitions: [1] }]);
+            });
+        });
+    });
 });

@@ -349,10 +349,10 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
         topics it lacks.
   Live check: acks queued before `end()` are applied.
 - [ ] 2.10 GroupConsumer:
-  - [ ] a. `end()` skips `BaseConsumer.end()` when LeaveGroup rejects
+  - [x] a. `end()` skips `BaseConsumer.end()` when LeaveGroup rejects
         (`group_consumer.js:403-406`), leaving sockets and timers. Fix: catch and warn as
         `ShareConsumer.end()` does; skip LeaveGroup when `memberId` is null (as `:320` does).
-  - [ ] b. `onPartitionsAssigned` / `onPartitionsRevoked` are called unguarded (`:475, 513, 561,
+  - [x] b. `onPartitionsAssigned` / `onPartitionsRevoked` are called unguarded (`:475, 513, 561,
         571, 603`): a throw fails the rebalance and the consumer rejoins over and over (at `:561` it
         also skips `_needsRejoin` and `ownedPartitions`); a rejecting async callback is an unhandled
         rejection. Fix: one helper that logs both.

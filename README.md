@@ -523,7 +523,7 @@ This is a client-side-only feature and works with any Kafka broker version suppo
 Strategy-level options (passed in the strategy object to `init()`):
 * `cooperative` - boolean, enable cooperative/incremental rebalancing (KIP-429). Defaults to `false` (eager mode)
 * `onPartitionsRevoked` - function, optional callback invoked with an array of `{topic, partition}` when partitions are revoked during a cooperative rebalance
-* `onPartitionsAssigned` - function, optional callback invoked with an array of `{topic, partition}` when new partitions are assigned during a cooperative rebalance
+* `onPartitionsAssigned` - function, optional callback invoked with an array of `{topic, partition}` when new partitions are assigned during a cooperative rebalance. Neither callback is awaited; a throw or rejection from either is logged and the rebalance carries on.
 
 ## GroupAdmin (consumer groups API)
 
