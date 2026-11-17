@@ -248,6 +248,7 @@ PR #6 review of 586a588 (2026-11-17):
   - [x] P2 A transaction starting with `sendOffsets()` registered the offsets before the owed
         re-init, so its sends reused the gapped sequences. With a re-init owed, `sendOffsets()`
         queues it on `_sendChain` and registers only after it ran.
+- Codex round 2 and the PR #6 re-review of 9711afd (2026-11-17): no new findings.
 - Verification: each new test fails on 586a588 (4); removing any of the 10 new pieces fails a
   test; the CRC check moved after the drop fails the new decode test; live on 3.9.2 and 4.2.0
   with the commit response dropped: 586a588's abort resolves after the commit went through, the
