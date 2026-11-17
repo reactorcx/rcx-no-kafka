@@ -284,6 +284,17 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        ['UnknownTopicId', 'InconsistentTopicId'].forEach(function (code) {
+            it('should refresh metadata on ' + code + ' (topic recreated under a new ID)', function () {
+                var sc = makeShareConsumer();
+                sinon.stub(sc.client, 'updateMetadata').returns(Promise.resolve());
+
+                return sc._partitionError(errors.byName(code), 't', 0).then(function () {
+                    sc.client.updateMetadata.args[0][0].should.eql(['t']);
+                });
+            });
+        });
+
         it('should rejoin on FencedMemberEpoch', function () {
             var sc = makeShareConsumer();
             var epochsSent = [];

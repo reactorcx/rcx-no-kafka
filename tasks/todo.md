@@ -321,7 +321,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
         `producer.js:13`), so it never refreshes. Fix: add it and `InconsistentTopicId`, and check
         the retry refreshes metadata. (Consumers already refresh on both via
         `base_consumer.js:164`.)
-  - [ ] c. `ShareConsumer._partitionError` (`share_consumer.js:425`) doesn't refresh on either.
+  - [x] c. `ShareConsumer._partitionError` (`share_consumer.js:425`) doesn't refresh on either.
   Live check on 4.2.0: delete and recreate a topic under a running producer and consumer.
 - [ ] 2.8 Coordinators:
   - [ ] a. Never invalidated: `txnOffsetCommitRequest` (`client.js:2658`), GroupAdmin, InitProducerId
