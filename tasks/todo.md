@@ -302,7 +302,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
       **Decision (2026-11-17): fix it.** Numeric keys move partition (during a rolling deploy old
       and new producers split a key across two partitions; compacted topics keep stale values in
       the old one). README and release note: overriding `hashKey` restores the old mapping.
-- [ ] 2.4 Tests only: a null element and more than 120k queued sends (neither has one).
+- [x] 2.4 Tests only: a null element and more than 120k queued sends (neither has one).
 - [ ] 2.5 **[read]** `_waitMetadata` returns the in-flight refresh (`lib/client.js:393-399`) and 11
       request paths start with it, so one failed refresh rejects unrelated requests.
       Fix: `.catch(function () { return null; })` there. Before 2.11a.

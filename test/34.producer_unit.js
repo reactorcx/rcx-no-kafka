@@ -863,6 +863,37 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should reject a send with a null element instead of throwing in the linger timer', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 1024 * 1024, maxWait: 5 } });
+            sinon.stub(p.client, 'produceRequest').callsFake(okResponse);
+
+            return p.send([{ topic: 'a', partition: 0, message: { value: 'x' } }, null]).then(function () {
+                throw new Error('expected rejection');
+            }, function (err) {
+                err.message.should.match(/topic/);
+                p.client.produceRequest.callCount.should.equal(0);
+            });
+        });
+
+        it('should send more queued send() calls than fit in a call stack', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 1024 * 1024 * 1024, maxWait: 50 } });
+            var sends = [], produced = [], i;
+            // plain fakes: sinon recording 150,000 calls takes seconds
+            p.client.findLeader = function () { return Promise.resolve(0); };
+            p.client.produceRequest = function (requests) { // one result per partition, as the broker gives
+                produced.push(requests.length);
+                return Promise.resolve([{ topic: 'a', partition: 0, offset: 0 }]);
+            };
+
+            for (i = 0; i < 150000; i++) {
+                sends.push(p.send({ topic: 'a', partition: 0, message: { value: 'x' } }));
+            }
+            return Promise.all(sends).then(function (r) {
+                produced.should.eql([150000]);
+                r[149999].should.have.length(1);
+            });
+        });
+
         it('should give each send() call only its own results', function () {
             var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 1024 * 1024, maxWait: 5 } });
 
