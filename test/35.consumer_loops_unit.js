@@ -10,6 +10,11 @@ var protocol     = new Protocol({ bufferSize: 65536 });
 
 function noop() { return Promise.resolve(); }
 
+// acks are taken only for a partition's latest delivery: record one holding these offsets
+function markDelivered(sc, topic, partition, offsets) {
+    sc._deliveries[topic + ':' + partition] = { ranges: offsets.map(function (o) { return { firstOffset: o, lastOffset: o }; }) };
+}
+
 describe('Consumer loops (unit)', function () {
     describe('BaseConsumer handler failures', function () {
         function makeConsumer(handler) {
@@ -153,6 +158,7 @@ describe('Consumer loops (unit)', function () {
             sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.reject(new Error('boom')));
 
             sc.shareSessionEpochs = { 0: 1 }; // an open session, so the acks go out with this fetch
+            markDelivered(sc, 't', 0, [5]);
             sc.acknowledge({ topic: 't', partition: 0, offset: 5 });
             p = sc._fetch();
             sc._closed = true;
@@ -239,7 +245,9 @@ describe('Consumer loops (unit)', function () {
             });
             sinon.spy(sc.client, 'shareFetchRequest');
             sc._closed = true; // run fetches by hand, no loop
+            markDelivered(sc, 't', 0, [3]);
             sc.acknowledge({ topic: 't', partition: 0, offset: 3 });
+            markDelivered(sc, 't', 1, [4]);
             sc.acknowledge({ topic: 't', partition: 1, offset: 4 });
 
             return sc._fetch().then(function () {
@@ -273,7 +281,9 @@ describe('Consumer loops (unit)', function () {
                     { topic: 't', partition: 1, error: errors.byName('NotLeaderForPartition'), acknowledgeError: null, messageSet: [] }
                 ]);
             });
+            markDelivered(sc, 't', 0, [1]);
             sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+            markDelivered(sc, 't', 1, [2]);
             sc.acknowledge({ topic: 't', partition: 1, offset: 2 });
 
             p = sc._fetch();
@@ -326,6 +336,8 @@ describe('Consumer loops (unit)', function () {
             sc.shareSessionEpochs = { 0: 2, 1: 2 };
             sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
             sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([]));
+            markDelivered(sc, 't', 0, [1]);
+            markDelivered(sc, 't', 1, [1]);
             sc.acknowledge([{ topic: 't', partition: 0, offset: 1 }, { topic: 't', partition: 1, offset: 1 }]);
 
             p = sc._fetch();
@@ -345,6 +357,7 @@ describe('Consumer loops (unit)', function () {
             sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
             sinon.stub(sc.client, 'end').returns(Promise.resolve());
             sinon.spy(sc.client, 'warn');
+            markDelivered(sc, 't', 0, [1]);
             sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
 
             fetching = sc._fetch(); // drains the ack into the request
@@ -384,6 +397,50 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should refuse an ack for records outside the partition\'s latest delivery', function () {
+            var sc = makeShareConsumer();
+            sinon.spy(sc.client, 'warn');
+            markDelivered(sc, 't', 0, [7]); // offset 3 came in an earlier delivery (or from a since-recreated topic)
+
+            return sc.acknowledge([{ topic: 't', partition: 0, offset: 3 }, { topic: 't', partition: 0, offset: 7 }, { topic: 't', partition: 1, offset: 7 }]).then(function () {
+                sc._pendingAcks['t:0'].batches.map(function (b) { return b.firstOffset; }).should.eql([7]);
+                should.not.exist(sc._pendingAcks['t:1']);
+                sc.client.warn.args.some(function (a) { return /latest delivery/.test(a[0]) && a[1] === 't:0@3, t:1@7'; }).should.equal(true);
+            });
+        });
+
+        it('should accept a range ack covered by the delivery\'s acquired ranges, gaps included', function () {
+            var sc = makeShareConsumer();
+            sc._deliveries['t:0'] = { ranges: [{ firstOffset: 14, lastOffset: 20 }, { firstOffset: 10, lastOffset: 13 }] };
+
+            return sc.acknowledge([{ topic: 't', partition: 0, firstOffset: 10, lastOffset: 20 }, { topic: 't', partition: 0, firstOffset: 9, lastOffset: 12 }]).then(function () {
+                sc._pendingAcks['t:0'].batches.map(function (b) { return [b.firstOffset, b.lastOffset]; }).should.eql([[10, 20]]);
+            });
+        });
+
+        it('should drop queued acks for offsets delivered again, keeping the rest', function () {
+            var sc = makeShareConsumer(), p;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = {}; // the leader's session is reopening: the next fetch can't carry acks
+            markDelivered(sc, 't', 0, [1, 2]);
+            sc.acknowledge([{ topic: 't', partition: 0, offset: 1 }, { topic: 't', partition: 0, offset: 2 }]);
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([{
+                // offset 2's acquisition ended (e.g. revoked and reacquired): delivered again
+                topic: 't', topicId: 'id-1', partition: 0, messageSet: [{ offset: 2, message: { value: Buffer.from('x') } }],
+                acquiredRecords: [{ firstOffset: 2, lastOffset: 2, deliveryCount: 2 }]
+            }]));
+            sc._handler = noop;
+
+            p = sc._fetch();
+            sc._closed = true;
+            return p.then(function () {
+                should.not.exist(sc.client.shareFetchRequest.args[0][5]); // held, not carried
+                // sending the old ack for 2 next to a fresh one would overlap; 1 is still acquired
+                sc._pendingAcks['t:0'].batches.map(function (b) { return b.firstOffset; }).should.eql([1]);
+            });
+        });
+
         it('should tag an ack with the ID of the topic its records came from', function () {
             var sc = makeShareConsumer(), p;
             twoLeaders(sc);
@@ -411,6 +468,7 @@ describe('Consumer loops (unit)', function () {
             sc.shareSessionEpochs = { 0: 4 };
             sinon.stub(sc.client, 'end').returns(Promise.resolve());
             sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(new Promise(function () {})); // waits on a stuck refresh
+            markDelivered(sc, 't', 0, [1]);
             sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
 
             ended = sc.end();
@@ -447,6 +505,8 @@ describe('Consumer loops (unit)', function () {
             sc.shareSessionEpochs = { 0: 4 }; // broker 1 has no open session: it can't take acks
             sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
             sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            markDelivered(sc, 't', 0, [1]);
+            markDelivered(sc, 't', 1, [1]);
             sc.acknowledge([{ topic: 't', partition: 0, offset: 1 }, { topic: 't', partition: 1, offset: 1 }]);
 
             return sc.end().then(function () {
@@ -467,6 +527,7 @@ describe('Consumer loops (unit)', function () {
                 return Promise.reject(new errors.NoKafkaConnectionError('b:9092', 'down'));
             });
             sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            markDelivered(sc, 't', 0, [1]);
             sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
 
             return sc.end().then(function () {
@@ -641,6 +702,7 @@ describe('Consumer loops (unit)', function () {
                 Object.keys(acks).should.eql(['__proto__']);
                 return Promise.resolve([{ topic: '__proto__', partition: 0, error: new errors.NoKafkaConnectionError('b:9092', 'down'), messageSet: [] }]);
             });
+            markDelivered(sc, '__proto__', 0, [1]);
             sc.acknowledge({ topic: '__proto__', partition: 0, offset: 1 });
 
             p = sc._fetch();

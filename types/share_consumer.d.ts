@@ -51,6 +51,10 @@ export class ShareConsumer {
     constructor(options?: ShareConsumerOptions);
 
     init(options: ShareConsumerInitOptions): Promise<void>;
+    /**
+      * Queues acknowledgements, sent with the next fetch. Only records from their partition's latest
+      * delivery can be acknowledged (as in Java): others are logged and not sent, and are redelivered.
+      */
     acknowledge(records: AcknowledgeRecord | AcknowledgeRecord[], type?: ACKNOWLEDGE_TYPE): Promise<void>;
     /**
       * Sends the acknowledgements made so far, leaves the group and closes (30 s at most). Handlers
