@@ -618,8 +618,9 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
         the assigned ID and skips the topic until the heartbeat updates the assignment.
   - [x] P2 A session reset by an assignment change was invisible to `end()`, dropping its acks.
   - [x] P2 A fetch waiting on a metadata refresh still went out after `end()`.
-  - [ ] P1 An ack scheduled by a handler that already returned can be accepted while a later
-        delivery of the same offset is running. Needs a decision.
+  - [x] P1 An ack scheduled by a handler that already returned can be accepted while a later
+        delivery of the same offset is running. Decision (2026-11-17): app contract, documented
+        in README and the typings (acks carry no identity); accepted, not a defect.
 - Verification: unit tests 31-39: 222 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:

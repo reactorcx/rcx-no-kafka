@@ -54,7 +54,8 @@ export class ShareConsumer {
     /**
       * Queues acknowledgements, sent with the next fetch. A delivery's records can be acknowledged only
       * while its handler runs (before its promise settles): later ones are logged and not sent, and
-      * the records are redelivered.
+      * the records are redelivered. Don't acknowledge after the handler settles: an ack has no
+      * identity, so one arriving while a later delivery of the same offset is handled is taken for it.
       */
     acknowledge(records: AcknowledgeRecord | AcknowledgeRecord[], type?: ACKNOWLEDGE_TYPE): Promise<void>;
     /**
