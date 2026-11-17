@@ -217,6 +217,44 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should refuse to commit after a rejected send or a failed sendOffsets', function () {
+            var rejected, offsets;
+            function txnProducer() {
+                var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-unit-4', batch: { maxWait: 0 } });
+                p.client.producerId = 1;
+                p.client.producerEpoch = 0;
+                p._transactionV2 = true;
+                sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+                sinon.stub(p.client, 'endTxnRequest').returns(Promise.resolve());
+                return p;
+            }
+            function refused(p) {
+                return p.commitTransaction().then(function () {
+                    throw new Error('expected commitTransaction to reject');
+                }, function (err) {
+                    err.message.should.match(/abortTransaction/);
+                    p.client.endTxnRequest.callCount.should.equal(0);
+                });
+            }
+            rejected = txnProducer();
+            offsets = txnProducer();
+            sinon.stub(rejected.client, 'produceRequest').callsFake(function () {
+                return Promise.reject(new Error('serialization failed')); // not a per-partition result.error
+            });
+            rejected.beginTransaction();
+            sinon.stub(offsets.client, 'txnOffsetCommitRequest').callsFake(function () {
+                return Promise.reject(errors.byName('CoordinatorNotAvailable'));
+            });
+            offsets.beginTransaction();
+
+            return Promise.all([
+                rejected.send({ topic: 't', partition: 0, message: { value: 'a' } }).catch(function () { return null; }),
+                offsets.sendOffsets([{ topic: 'in', partition: 0, offset: 5 }], 'g').catch(function () { return null; })
+            ]).then(function () {
+                return Promise.all([refused(rejected), refused(offsets)]);
+            });
+        });
+
         it('should refuse to commit a transaction in which a send failed', function () {
             var p = new Kafka.Producer({
                 clientId: 'producer-unit',

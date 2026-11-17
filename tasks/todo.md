@@ -113,6 +113,10 @@ Follow-up review of 384cdbd (2026-11-16):
       runs of consecutive decoded batches, gaps included, the first run open at the start; and
       (b) overlapping `acquiredRecords` made the output ranges x batches (6000x6000: 10.8 s,
       3.4 GB); overlaps are now clipped (1 ms). Both checked against a brute-force model.
+- [x] R10 (merge review) The R2 commit guard missed a failed `sendOffsets()`: commit then made the
+      records visible without the consumer offsets, so the input is processed twice. It now sets
+      the same flag (Java's producer also refuses the commit). The rejected-send branch of the
+      guard had no test; one test now covers both.
 - Noted, not fixed (pre-existing, outside this PR): the share handler also gets records outside
   `acquiredRecords` (the Java client filters them); a legacy magic 0/1 share response skips the
   trim (Kafka 4.x share brokers never send one).
