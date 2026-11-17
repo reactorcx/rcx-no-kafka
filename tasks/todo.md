@@ -113,6 +113,16 @@ Follow-up review of 384cdbd (2026-11-16):
       runs of consecutive decoded batches, gaps included, the first run open at the start; and
       (b) overlapping `acquiredRecords` made the output ranges x batches (6000x6000: 10.8 s,
       3.4 GB); overlaps are now clipped (1 ms). Both checked against a brute-force model.
+- [x] R10 (merge review) The R2 commit guard missed a failed `sendOffsets()`: commit then made the
+      records visible without the consumer offsets, so the input is processed twice. It now sets
+      the same flag (Java's producer also refuses the commit). The rejected-send branch of the
+      guard had no test; one test now covers both.
+- [x] R11 (merge review) R6's CRC marking made a corrupt-batch flood expensive: one Error (with
+      stack) and one error-level log line per batch. 200,000 corrupt empty batches in one share
+      partition: 4.7 s, +799 MB heap, 226 MB of log output. Now one Error per read, no per-batch
+      log; the fetch path reports the failure as the partition error (already logged by the
+      consumer) and the share path logs once per partition: 940 ms, +190 MB, 1 line, about the
+      same as that payload with valid CRCs (943 ms, +177 MB).
 - Noted, not fixed (pre-existing, outside this PR): the share handler also gets records outside
   `acquiredRecords` (the Java client filters them); a legacy magic 0/1 share response skips the
   trim (Kafka 4.x share brokers never send one).
@@ -318,3 +328,9 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   PR #5's `_untilFailure`. Share path keeps Phase 1's per-batch decode and adds the
   `acquiredRecords` trim. Commit guard sits in front of Phase 1's `_endTransaction`; README keeps
   both transaction notes. Re-wrap guard and its test were identical on both sides (one copy kept).
+- Merge review found R10 (`sendOffsets` failure not guarded) and R11 (corrupt-batch flood); both
+  fixed on PR #5 (7b77519, c3f7d59) and merged in a second time. On this branch the share flood
+  costs the same as valid data (200,000 batches: 1.1 s, ~390 MB either way); the extra heap over
+  PR #5 is the per-batch share decode, a Phase 3 performance item, not corruption-specific.
+- Also fixed in the merge: a pre-existing no-return-assign lint error in test/34 (Phase 1's
+  "0 errors" note above was wrong).
