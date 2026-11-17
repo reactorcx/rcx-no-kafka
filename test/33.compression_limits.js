@@ -171,11 +171,29 @@ describe('Compression limits (unit)', function () {
             batches = protocol.read(raw).RecordBatch(null, raw.length).result;
             compression.maxOutputSize = 1024;
             sinon.spy(c, 'error');
-            return c._decompressShareFetchResults([{ topic: 't', partition: 0, messageSet: batches, acquiredRecords: [] }])
-            .then(function (r) {
+            return c._decompressShareFetchResults([{
+                topic: 't', partition: 0, messageSet: batches, acquiredRecords: [{ firstOffset: 0, lastOffset: 5, deliveryCount: 1 }]
+            }]).then(function (r) {
                 offsets(r[0]).should.eql([0, 5]);
                 c.error.callCount.should.equal(1);
                 c.error.firstCall.args[1].should.equal(3); // skipped
+            });
+        });
+
+        it('should deliver only the share records this member acquired', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            var raw = Buffer.from(protocol.write().RecordBatch({ baseOffset: 10, records: [0, 1, 2, 3, 4, 5].map(function (i) {
+                return { value: 'v' + i };
+            }) }).result);
+            var batches = protocol.read(raw).RecordBatch(null, raw.length).result;
+            return c._decompressShareFetchResults([{
+                // a batch is returned whole; the broker gave this member 12-13 and 15 only
+                topic: 't', partition: 0, messageSet: batches, acquiredRecords: [
+                    { firstOffset: 15, lastOffset: 15, deliveryCount: 1 },
+                    { firstOffset: 12, lastOffset: 13, deliveryCount: 2 }
+                ]
+            }]).then(function (r) {
+                offsets(r[0]).should.eql([12, 13, 15]);
             });
         });
 

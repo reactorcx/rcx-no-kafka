@@ -333,7 +333,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
   - [x] c. `_find*Coordinator`'s failure path deletes the cache entry unconditionally
         (`:1599, 2470, 2867`), possibly a newer one. Fix: delete only if it is still its own promise.
 - [ ] 2.9 ShareConsumer:
-  - [ ] a. Records outside `acquiredRecords` are delivered (`client.js:3039` trims the ranges to
+  - [x] a. Records outside `acquiredRecords` are delivered (`client.js:3039` trims the ranges to
         the decoded batches, not the records to the ranges; noted, not fixed, at the PR #5 review).
         Fix: filter each record to the acquired ranges, as Java's `ShareCompletedFetch` does.
   - [ ] b. `end()` drops queued acks (`share_consumer.js:532`). Fix: send them with ShareAcknowledge

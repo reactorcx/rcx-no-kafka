@@ -150,7 +150,8 @@ describe('Fetch RecordBatch decoding (unit)', function () {
         var bad = { header: { baseOffset: 5, lastOffsetDelta: 0, attributes: 1, codec: 1, recordCount: 1 }, recordsRaw: Buffer.from('not gzip') };
         var raw = batch({ base: 6, recs: records(2) });
         var good = protocol.read(raw).RecordBatch(null, raw.length).result[0];
-        return c._decompressShareFetchResults([{ topic: 't', partition: 0, messageSet: [bad, good], acquiredRecords: [] }]).then(function (r) {
+        var acquired = [{ firstOffset: 5, lastOffset: 7, deliveryCount: 1 }];
+        return c._decompressShareFetchResults([{ topic: 't', partition: 0, messageSet: [bad, good], acquiredRecords: acquired }]).then(function (r) {
             offsets(r[0]).should.eql([6, 7]);
             should.not.exist(r[0].error);
         });
