@@ -505,6 +505,28 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should send Produce v13 to the topic ID its sequences were stamped for', function () {
+            var c = makeClient(), sent, refreshed, OLD = '00000000-0000-0000-0000-0000000000aa';
+            var writer = c.protocol.write();
+            c.topicIds.t = OLD;
+            c._updateMetadata_pending = true; // a refresh in flight learns the topic was recreated
+            c._updateMetadata_running = new Promise(function (resolve) { refreshed = resolve; }).then(function () {
+                c.topicIds.t = '00000000-0000-0000-0000-0000000000bb';
+            });
+            c.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
+            c.brokerConnections[0].apiVersions = { 0: { min: 0, max: 13 } };
+            sinon.spy(writer, 'ProduceRequestV13');
+
+            sent = c.produceRequest([{ topic: 't', partition: 0, leader: 0, _baseSequence: 0, _topicId: OLD, message: { value: 'x' } }], 0);
+            c._updateMetadata_pending = false;
+            refreshed();
+            return sent.then(function () {
+                var topics = writer.ProduceRequestV13.args[0][0].topics;
+                writer.ProduceRequestV13.restore();
+                topics[0].topicId.should.equal(OLD);
+            });
+        });
+
         it('should send InitProducerId at most v5, the newest version whose response it reads', function () {
             var c = makeClient();
             c.initialBrokers = [{ apiVersions: { 22: { min: 0, max: 6 } } }]; // v6 only with unstable APIs enabled

@@ -358,6 +358,21 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should still close a session the broker says is out of step (InvalidShareSessionEpoch)', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 };
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+            sc._partitionError(errors.byName('InvalidShareSessionEpoch'), 't', 0); // the session is still there
+
+            return sc.end().then(function () {
+                sc.client.shareAcknowledgeRequest.args[0][3][0][0].partitions[0].acknowledgementBatches[0].firstOffset.should.equal(1);
+            });
+        });
+
         it('should not send a fetch that was waiting on a metadata refresh when end() ran', function () {
             var sc = makeShareConsumer(), refreshed, p;
             twoLeaders(sc);

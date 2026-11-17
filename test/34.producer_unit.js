@@ -171,6 +171,28 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should reject a large batch for a recreated topic in linear time', function () {
+            var p = new Kafka.Producer({ idempotent: true, clientId: 'producer-unit', batch: { size: 1024 * 1024 * 1024, maxWait: 10 } });
+            var msgs = [], i, t0;
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p.client.findLeader = function () { return Promise.resolve(0); };
+            p.client.topicIds.t = 'id-old';
+            p.client.updateMetadata = function () { p.client.topicIds.t = 'id-new'; return Promise.resolve(); };
+            p.client.produceRequest = function () { // plain fakes: sinon recording 150,000 records is slow
+                return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('RequestTimedOut') }]);
+            };
+            for (i = 0; i < 150000; i++) { msgs.push({ topic: 't', partition: 0, message: { value: 'x' } }); }
+
+            this.timeout(10000);
+            t0 = Date.now();
+            return p.send(msgs, { retries: FAST_RETRIES }).then(function (result) {
+                (Date.now() - t0).should.be.below(2000); // quadratic rejection took ~6 s
+                result.should.have.length(1);
+                result[0].error.code.should.equal('UnknownTopicId');
+            });
+        });
+
         [
             ['UnknownTopicId', 'the broker no longer knows the topic ID'],
             ['RequestTimedOut', 'the topic was recreated while the attempt timed out']

@@ -621,7 +621,14 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P1 An ack scheduled by a handler that already returned can be accepted while a later
         delivery of the same offset is running. Decision (2026-11-17): app contract, documented
         in README and the typings (acks carry no identity); accepted, not a defect.
-- Verification: unit tests 31-39: 222 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 6 (gpt-6.2-sol, xhigh, Fast; a first attempt with custom instructions was
+  stopped by OpenAI's content filter, rerun as a plain `--base` review):
+  - [x] P2 Produce v13 read the topic ID after async compression, so a refresh in between could
+        retarget a stamped retry to a recreated topic. Fixed when requests are grouped.
+  - [x] P2 InvalidShareSessionEpoch (session still on the broker) and a fetch completing after an
+        assignment reset dropped the session from `end()`'s view, losing its acks.
+  - [x] P3 Rejecting a large recreated-topic batch was quadratic (150,000 records ~6 s, now 0.3 s).
+- Verification: unit tests 31-39: 225 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
