@@ -147,6 +147,19 @@ describe('Compression limits (unit)', function () {
         });
     });
 
+    it('should decode a zstd frame that declares its size into one buffer of that size', function () {
+        var data = Buffer.alloc(1000, 'kafka '), frame, spy; // compresses to far less than 1000 bytes
+        if (!zstd) { return this.skip(); }
+        frame = zstd.compress(data);
+        spy = sinon.spy(Buffer, 'allocUnsafe');
+        return compression.decompress(frame, 4).finally(function () {
+            spy.restore();
+        }).then(function (out) {
+            out.equals(data).should.equal(true);
+            spy.args.map(function (a) { return a[0]; }).should.eql([data.length]);
+        });
+    });
+
     it('should still decompress data within the limit', function () {
         var payload = Buffer.from('hello kafka');
         var compressed = zlib.gzipSync(payload);
