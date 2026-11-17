@@ -313,6 +313,16 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should send InitProducerId at most v5, the newest version whose response it reads', function () {
+            var c = makeClient();
+            c.initialBrokers = [{ apiVersions: { 22: { min: 0, max: 6 } } }]; // v6 only with unstable APIs enabled
+            sinon.stub(c, '_sendToAnyBroker').returns(Promise.resolve({}));
+
+            return c.initProducerIdRequest(null, 1000).then(function () {
+                c._sendToAnyBroker.args[0][1].readInt16BE(2).should.equal(5); // apiKey, then apiVersion
+            });
+        });
+
         it('should fail the refresh, keeping the brokers it has, on a top-level Metadata v13 error', function () {
             var c = makeClient();
             var known = fakeConn('known:1');

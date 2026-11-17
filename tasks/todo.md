@@ -363,7 +363,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
         REBOOTSTRAP_REQUIRED and only with rebootstrap enabled, so this is stricter (accepted
         2026-11-17); with 2.5 a
         failed refresh no longer breaks other requests. Update the `test/25` fixture.
-  - [ ] b. An InitProducerId v6 request is read with the v2 reader (`client.js:2379`) and fails
+  - [x] b. An InitProducerId v6 request is read with the v2 reader (`client.js:2379`) and fails
         ("Malformed varint"). v6 is unstable (brokers advertise it only with
         `unstable.api.versions.enable`). Fix: cap at v5, delete the v6 writer and its test.
   - [ ] c. A negotiated Fetch v5 is sent as v6 (`client.js:1088-1089`); the wire format is the same

@@ -542,42 +542,6 @@ describe('Kafka 4.1.1 Protocol Version Tests', function () {
         });
     });
 
-    describe('InitProducerId v6', function () {
-        it('should encode InitProducerIdRequestV6 with enable2Pc and keepPreparedTxn', function () {
-            var v5Encoded, v6Encoded;
-
-            v5Encoded = protocol.write().InitProducerIdRequestV3({
-                correlationId: 1,
-                clientId: 'test',
-                apiVersion: 5,
-                transactionalId: 'txn1',
-                transactionTimeoutMs: 5000,
-                producerId: -1,
-                producerEpoch: -1
-            }).result;
-
-            v6Encoded = protocol.write().InitProducerIdRequestV6({
-                correlationId: 1,
-                clientId: 'test',
-                transactionalId: 'txn1',
-                transactionTimeoutMs: 5000,
-                producerId: -1,
-                producerEpoch: -1,
-                enable2Pc: false,
-                keepPreparedTxn: false
-            }).result;
-
-            // apiKey=22, apiVersion=6
-            v6Encoded[0].should.equal(0x00);
-            v6Encoded[1].should.equal(22);
-            v6Encoded[2].should.equal(0x00);
-            v6Encoded[3].should.equal(6);
-
-            // v6 should be longer due to enable2Pc + keepPreparedTxn (2 extra Int8 bytes)
-            v6Encoded.length.should.be.above(v5Encoded.length);
-        });
-    });
-
     ////////////////////////////////////////
     // Phase 4: Core APIs                 //
     ////////////////////////////////////////
