@@ -336,6 +336,19 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should stop waiting for a fetch that never finishes, and still close', function () {
+            var sc = makeShareConsumer(), clock = sinon.useFakeTimers(), ended;
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sc._fetchPromise = new Promise(function () {}); // e.g. stuck refreshing metadata from a broken broker
+
+            ended = sc.end();
+            clock.tick(30000);
+            clock.restore();
+            return ended.then(function () {
+                sc.client.end.callCount.should.equal(1);
+            });
+        });
+
         it('should wait for handlers still running before sending the final acks', function () {
             var sc = makeShareConsumer(), finish;
             twoLeaders(sc);

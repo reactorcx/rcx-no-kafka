@@ -38,6 +38,22 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should not put a key that is not PEM text in the error', function () {
+            var key = 'TUlJRXZRSUJBREFOQmdrcWhraUc5dzBCQVFFRkFBU0NCS2N3Z2dTakFnRUFBb0lCQVFD'; // base64, no PEM armour
+            var c = new Kafka.Producer({
+                connectionString: 'kafka://127.0.0.1:9093',
+                ssl: { cert: path.join(__dirname, './ssl/client.crt'), key: key }
+            }).client;
+
+            return c.init().then(function () {
+                throw new Error('expected init to reject');
+            }, function (err) {
+                err.message.should.match(/ssl\.key/);
+                err.message.should.not.contain(key);
+                should.not.exist(err.path);
+            });
+        });
+
         it('should read only the values that are file paths, never a PEM key', function () {
             var certPath = path.join(__dirname, './ssl/client.crt');
             var key = '\n-----BEGIN PRIVATE KEY-----\nc2VjcmV0\n-----END PRIVATE KEY-----\n'; // template-literal style
