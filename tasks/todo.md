@@ -368,7 +368,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
         `unstable.api.versions.enable`). Fix: cap at v5, delete the v6 writer and its test.
   - [x] c. A negotiated Fetch v5 is sent as v6 (`client.js:1088-1089`); the wire format is the same
         but the version isn't (0.11.0 brokers). Fix: send v5.
-  - [ ] d. LogAppendTime batches (attributes bit 3) should give every record the batch
+  - [x] d. LogAppendTime batches (attributes bit 3) should give every record the batch
         `maxTimestamp`; ignored today. Fix at `client.js:2194`, where record timestamps are set.
   - [ ] f. Legacy MessageSet compression hands a slice of the shared protocol writer to async
         compression (`client.js:2266`); the next request overwrites it first (reproduced).
