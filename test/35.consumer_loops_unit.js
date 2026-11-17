@@ -387,4 +387,81 @@ describe('Consumer loops (unit)', function () {
             });
         });
     });
+
+    // '__proto__', 'constructor' and 'toString' are legal topic names
+    describe('topics named like Object.prototype members', function () {
+        function metadata(topic) {
+            var m = Object.create(null);
+            m[topic] = { 0: { partitionId: 0, leader: 0 } };
+            return m;
+        }
+
+        it('BaseConsumer: should fetch a topic named constructor', function () {
+            var c = new Kafka.SimpleConsumer({ clientId: 'unit-consumer' });
+            var p;
+            sinon.stub(c.client, 'fetchRequest').returns(Promise.resolve([]));
+            c.subscriptions['constructor:0'] = { topic: 'constructor', partition: 0, offset: 5, leader: 0, maxBytes: 1024, handler: noop };
+
+            p = c._fetch();
+            c._closed = true;
+            return p.then(function () {
+                c.client.fetchRequest.callCount.should.equal(1);
+                c.client.fetchRequest.args[0][0][0][0].topicName.should.equal('constructor');
+            });
+        });
+
+        it('GroupConsumer: the leader should assign a topic named __proto__', function () {
+            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-proto' });
+
+            gc.memberId = 'me';
+            gc.leaderId = 'me';
+            gc.generationId = 1;
+            gc.strategyName = 'S';
+            gc.strategies = { S: { strategy: new Kafka.DefaultAssignmentStrategy(), handler: noop } };
+            gc.members = [{ id: 'me', subscriptions: ['__proto__'], metadata: null }];
+            gc.topics = ['__proto__'];
+            gc.client.topicMetadata = metadata('__proto__');
+            sinon.stub(gc.client, 'updateMetadata').returns(Promise.resolve());
+            sinon.stub(gc.client, 'syncConsumerGroupRequest').returns(Promise.resolve({ memberAssignment: { partitionAssignment: [] } }));
+
+            return gc._syncGroup().then(function () {
+                gc.client.updateMetadata.args[0][0].should.eql(['__proto__']);
+                gc.client.syncConsumerGroupRequest.args[0][3].should.have.length(1); // the leader's assignment
+            });
+        });
+
+        it('ShareConsumer: should build a fetch request for a topic named constructor', function () {
+            var sc = new Kafka.ShareConsumer({ clientId: 'unit-sc', groupId: 'sc-unit' });
+            sc.assignedPartitions = { id1: [0] };
+            sc.client.topicNames = { id1: 'constructor' };
+            sc.client.topicMetadata = metadata('constructor');
+
+            sc._buildFetchRequests().should.eql({ 0: [{ topicName: 'constructor', partitions: [{ partition: 0 }] }] });
+        });
+
+        it('ShareConsumer: should drain and requeue acks for a topic named __proto__', function () {
+            var sc = new Kafka.ShareConsumer({ clientId: 'unit-sc', groupId: 'sc-unit' });
+            var p;
+            sc._handler = noop;
+            sc.shareSessionEpochs = { 0: 2 };
+            sc.client.topicMetadata = metadata('__proto__');
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: '__proto__', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'updateMetadata').returns(Promise.resolve());
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, r, f, acks) {
+                Object.keys(acks).should.eql(['__proto__']);
+                return Promise.resolve([{ topic: '__proto__', partition: 0, error: new errors.NoKafkaConnectionError('b:9092', 'down'), messageSet: [] }]);
+            });
+            sc.acknowledge({ topic: '__proto__', partition: 0, offset: 1 });
+
+            p = sc._fetch();
+            sc._closed = true;
+            return p.then(function () {
+                should.not.exist(Object.prototype[0]);
+                sc.client.shareFetchRequest.callCount.should.equal(1);
+                Object.keys(sc._pendingAcks).should.eql(['__proto__:0']); // requeued for the next fetch
+            }).finally(function () {
+                delete Object.prototype[0];
+            });
+        });
+    });
 });

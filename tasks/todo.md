@@ -285,7 +285,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
       refreshes send nothing and `updateMetadata(['x'])` re-enters itself in microtasks, starving
       timers. Fix: start the chain with `Promise.resolve().then(_try)`. Test asserts a second
       `metadataRequest` call (the stuck path would hang mocha).
-- [ ] 2.15 Plain `{}` maps keyed by topic name (`__proto__`, `constructor` and `toString` are legal
+- [x] 2.15 Plain `{}` maps keyed by topic name (`__proto__`, `constructor` and `toString` are legal
       topic names) become `Object.create(null)`: `lib/base_consumer.js:54-55` (one subscription to
       `constructor` makes every fetch throw, so the consumer fetches nothing),
       `lib/group_consumer.js:147` (the group never stabilises), and `lib/share_consumer.js` fetch
