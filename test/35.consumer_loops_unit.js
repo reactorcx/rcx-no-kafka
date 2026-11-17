@@ -314,6 +314,7 @@ describe('Consumer loops (unit)', function () {
             var sc = makeShareConsumer(), p;
             sc.assignedPartitions = { id1: [0, 1] };
             sc.client.topicNames = { id1: 't' };
+            sc.client.topicIds.t = 'id1';
             sc.client.topicMetadata = Object.create(null);
             sc.client.topicMetadata.t = { 0: { partitionId: 0, leader: 0 } }; // partition 1 added since the last refresh
             sinon.stub(sc.client, 'updateMetadata').callsFake(function () {
@@ -326,7 +327,56 @@ describe('Consumer loops (unit)', function () {
             sc._closed = true;
             return p.then(function () {
                 sc.client.updateMetadata.args[0][0].should.eql(['t']);
-                sc.client.shareFetchRequest.args[0][3].should.eql({ 0: [{ topicName: 't', partitions: [{ partition: 0 }, { partition: 1 }] }] });
+                sc.client.shareFetchRequest.args[0][3].should.eql({ 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }, { partition: 1 }] }] });
+            });
+        });
+
+        it('should not fetch an assigned topic whose metadata is now a recreated topic\'s', function () {
+            var sc = makeShareConsumer();
+            sc.assignedPartitions = { 'id-old': [0] }; // the heartbeat hasn't brought the new assignment yet
+            sc.client.topicNames = { 'id-old': 't', 'id-new': 't' };
+            sc.client.topicIds.t = 'id-new'; // the by-name refresh already learned the replacement
+            sc.client.topicMetadata = Object.create(null);
+            sc.client.topicMetadata.t = { 0: { partitionId: 0, leader: 0 } };
+
+            sc._buildFetchRequests().should.eql({});
+        });
+
+        it('should still close, with its acks, a session an assignment change reset', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 };
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+            sc._applyAssignment({ _present: 1, topicPartitions: [{ topicId: 'id1', partitions: [0] }] }); // a heartbeat, before the next fetch
+
+            return sc.end().then(function () {
+                var requests = sc.client.shareAcknowledgeRequest.args[0][3];
+                requests[0][0].partitions[0].acknowledgementBatches[0].firstOffset.should.equal(1);
+            });
+        });
+
+        it('should not send a fetch that was waiting on a metadata refresh when end() ran', function () {
+            var sc = makeShareConsumer(), refreshed, p;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sc.client._updateMetadata_pending = true; // someone else's refresh in flight
+            sc.client._updateMetadata_running = new Promise(function (resolve) { refreshed = resolve; });
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+
+            p = sc._fetch();
+            return promiseUtils.delay(0).then(function () {
+                var ended = sc.end();
+                sc.client._updateMetadata_pending = false;
+                refreshed();
+                return Promise.all([p, ended]);
+            }).then(function () {
+                sc.client.shareFetchRequest.callCount.should.equal(0);
             });
         });
 
@@ -822,9 +872,10 @@ describe('Consumer loops (unit)', function () {
             var sc = new Kafka.ShareConsumer({ clientId: 'unit-sc', groupId: 'sc-unit' });
             sc.assignedPartitions = { id1: [0] };
             sc.client.topicNames = { id1: 'constructor' };
+            sc.client.topicIds.constructor = 'id1';
             sc.client.topicMetadata = metadata('constructor');
 
-            sc._buildFetchRequests().should.eql({ 0: [{ topicName: 'constructor', partitions: [{ partition: 0 }] }] });
+            sc._buildFetchRequests().should.eql({ 0: [{ topicName: 'constructor', topicId: 'id1', partitions: [{ partition: 0 }] }] });
         });
 
         it('ShareConsumer: should drain and requeue acks for a topic named __proto__', function () {

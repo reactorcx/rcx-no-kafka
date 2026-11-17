@@ -610,7 +610,17 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
         recreated topic at the same offset (acks are `{topic, partition, offset}`). Decision
         (2026-11-17): a delivery's records can be acknowledged only while its handler runs (Java:
         until the next `poll()`); later acks are logged and the records redelivered.
-- Verification: unit tests 31-39: 217 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 5 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A stamped idempotent batch could be retried into a recreated topic after a plain
+        timeout (the refresh learned the new ID). Checked against its stamped topic ID before
+        every retry now; replaces round 4's response-code check.
+  - [x] P2 Share fetch sent the old assignment's partitions under a recreated topic's ID. It keeps
+        the assigned ID and skips the topic until the heartbeat updates the assignment.
+  - [x] P2 A session reset by an assignment change was invisible to `end()`, dropping its acks.
+  - [x] P2 A fetch waiting on a metadata refresh still went out after `end()`.
+  - [ ] P1 An ack scheduled by a handler that already returned can be accepted while a later
+        delivery of the same offset is running. Needs a decision.
+- Verification: unit tests 31-39: 221 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

@@ -171,18 +171,26 @@ describe('Producer (unit)', function () {
             });
         });
 
-        it('should not retry an idempotent batch into a recreated topic, and start fresh sequences', function () {
-            var p = makeIdempotentProducer();
-            sinon.stub(p.client, 'updateMetadata').returns(Promise.resolve());
-            sinon.stub(p.client, 'produceRequest').callsFake(function () {
-                return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('UnknownTopicId') }]);
-            });
+        [
+            ['UnknownTopicId', 'the broker no longer knows the topic ID'],
+            ['RequestTimedOut', 'the topic was recreated while the attempt timed out']
+        ].forEach(function (c) {
+            it('should not retry an idempotent batch into a recreated topic (' + c[1] + ')', function () {
+                var p = makeIdempotentProducer();
+                p.client.topicIds.t = 'id-old';
+                sinon.stub(p.client, 'updateMetadata').callsFake(function () {
+                    p.client.topicIds.t = 'id-new'; // the refresh before the retry learns the new topic
+                    return Promise.resolve();
+                });
+                sinon.stub(p.client, 'produceRequest').callsFake(function () {
+                    return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName(c[0]) }]);
+                });
 
-            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }, { retries: FAST_RETRIES }).then(function (result) {
-                p.client.produceRequest.callCount.should.equal(1); // its sequences continue a log that is gone
-                result[0].error.code.should.equal('UnknownTopicId');
-                p.client.updateMetadata.args[0][0].should.eql(['t']); // the next send gets the new topic ID
-                p._needsReinit.should.equal(true);
+                return p.send({ topic: 't', partition: 0, message: { value: 'a' } }, { retries: FAST_RETRIES }).then(function (result) {
+                    p.client.produceRequest.callCount.should.equal(1); // its sequences continue a log that is gone
+                    result[0].error.code.should.equal('UnknownTopicId');
+                    p._needsReinit.should.equal(true); // the next send starts a fresh sequence space
+                });
             });
         });
     });
