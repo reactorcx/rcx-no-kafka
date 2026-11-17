@@ -137,9 +137,30 @@ Follow-up review of c3f7d59 (2026-11-17):
       failure (V1, V2), a send registering into B, a send failing before registration, and a
       send in flight across B's start (refused). Verification: the offset regressions fail on
       c3f7d59; unit tests 31-38: 105 pass; full suite on a fresh 4.2.0 broker: 616 pass, same 10
-      failures as `master`.
-- Noted, not fixed (pre-existing, outside this PR): commit and abort don't wait for a pending
-  `sendOffsets()` (its outcome is unknown when the transaction ends); the share handler also gets records outside
+      failures as `master`. (`_txnSeq` was replaced by R13.)
+
+Follow-up review of b2d4b3a (2026-11-17):
+- [x] R13 [P1] R12's guard let a V1 `sendOffsets()` from aborted transaction A still send its
+      TxnOffsetCommit inside B (its AddOffsetsToTxn answered late), and ignored that write's
+      partial failure: B committed A's offset 100 instead of its own 50 (reviewer, live on 3.9.2).
+      Root cause: commit and abort didn't wait for pending offset writes. They now do
+      (`_offsetWrites`, a chain that never rejects), so A's write lands in A and is aborted; `_txnSeq`
+      is gone since no offset write can outlive its transaction. While a commit or abort runs
+      (`_endingTxn`), `send()`, `sendOffsets()` and a second commit/abort reject: they would miss
+      the wait, and overlapping ends would clear each other's flag (our maintainability review).
+      Our security review found that a synchronous throw from `flush()` would leave that flag set:
+      `concat.apply` in `_send` overflows the stack at ~125k empty-value sends in one batch (also a
+      process crash from the `maxWait` timer). Took Phase 1's `task.data.flat()`.
+      Regressions: AddOffsetsToTxn itself held (V1) or TxnOffsetCommit held (V2), with calls during
+      the abort rejected and offsets usable after a commit; commit waits for an earlier, slower
+      write; a send racing an abort (taken from Phase 1). Verification: live 3.9.2 repro commits
+      100 on b2d4b3a and 50 with the fix; removing any of the 7 pieces fails a test; unit tests
+      31-38: 105 pass; eslint 0 errors; tsc passes; full suite on a fresh 4.2.0 broker: 616 pass,
+      same 10 failures as `master`; 130k empty sends then commit: `RangeError` on b2d4b3a, commits
+      with the fix.
+- Noted, not fixed (pre-existing, outside this PR): under V1 a timed-out offset write's outcome
+  is unknown (the broker may still apply it after the client gave up; V2's epoch bump fences it);
+  the share handler also gets records outside
   `acquiredRecords` (the Java client filters them); a legacy magic 0/1 share response skips the
   trim (Kafka 4.x share brokers never send one).
 
@@ -355,3 +376,8 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   send-before-`beginTransaction()` test is dropped (covered by "should reject a transactional
   send outside a transaction"), and the in-flight-across-start test checks that a send racing an
   abort is rejected and the next transaction commits.
+- R13 (4b9bb3d) merged in a fourth time. Commit and abort keep `_endTransaction()` and now also
+  wait for `_offsetWrites`. A send while one is ending is rejected by PR #5's guard ("Transaction
+  is being committed or aborted"); the outside-a-transaction check no longer repeats it, and
+  "should reject a send made while the transaction is being committed" expects the new message.
+  `task.data.flat()` was already here.

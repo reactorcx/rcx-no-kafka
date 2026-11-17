@@ -217,7 +217,7 @@ describe('Producer (unit)', function () {
             });
         });
 
-        it('should refuse to commit after a rejected send or a failed sendOffsets', function () {
+        it('should refuse to commit after a rejected send or a failed sendOffsets, waiting for a pending one', function () {
             var rejected, offsets;
             function txnProducer() {
                 var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-unit-4', batch: { maxWait: 0 } });
@@ -243,55 +243,89 @@ describe('Producer (unit)', function () {
             });
             rejected.beginTransaction();
             sinon.stub(offsets.client, 'txnOffsetCommitRequest').callsFake(function () {
-                return Promise.reject(errors.byName('CoordinatorNotAvailable'));
+                if (offsets.client.txnOffsetCommitRequest.callCount > 1) {
+                    return Promise.resolve();
+                }
+                return promiseUtils.delay(10).then(function () { throw errors.byName('CoordinatorNotAvailable'); });
             });
             offsets.beginTransaction();
+            // the slower, earlier write fails: commit must wait for it, not only for the last one
+            offsets.sendOffsets([{ topic: 'in', partition: 0, offset: 5 }], 'g').catch(function () { return null; });
+            offsets.sendOffsets([{ topic: 'in', partition: 1, offset: 5 }], 'g');
 
             return Promise.all([
-                rejected.send({ topic: 't', partition: 0, message: { value: 'a' } }).catch(function () { return null; }),
-                offsets.sendOffsets([{ topic: 'in', partition: 0, offset: 5 }], 'g').catch(function () { return null; })
-            ]).then(function () {
-                return Promise.all([refused(rejected), refused(offsets)]);
-            });
+                rejected.send({ topic: 't', partition: 0, message: { value: 'a' } }).catch(function () { return null; })
+                .then(function () { return refused(rejected); }),
+                refused(offsets) // without waiting: commit must wait for the offset write
+            ]);
         });
 
         [true, false].forEach(function (v2) {
-            it('should not fail the next transaction when the offset write of an aborted one fails late (' + (v2 ? 'V2' : 'V1') + ')', function () {
+            it('should finish an aborted transaction\'s offset write before the next one begins (' + (v2 ? 'V2' : 'V1') + ')', function () {
                 var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-late-' + v2, batch: { maxWait: 0 } });
-                var failA, ends = [];
+                var release, late, aborted, calls = [];
                 p.client.producerId = 1;
                 p.client.producerEpoch = 0;
                 p._transactionV2 = v2;
                 sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
                 sinon.stub(p.client, 'addPartitionsToTxnRequest').returns(Promise.resolve([]));
-                sinon.stub(p.client, 'addOffsetsToTxnRequest').returns(Promise.resolve());
                 sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
                     return Promise.resolve(requests.map(function (r) { return { topic: r.topic, partition: r.partition, error: null, offset: 0 }; }));
                 });
-                sinon.stub(p.client, 'txnOffsetCommitRequest').callsFake(function () {
-                    return new Promise(function (resolve, reject) { failA = reject; }); // A's write hangs
+                sinon.stub(p.client, 'addOffsetsToTxnRequest').callsFake(function () {
+                    calls.push('addOffsets');
+                    // V1: hold A's AddOffsetsToTxn itself, so its TxnOffsetCommit is still to be sent
+                    return calls.length === 1 ? new Promise(function (resolve) { release = resolve; }) : Promise.resolve();
+                });
+                sinon.stub(p.client, 'txnOffsetCommitRequest').callsFake(function (id, groupId, pid, epoch, offsets) {
+                    var failed = errors.byName('UnknownTopicOrPartition');
+                    calls.push('offsets ' + offsets[0].offset);
+                    if (offsets[0].offset !== 100) {
+                        return Promise.resolve();
+                    }
+                    // A's write partly fails; under V2 it is the one held
+                    return v2 ? new Promise(function (resolve, reject) { release = reject.bind(null, failed); }) : Promise.reject(failed);
                 });
                 sinon.stub(p.client, 'endTxnRequest').callsFake(function (id, pid, epoch, committed) {
-                    ends.push(committed);
+                    calls.push('end ' + committed);
                     return Promise.resolve();
                 });
 
                 p.beginTransaction(); // A
-                return promiseUtils.delay(0).then(function () {
-                    var late = p.sendOffsets([{ topic: 'in', partition: 0, offset: 5 }], 'g').catch(function () { return null; });
-                    return promiseUtils.delay(0).then(function () {
-                        return p.abortTransaction(); // doesn't wait for A's offset write
-                    }).then(function () {
-                        p.beginTransaction(); // B
-                        return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
-                    }).then(function () {
-                        failA(errors.byName('CoordinatorNotAvailable'));
-                        return late;
+                late = p.sendOffsets([{ topic: 'in', partition: 0, offset: 100 }], 'g').catch(function () { return null; });
+                aborted = p.abortTransaction();
+                return Promise.all([
+                    p.sendOffsets([{ topic: 'in', partition: 0, offset: 7 }], 'g'),
+                    p.send({ topic: 't', partition: 0, message: { value: 'a' } }),
+                    p.commitTransaction(),
+                    p.abortTransaction()
+                ].map(function (call) {
+                    return call.then(function () {
+                        throw new Error('expected every call to reject while the abort runs');
+                    }, function (err) {
+                        err.message.should.match(/being committed or aborted/);
                     });
+                })).then(function () {
+                    return promiseUtils.delay(10);
                 }).then(function () {
-                    return p.commitTransaction(); // B must still commit
+                    p.client.endTxnRequest.callCount.should.equal(0); // the abort waits for A's offset write
+                    release();
+                    return Promise.all([aborted, late]);
                 }).then(function () {
-                    ends.should.eql([false, true]);
+                    p.beginTransaction(); // B
+                    return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
+                }).then(function () {
+                    return p.sendOffsets([{ topic: 'in', partition: 0, offset: 50 }], 'g');
+                }).then(function () {
+                    return p.commitTransaction(); // A's failure doesn't fail B
+                }).then(function () {
+                    p.beginTransaction(); // C: the ended commit no longer blocks offsets
+                    return p.sendOffsets([{ topic: 'in', partition: 0, offset: 60 }], 'g');
+                }).then(function () {
+                    calls.should.eql(v2 ?
+                        ['offsets 100', 'end false', 'offsets 50', 'end true', 'offsets 60'] :
+                        ['addOffsets', 'offsets 100', 'end false', 'addOffsets', 'offsets 50', 'end true',
+                            'addOffsets', 'offsets 60']);
                 });
             });
         });
@@ -319,7 +353,7 @@ describe('Producer (unit)', function () {
             return p.abortTransaction().then(function () {
                 return late.then(function () {
                     throw new Error('expected the late send to reject');
-                }, function (err) { err.message.should.match(/beginTransaction/); });
+                }, function (err) { err.message.should.match(/being committed or aborted/); });
             }).then(function () {
                 p.beginTransaction(); // B
                 return p.send({ topic: 't', partition: 1, message: { value: 'b' } });
@@ -612,7 +646,7 @@ describe('Producer (unit)', function () {
             commit = p.commitTransaction();
             late = p.send({ topic: 't', partition: 0, message: { value: 'late' } }).then(function () {
                 throw new Error('expected rejection');
-            }, function (err) { err.message.should.match(/beginTransaction/); });
+            }, function (err) { err.message.should.match(/being committed or aborted/); });
             return Promise.all([commit, late]).then(function () {
                 p.client.produceRequest.callCount.should.equal(0);
                 return late;
