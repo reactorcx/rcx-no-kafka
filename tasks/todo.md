@@ -344,7 +344,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
   - [x] c. Acks for a partition not in the next fetch are drained and never sent
         (`share_consumer.js:288`, `client.js:2937`). Fix: drain only acks the fetch will carry;
         acks for partitions no longer assigned go out with ShareAcknowledge (the 2.9b path).
-  - [ ] d. An assigned partition missing from cached metadata is never fetched
+  - [x] d. An assigned partition missing from cached metadata is never fetched
         (`share_consumer.js:383`). Fix: refresh metadata (by name, so after 2.7a) for assigned
         topics it lacks.
   Live check: acks queued before `end()` are applied.

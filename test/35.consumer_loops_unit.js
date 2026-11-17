@@ -300,6 +300,26 @@ describe('Consumer loops (unit)', function () {
             sc.client.topicMetadata.t = { 0: { partitionId: 0, leader: 0 }, 1: { partitionId: 1, leader: 1 } };
         }
 
+        it('should refresh metadata for an assigned partition it has none for, then fetch it', function () {
+            var sc = makeShareConsumer(), p;
+            sc.assignedPartitions = { id1: [0, 1] };
+            sc.client.topicNames = { id1: 't' };
+            sc.client.topicMetadata = Object.create(null);
+            sc.client.topicMetadata.t = { 0: { partitionId: 0, leader: 0 } }; // partition 1 added since the last refresh
+            sinon.stub(sc.client, 'updateMetadata').callsFake(function () {
+                sc.client.topicMetadata.t[1] = { partitionId: 1, leader: 0 };
+                return Promise.resolve();
+            });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([]));
+
+            p = sc._fetch();
+            sc._closed = true;
+            return p.then(function () {
+                sc.client.updateMetadata.args[0][0].should.eql(['t']);
+                sc.client.shareFetchRequest.args[0][3].should.eql({ 0: [{ topicName: 't', partitions: [{ partition: 0 }, { partition: 1 }] }] });
+            });
+        });
+
         it('should keep acks for a partition the next fetch does not carry', function () {
             var sc = makeShareConsumer(), p;
             twoLeaders(sc);
