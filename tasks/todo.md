@@ -357,7 +357,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
         also skips `_needsRejoin` and `ownedPartitions`); a rejecting async callback is an unhandled
         rejection. Fix: one helper that logs both.
 - [ ] 2.11 Protocol:
-  - [ ] a. MetadataResponse v13's top-level ErrorCode (last field, after Topics) isn't read
+  - [x] a. MetadataResponse v13's top-level ErrorCode (last field, after Topics) isn't read
         (`lib/protocol/metadata.js:506`; the comment at `:489` has its position wrong). Read it and
         fail the refresh before the broker list is replaced (`client.js:333`). Java acts only on
         REBOOTSTRAP_REQUIRED and only with rebootstrap enabled, so this is stricter (accepted

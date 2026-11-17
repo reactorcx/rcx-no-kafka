@@ -312,6 +312,29 @@ describe('Client (unit)', function () {
                 });
             });
         });
+
+        it('should fail the refresh, keeping the brokers it has, on a top-level Metadata v13 error', function () {
+            var c = makeClient();
+            var known = fakeConn('known:1');
+
+            c.initialBrokers = [{ apiVersions: { 3: { min: 0, max: 13 } } }];
+            c.brokerConnections = { 0: known };
+            sinon.stub(c, '_sendToAnyBroker').callsFake(function (correlationId, buffer, parse) {
+                return Promise.resolve().then(function () { return parse(Buffer.alloc(0)); });
+            });
+            sinon.stub(c.protocol, 'read').returns({
+                MetadataResponseV13: function () {
+                    return { result: { error: errors.byName('RebootstrapRequired'), broker: [], topicMetadata: [] } };
+                }
+            });
+
+            return c.updateMetadata(['A']).then(function () {
+                throw new Error('expected rejection');
+            }, function (err) {
+                err.code.should.equal('RebootstrapRequired');
+                c.brokerConnections[0].should.equal(known);
+            });
+        });
     });
 
     describe('findLeader', function () {

@@ -930,6 +930,8 @@ describe('Kafka 4.1.1 Protocol Version Tests', function () {
                 // TaggedFields
                 this.TaggedFields();
             });
+            // top-level ErrorCode (v13+, after Topics: MetadataResponse.json)
+            writer.Int16BE(0);
             // TaggedFields
             writer.TaggedFields();
 
@@ -940,6 +942,23 @@ describe('Kafka 4.1.1 Protocol Version Tests', function () {
             result.topicMetadata.length.should.equal(1);
             result.topicMetadata[0].topicId.should.equal(topicId);
             result.topicMetadata[0].topicName.should.equal('my-topic');
+            should.not.exist(result.error);
+        });
+
+        it('should read the top-level ErrorCode of MetadataResponseV13', function () {
+            var writer = protocol.write();
+            var result;
+
+            writer.Int32BE(1).TaggedFields().Int32BE(0)
+                .compactArray([], function () {})
+                .compactString('test-cluster')
+                .Int32BE(1)
+                .compactArray([], function () {})
+                .Int16BE(129) // REBOOTSTRAP_REQUIRED
+                .TaggedFields();
+
+            result = protocol.read(writer.result).MetadataResponseV13().result;
+            result.error.code.should.equal('RebootstrapRequired');
         });
     });
 
