@@ -379,7 +379,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
       fields `send()` ignores get a doc note (removing them breaks callers' compiles); `sendOffsets`
       typing; GroupAdmin methods typed as returning non-Promises (`group_admin.d.ts:9, 13, 17`);
       `Message.key` is `string` only (`kafka.d.ts:25`).
-- [ ] 2.13 **[read]** lz4 and zstd decode the whole batch before `checkOutput`
+- [x] 2.13 **[read]** lz4 and zstd decode the whole batch before `checkOutput`
       (`lib/protocol/misc/compression.js:110-134`): a 32 KB zstd frame declaring 1 GiB took RSS
       48 MB -> 1,073 MB. Also a truncated lz4 frame crashes the process: the decoder emits `error`
       on the next tick with no listener.

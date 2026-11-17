@@ -6,6 +6,7 @@ var compression = require('../lib/protocol/misc/compression');
 var zlib        = require('zlib');
 var Protocol    = require('../lib/protocol');
 var Kafka       = require('../lib/index');
+var promiseUtils = require('../lib/promise-utils');
 var protocol    = new Protocol({ bufferSize: 262144 });
 var requireSafe = function (moduleName) {
     try {
@@ -72,6 +73,78 @@ describe('Compression limits (unit)', function () {
         bomb = lz4.encode(Buffer.alloc(100000));
         compression.maxOutputSize = 1024;
         return compression.decompress(bomb, 3).should.be.rejected;
+    });
+
+    // the largest single allocation made by fn(): a decompressor must stop near the cap,
+    // not allocate the whole output first and check it afterwards
+    function largestAllocation(fn) {
+        var spy = sinon.spy(Buffer, 'allocUnsafe');
+        return Promise.resolve().then(fn).finally(function () {
+            spy.restore();
+        }).then(function () {
+            throw new Error('expected rejection');
+        }, function (err) {
+            err.message.should.match(/maxOutputSize/);
+            return Math.max.apply(null, spy.args.map(function (a) { return a[0]; }).concat(0));
+        });
+    }
+
+    // a zstd frame written in streaming mode, as Java's producer writes them: no content size
+    // in its header (the input is fed before the frame is ended)
+    function zstdStreamed(data) {
+        var binding = require('zstd-napi/binding');
+        var cctx = new binding.CCtx(), out = Buffer.alloc(1 << 16), parts = [], src = data, r;
+        do {
+            r = cctx.compressStream2(out, src, binding.EndDirective.continue);
+            parts.push(Buffer.from(out.subarray(0, r[1])));
+            src = src.subarray(r[2]);
+        } while (src.length > 0);
+        do {
+            r = cctx.compressStream2(out, Buffer.alloc(0), binding.EndDirective.end);
+            parts.push(Buffer.from(out.subarray(0, r[1])));
+        } while (r[0] !== 0);
+        return Buffer.concat(parts);
+    }
+
+    [
+        ['zstd', 4, function (b) { return zstd.compress(b); }],
+        ['zstd (no content size)', 4, function (b) { return zstdStreamed(b); }],
+        ['lz4', 3, function (b) { return lz4.encode(b); }]
+    ].forEach(function (c) {
+        it('should stop decompressing ' + c[0] + ' near maxOutputSize instead of inflating it all', function () {
+            var bomb;
+            if (!(c[1] === 4 ? zstd : lz4)) { return this.skip(); }
+            bomb = c[2](Buffer.alloc(32 * 1024 * 1024));
+            compression.maxOutputSize = 1024 * 1024;
+            return largestAllocation(function () { return compression.decompress(bomb, c[1]); }).then(function (max) {
+                max.should.be.below(8 * 1024 * 1024); // lz4 blocks are up to 4 MB
+            });
+        });
+
+        it('should reject a truncated ' + c[0] + ' frame, and still decode the next one', function () {
+            var data = Buffer.from(require('crypto').randomBytes(256 * 1024).toString('hex')), frame;
+            if (!(c[1] === 4 ? zstd : lz4)) { return this.skip(); }
+            frame = c[2](data);
+            return compression.decompress(frame.slice(0, frame.length >> 1), c[1]).then(function () {
+                throw new Error('expected rejection');
+            }, function (err) {
+                err.message.should.not.equal('expected rejection');
+                return promiseUtils.delay(10); // an unheard decoder 'error' event would crash the process here
+            }).then(function () {
+                // a decoder left mid-frame failed every later decode in the process
+                return compression.decompress(frame, c[1]);
+            }).then(function (out) {
+                out.equals(data).should.equal(true);
+            });
+        });
+
+        it('should still decompress a whole ' + c[0] + ' frame', function () {
+            var data = Buffer.from(require('crypto').randomBytes(3 * 1024 * 1024).toString('hex'));
+            if (!(c[1] === 4 ? zstd : lz4)) { return this.skip(); }
+            return compression.decompress(c[2](data), c[1]).then(function (out) {
+                out.equals(data).should.equal(true);
+            });
+        });
     });
 
     it('should still decompress data within the limit', function () {
