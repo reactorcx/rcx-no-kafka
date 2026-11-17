@@ -226,7 +226,7 @@ export interface Result {
     topic: string;
     partition: number;
     offset?: number;
-    error?: KafkaError | NoKafkaConnectionError | Error;
+    error?: KafkaError | NoKafkaConnectionError | Error | null; // null on success, as the broker reports it
 }
 
 /**

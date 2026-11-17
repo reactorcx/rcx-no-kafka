@@ -336,16 +336,50 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
-        it('should stop waiting for a fetch that never finishes, and still close', function () {
-            var sc = makeShareConsumer(), clock = sinon.useFakeTimers(), ended;
+        it('should not wait for the handler that calls end()', function () {
+            var sc = makeShareConsumer(), ended;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([{
+                topic: 't', topicId: 'id-1', partition: 0, messageSet: [{ offset: 1, message: { value: Buffer.from('x') } }],
+                acquiredRecords: [{ firstOffset: 1, lastOffset: 1, deliveryCount: 1 }]
+            }]));
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
             sinon.stub(sc.client, 'end').returns(Promise.resolve());
-            sc._fetchPromise = new Promise(function () {}); // e.g. stuck refreshing metadata from a broken broker
+            sc._handler = function (messageSet, topic, partition) {
+                sc.acknowledge({ topic: topic, partition: partition, offset: 1 });
+                ended = sc.end(); // the fetch can't finish before this handler does
+                return ended;
+            };
 
-            ended = sc.end();
-            clock.tick(30000);
-            clock.restore();
-            return ended.then(function () {
+            sc._fetchPromise = sc._fetch();
+            return sc._fetchPromise.then(function () {
+                return ended;
+            }).then(function () {
+                sc.client.shareAcknowledgeRequest.callCount.should.equal(1); // its ack was sent, not cut off by the deadline
                 sc.client.end.callCount.should.equal(1);
+            });
+        });
+
+        it('should tag an ack with the ID of the topic its records came from', function () {
+            var sc = makeShareConsumer(), p;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sc.client.topicIds.t = 'id-new'; // metadata already knows the topic was recreated
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([{
+                topic: 't', topicId: 'id-old', partition: 0, messageSet: [{ offset: 1, message: { value: Buffer.from('x') } }],
+                acquiredRecords: [{ firstOffset: 1, lastOffset: 1, deliveryCount: 1 }]
+            }]));
+            sc._handler = function (messageSet, topic, partition) {
+                return sc.acknowledge({ topic: topic, partition: partition, offset: 1 });
+            };
+
+            p = sc._fetch();
+            sc._closed = true;
+            return p.then(function () {
+                sc._pendingAcks['t:0'].batches[0].topicId.should.equal('id-old');
             });
         });
 
@@ -368,24 +402,20 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
-        it('should wait for handlers still running before sending the final acks', function () {
-            var sc = makeShareConsumer(), finish;
+        it('should not send, and should say so, an ack made after end()', function () {
+            var sc = makeShareConsumer();
             twoLeaders(sc);
             sc.shareSessionEpochs = { 0: 4 };
             sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
             sinon.stub(sc.client, 'end').returns(Promise.resolve());
-            sc._fetchPromise = new Promise(function (resolve) { finish = resolve; }).then(function () {
-                return sc.acknowledge({ topic: 't', partition: 0, offset: 7 }); // the handler acks as it finishes
-            });
+            sinon.spy(sc.client, 'warn');
 
-            return promiseUtils.delay(0).then(function () {
-                var ended = sc.end();
-                finish();
-                return ended;
+            return sc.end().then(function () {
+                return sc.acknowledge({ topic: 't', partition: 0, offset: 7 }); // a handler still running when end() was called
             }).then(function () {
-                sc.client.shareAcknowledgeRequest.callCount.should.equal(1);
-                sc.client.shareAcknowledgeRequest.args[0][3][0][0].partitions[0].acknowledgementBatches[0].firstOffset.should.equal(7);
+                sc.client.shareAcknowledgeRequest.callCount.should.equal(0);
                 Object.keys(sc._pendingAcks).should.eql([]);
+                sc.client.warn.args.some(function (a) { return /after end\(\)/.test(a[0]); }).should.equal(true);
             });
         });
 
@@ -401,7 +431,7 @@ describe('Consumer loops (unit)', function () {
                 var args = sc.client.shareAcknowledgeRequest.args[0];
                 args[2].should.equal(-1);
                 args[3].should.eql({ 0: [{ topicName: 't', partitions: [{
-                    partitionIndex: 0, acknowledgementBatches: [{ firstOffset: 1, lastOffset: 1, acknowledgeTypes: [1] }]
+                    partitionIndex: 0, acknowledgementBatches: [{ firstOffset: 1, lastOffset: 1, acknowledgeTypes: [1], topicId: undefined }]
                 }] }] });
                 sc.client.end.callCount.should.equal(1);
             });

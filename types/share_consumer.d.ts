@@ -52,5 +52,10 @@ export class ShareConsumer {
 
     init(options: ShareConsumerInitOptions): Promise<void>;
     acknowledge(records: AcknowledgeRecord | AcknowledgeRecord[], type?: ACKNOWLEDGE_TYPE): Promise<void>;
+    /**
+      * Sends the acknowledgements made so far, leaves the group and closes (30 s at most). Handlers
+      * still running are not waited for: what they acknowledge afterwards is not sent, and their
+      * records are redelivered.
+      */
     end(): Promise<void>;
 }

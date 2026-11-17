@@ -57,6 +57,21 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should read a value given as a file URL', function () {
+            var caPath = path.join(__dirname, './ssl/client.crt');
+            var c = new Kafka.Producer({
+                connectionString: 'kafka://127.0.0.1:9093',
+                ssl: { ca: require('url').pathToFileURL(caPath) }
+            }).client;
+
+            sinon.stub(c, 'apiVersionsRequest').returns(Promise.resolve({}));
+            sinon.stub(c, 'updateMetadata').returns(Promise.resolve());
+
+            return c.init().then(function () {
+                c.options.ssl.ca.toString().should.match(/^-----BEGIN CERTIFICATE-----/);
+            });
+        });
+
         it('should not put a key that is not PEM text in the error', function () {
             var key = 'TUlJRXZRSUJBREFOQmdrcWhraUc5dzBCQVFFRkFBU0NCS2N3Z2dTakFnRUFBb0lCQVFD'; // base64, no PEM armour
             var c = new Kafka.Producer({
@@ -365,6 +380,32 @@ describe('Client (unit)', function () {
                 return promiseUtils.delay(0);
             }).then(function () {
                 newConn.close.callCount.should.equal(0);
+            });
+        });
+
+        [
+            ['ShareFetch', 'ShareFetchRequestV1', function (c, acks) {
+                return c.shareFetchRequest('g', 'm', { 0: 2 }, { 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] }, null, acks);
+            }, function (acks) { return acks.t; }],
+            ['ShareAcknowledge', 'ShareAcknowledgeRequestV1', function (c, acks) {
+                return c.shareAcknowledgeRequest('g', 'm', -1, { 0: [{ topicName: 't', partitions: [{ partitionIndex: 0, acknowledgementBatches: acks.t[0] }] }] });
+            }]
+        ].forEach(function (r) {
+            it('should not send ' + r[0] + ' acks for a topic since recreated under another ID', function () {
+                var c = makeClient(), writer = c.protocol.write(), sent;
+                var acks = { t: { 0: [
+                    { firstOffset: 1, lastOffset: 1, acknowledgeTypes: [1], topicId: 'id-old' },
+                    { firstOffset: 2, lastOffset: 2, acknowledgeTypes: [1], topicId: 'id-new' }
+                ] } };
+                c.topicIds.t = 'id-new';
+                c.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
+                sinon.spy(writer, r[1]);
+
+                return r[2](c, acks).catch(function () { return null; }).then(function () {
+                    sent = writer[r[1]].args[0][0].topics[0].partitions[0].acknowledgementBatches;
+                    writer[r[1]].restore();
+                    sent.map(function (b) { return b.firstOffset; }).should.eql([2]);
+                });
             });
         });
 

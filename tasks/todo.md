@@ -567,7 +567,18 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
         fetch wait, final acks and leave heartbeat.
   - [x] P2 Structured TLS values (`key: [{ pem, passphrase }]`, arrays of CAs) were read as file
         paths; worked before 2.2. Only a string or Buffer without PEM text is read as a file now.
-- Verification: unit tests 31-39: 199 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 2 (switched to gpt-6.2-sol, xhigh, at the user's request):
+  - [x] P1 A queued share ack was matched to a topic by name, so after a delete and recreate it
+        could be applied to the new topic's records at the same offset. Acks now carry the ID of
+        the topic their records came from; ShareFetch and ShareAcknowledge drop those for an ID
+        that is no longer the topic's.
+  - [x] P2 A handler calling `end()` waited the full 30 s for its own fetch, and the deadline cut
+        off the final acks. `end()` no longer waits for running handlers (as Java's close): acks
+        made so far are sent, a later `acknowledge()` is logged and not queued, and the epoch -1
+        request releases the rest for redelivery.
+  - [x] P2 File URLs (`ssl.ca: new URL(...)`) were passed to tls as is since round 1; read again.
+  - [x] P3 `Result.error` is `null` on success: typed.
+- Verification: unit tests 31-39: 203 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
