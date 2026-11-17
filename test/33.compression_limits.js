@@ -117,7 +117,7 @@ describe('Compression limits (unit)', function () {
             bomb = c[2](Buffer.alloc(32 * 1024 * 1024));
             compression.maxOutputSize = 1024 * 1024;
             return largestAllocation(function () { return compression.decompress(bomb, c[1]); }).then(function (max) {
-                max.should.be.below(8 * 1024 * 1024); // lz4 blocks are up to 4 MB
+                max.should.be.at.most(8 * 1024 * 1024); // lz4: two 4 MB blocks per output buffer, not the 32 MB
             });
         });
 
@@ -144,6 +144,73 @@ describe('Compression limits (unit)', function () {
             return compression.decompress(c[2](data), c[1]).then(function (out) {
                 out.equals(data).should.equal(true);
             });
+        });
+    });
+
+    // the bytes Buffer.alloc/allocUnsafe hand out while fn() runs
+    function bytesAllocated(fn) {
+        var a = sinon.spy(Buffer, 'alloc'), u = sinon.spy(Buffer, 'allocUnsafe');
+        function sum(spy) { return spy.args.reduce(function (s, x) { return s + x[0]; }, 0); }
+        return Promise.resolve().then(fn).finally(function () {
+            a.restore();
+            u.restore();
+        }).then(function (out) {
+            return { out: out, bytes: sum(a) + sum(u) };
+        });
+    }
+
+    it('should not allocate per zstd frame when a batch holds many tiny frames', function () {
+        var frames = [], i;
+        if (!zstd) { return this.skip(); }
+        for (i = 0; i < 2000; i++) { frames.push(zstd.compress(Buffer.from('A'))); }
+        return bytesAllocated(function () { return compression.decompress(Buffer.concat(frames), 4); }).then(function (r) {
+            r.out.equals(Buffer.alloc(2000, 'A')).should.equal(true);
+            r.bytes.should.be.below(1024 * 1024); // a 128 KB buffer per frame was 256 MB
+        });
+    });
+
+    function lz4Frame(blockMaxByte, blocks) { // FLG 0x60: version 1, independent blocks, no checksums
+        var header = Buffer.from([0x04, 0x22, 0x4d, 0x18, 0x60, blockMaxByte, 0]);
+        header[6] = lz4.utils.descriptorChecksum(header.slice(4, 6));
+        return Buffer.concat([header].concat(blocks).concat([Buffer.alloc(4)]));
+    }
+
+    it('should not allocate per lz4 block when a frame holds many tiny blocks', function () {
+        var blocks = [], i;
+        if (!lz4) { return this.skip(); }
+        for (i = 0; i < 2000; i++) { blocks.push(Buffer.from('020000001041', 'hex')); } // 2-byte block decoding to 'A'
+        return bytesAllocated(function () { return compression.decompress(lz4Frame(0x70, blocks), 3); }).then(function (r) {
+            r.out.equals(Buffer.alloc(2000, 'A')).should.equal(true);
+            r.bytes.should.be.below(16 * 1024 * 1024); // a 4 MB buffer per block was 8 GB
+        });
+    });
+
+    it('should decode an lz4 frame with an uncompressed block', function () {
+        var payload = Buffer.from('incompressible'), size = Buffer.alloc(4);
+        if (!lz4) { return this.skip(); }
+        size.writeUInt32LE((0x80000000 | payload.length) >>> 0, 0);
+        return compression.decompress(lz4Frame(0x40, [size, payload]), 3).then(function (out) {
+            out.equals(payload).should.equal(true);
+        });
+    });
+
+    it('should reject lz4 skippable frames and bad checksums', function () {
+        var frame, corrupt;
+        if (!lz4) { return this.skip(); }
+        frame = lz4.encode(Buffer.alloc(1000, 'q')); // content checksum on
+        corrupt = Buffer.from(frame);
+        corrupt[corrupt.length - 2] ^= 1;
+        return Promise.all([
+            // the module's decoder looped forever on these 9 bytes, alone or after a frame
+            compression.decompress(Buffer.from('502A4D1801000000AA', 'hex'), 3),
+            compression.decompress(Buffer.concat([frame, Buffer.from('502A4D1801000000AA', 'hex')]), 3),
+            compression.decompress(corrupt, 3)
+        ].map(function (p) {
+            return p.then(function () { return 'resolved'; }, function (err) { return err.message; });
+        })).then(function (r) {
+            r[0].should.match(/Not an LZ4 frame/);
+            r[1].should.match(/Not an LZ4 frame/);
+            r[2].should.match(/checksum/);
         });
     });
 
