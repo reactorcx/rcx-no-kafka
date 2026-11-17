@@ -349,6 +349,25 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should close within the deadline when the final acks never get an answer', function () {
+            var sc = makeShareConsumer(), clock = sinon.useFakeTimers(), ended;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 };
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(new Promise(function () {})); // waits on a stuck refresh
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            ended = sc.end();
+            return Promise.resolve().then(function () {
+                clock.tick(30000);
+                clock.restore();
+                return ended;
+            }).then(function () {
+                sc.client.shareAcknowledgeRequest.callCount.should.equal(1);
+                sc.client.end.callCount.should.equal(1);
+            });
+        });
+
         it('should wait for handlers still running before sending the final acks', function () {
             var sc = makeShareConsumer(), finish;
             twoLeaders(sc);

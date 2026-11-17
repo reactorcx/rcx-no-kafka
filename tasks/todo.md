@@ -561,7 +561,13 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - Security, low: `ShareConsumer.end()` could wait forever on a fetch stuck refreshing metadata
     (now 30 s at most, Java's default close timeout); a non-PEM SSL key (base64, DER) still landed
     in the read error (now replaced by one that names only `ssl.key` and the error code).
-- Verification: unit tests 31-39: 197 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review (gpt-6.1-sol, xhigh), round 1:
+  - [x] P2 The 30 s bound covered only the fetch wait: the final acks then waited on the same
+        stuck metadata refresh, so `client.end()` was never reached. One deadline now covers the
+        fetch wait, final acks and leave heartbeat.
+  - [x] P2 Structured TLS values (`key: [{ pem, passphrase }]`, arrays of CAs) were read as file
+        paths; worked before 2.2. Only a string or Buffer without PEM text is read as a file now.
+- Verification: unit tests 31-39: 199 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

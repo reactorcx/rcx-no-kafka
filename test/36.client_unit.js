@@ -38,6 +38,25 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should hand structured TLS values (arrays, { pem, passphrase }) to tls unchanged', function () {
+            var fs = require('fs');
+            var cert = fs.readFileSync(path.join(__dirname, './ssl/client.crt'), 'utf8');
+            var key = [{ pem: fs.readFileSync(path.join(__dirname, './ssl/client.key'), 'utf8'), passphrase: 'secret' }];
+            var ca = [cert, Buffer.from(cert)];
+            var c = new Kafka.Producer({
+                connectionString: 'kafka://127.0.0.1:9093',
+                ssl: { cert: cert, key: key, ca: ca }
+            }).client;
+
+            sinon.stub(c, 'apiVersionsRequest').returns(Promise.resolve({}));
+            sinon.stub(c, 'updateMetadata').returns(Promise.resolve());
+
+            return c.init().then(function () {
+                c.options.ssl.key.should.equal(key);
+                c.options.ssl.ca.should.equal(ca);
+            });
+        });
+
         it('should not put a key that is not PEM text in the error', function () {
             var key = 'TUlJRXZRSUJBREFOQmdrcWhraUc5dzBCQVFFRkFBU0NCS2N3Z2dTakFnRUFBb0lCQVFD'; // base64, no PEM armour
             var c = new Kafka.Producer({
