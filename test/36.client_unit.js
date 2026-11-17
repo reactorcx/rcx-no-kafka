@@ -199,6 +199,28 @@ describe('Client (unit)', function () {
         });
     });
 
+    describe('topic-level metadata errors', function () {
+        it('should not cache a topic that came back with an error (first send to an auto-created topic)', function () {
+            var p = new Kafka.Producer({ clientId: 'client-unit' });
+            var c = p.client, calls = 0;
+
+            sinon.stub(c, 'metadataRequest').callsFake(function () {
+                var topic = ++calls === 1
+                    ? { error: errors.byName('LeaderNotAvailable'), topicName: 't', partitionMetadata: [] } // still being created
+                    : { error: null, topicName: 't', partitionMetadata: [{ error: null, partitionId: 0, leader: 0 }] };
+                return Promise.resolve({ broker: [{ nodeId: 0, host: 'h', port: 1 }], topicMetadata: [topic] });
+            });
+            sinon.stub(c, 'apiVersionsRequest').returns(Promise.resolve({}));
+            sinon.stub(c, 'produceRequest').callsFake(function (requests) {
+                return Promise.resolve(requests.map(function (r) { return { topic: r.topic, partition: r.partition, offset: 0 }; }));
+            });
+
+            return p.send({ topic: 't', message: { value: 'x' } }, { retries: { attempts: 3, delay: { min: 1, max: 2 } } }).then(function (r) {
+                r.should.eql([{ topic: 't', partition: 0, offset: 0 }]);
+            });
+        });
+    });
+
     describe('findLeader', function () {
         it('should report a known partition with no leader as LeaderNotAvailable (retriable)', function () {
             var c = makeClient();

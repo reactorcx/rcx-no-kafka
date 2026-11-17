@@ -306,7 +306,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
 - [x] 2.5 **[read]** `_waitMetadata` returns the in-flight refresh (`lib/client.js:393-399`) and 11
       request paths start with it, so one failed refresh rejects unrelated requests.
       Fix: `.catch(function () { return null; })` there. Before 2.11a.
-- [ ] 2.6 Topic-level metadata errors are cached as zero partitions (`lib/client.js:352-364`): the
+- [x] 2.6 Topic-level metadata errors are cached as zero partitions (`lib/client.js:352-364`): the
       partitioner returns NaN, which is never recomputed (`typeof NaN === 'number'`,
       `producer.js:179`; this also breaks the first send to an auto-created topic), and
       `subscribe()` resolves with nothing. Fix: don't cache an errored topic, log its error (it
