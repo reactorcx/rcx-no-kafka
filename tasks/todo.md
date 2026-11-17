@@ -585,11 +585,30 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 `client.end()` waited for a coordinator lookup to resolve before closing its socket:
         one waiting on a silent broker's ApiVersions reply held `end()` for `requestTimeout`
         (pre-existing). A lookup records its connection as soon as it is created.
-  - [ ] P1 An ack made after the next delivery for its partition is tagged with that delivery's
-        topic ID, so across a topic recreation it can accept a new record. Needs a decision.
-  - [ ] P2 Acks kept for a revoked partition can overlap fresh acks if it is reacquired; the
-        broker rejects the overlapping batches. Needs a decision.
-- Verification: unit tests 31-39: 205 pass; eslint 0 errors (7 pre-existing warnings); tsc
+  - [x] P1 An ack made after the next delivery for its partition was tagged with that delivery's
+        topic ID, so across a topic recreation it could accept a new record. Decision (2026-11-17):
+        Java's rule, `acknowledge()` takes only records from the partition's latest delivery;
+        others are logged and redelivered.
+  - [x] P2 Acks kept for a revoked partition could overlap fresh acks if it was reacquired (the
+        broker rejects overlapping batches). A delivery now drops queued acks for the offsets it
+        delivers again; the rest are kept.
+- Codex review round 4 (gpt-6.2-sol, xhigh, Fast mode from here on, at the user's request):
+  - [x] P2 An idempotent batch with stamped sequences was retried into a recreated topic
+        (UnknownTopicId, retriable since 2.7b), where it fails OutOfOrderSequenceNumber. Such a
+        batch now fails, metadata is refreshed, and the next send starts a fresh sequence space.
+  - [x] P2 `shareAcknowledgeRequest` rejected as a whole on one broker's failure, so `end()` moved
+        on while other brokers' final acks were still in flight. Failures are per broker now.
+  - [x] P2 Concurrent `end()` calls share one shutdown.
+  - [x] P2 A redelivery dropped whole queued range acks; only the redelivered offsets are now.
+  - [x] P2 A delivery's acquired ranges are copied (a handler may change its array), merged once,
+        and binary-searched (5,000 ranges: ~280 ms per call before) (also P3).
+  - [x] P2 A fetch waiting on a metadata refresh when `end()` ran still sent its request and
+        handed out records; nothing is fetched or delivered after `end()` now.
+  - [x] P2 `end()` closes every open share session (epoch -1), acks or not, so records a handler
+        is still working on are released at once, not when their locks expire.
+  - [ ] P1 A deferred ack still can't be told from one for records delivered since from a
+        recreated topic at the same offset (acks are `{topic, partition, offset}`). Needs a decision.
+- Verification: unit tests 31-39: 217 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
