@@ -699,6 +699,8 @@ var producer = new Kafka.Producer({
 });
 ```
 
+Each of `cert`, `key` and `ca` is used as is when it contains `-----BEGIN `, and read as a file path otherwise, so a file cert can be combined with an inline key.
+
 To use TLS with a broker certificate signed by a publicly-trusted CA (no client certificate, no custom CA), explicitly enable TLS — it never silently falls back to plaintext:
 
 ```javascript

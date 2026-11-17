@@ -290,7 +290,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
       `constructor` makes every fetch throw, so the consumer fetches nothing),
       `lib/group_consumer.js:147` (the group never stabilises), and `lib/share_consumer.js` fetch
       `retry`, `_buildFetchRequests` and `_drainPendingAcks` (writes `Object.prototype[partition]`).
-- [ ] 2.2 **[R]** If `ssl.cert` isn't PEM text, cert and key are both read as files
+- [x] 2.2 **[R]** If `ssl.cert` isn't PEM text, cert and key are both read as files
       (`lib/client.js:126-137`), so a PEM key lands in the ENOENT message and `err.path`.
       Fix: decide per value, with an unanchored PEM test (a template-literal PEM starts with `\n`).
 - [ ] 2.3 **[R]** `Buffer(key)` on a numeric key allocates that many zero bytes

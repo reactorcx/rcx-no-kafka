@@ -37,6 +37,23 @@ describe('Client (unit)', function () {
                 String(err.message || err).should.match(/ENOENT/);
             });
         });
+
+        it('should read only the values that are file paths, never a PEM key', function () {
+            var certPath = path.join(__dirname, './ssl/client.crt');
+            var key = '\n-----BEGIN PRIVATE KEY-----\nc2VjcmV0\n-----END PRIVATE KEY-----\n'; // template-literal style
+            var c = new Kafka.Producer({
+                connectionString: 'kafka://127.0.0.1:9093',
+                ssl: { cert: certPath, key: key }
+            }).client;
+
+            sinon.stub(c, 'apiVersionsRequest').returns(Promise.resolve({}));
+            sinon.stub(c, 'updateMetadata').returns(Promise.resolve());
+
+            return c.init().then(function () {
+                c.options.ssl.cert.toString().should.match(/^-----BEGIN CERTIFICATE-----/);
+                c.options.ssl.key.should.equal(key);
+            });
+        });
     });
 
     describe('apiVersionsRequest failure handling', function () {
