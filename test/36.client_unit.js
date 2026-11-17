@@ -219,6 +219,24 @@ describe('Client (unit)', function () {
                 r.should.eql([{ topic: 't', partition: 0, offset: 0 }]);
             });
         });
+
+        [12, 13].forEach(function (v) {
+            it('should ask Metadata v' + v + ' by name, never by a cached topic ID (stale once the topic is recreated)', function () {
+                var c = makeClient();
+                var expected;
+
+                c.initialBrokers = [{ apiVersions: { 3: { min: 0, max: v } } }];
+                c.topicIds.A = '550e8400-e29b-41d4-a716-446655440000';
+                sinon.stub(c, '_sendToAnyBroker').returns(Promise.resolve({}));
+
+                expected = Buffer.from(c.protocol.write()['MetadataRequestV' + v]({
+                    correlationId: c.correlationId, clientId: c.options.clientId, topicNames: [{ topicId: null, name: 'A' }]
+                }).result);
+                return c.metadataRequest(['A']).then(function () {
+                    c._sendToAnyBroker.args[0][1].equals(expected).should.equal(true);
+                });
+            });
+        });
     });
 
     describe('findLeader', function () {

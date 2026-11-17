@@ -312,7 +312,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
       `subscribe()` resolves with nothing. Fix: don't cache an errored topic, log its error (it
       surfaces as UnknownTopicOrPartition, hiding e.g. TopicAuthorizationFailed).
 - [ ] 2.7 A deleted and recreated topic stays broken until restart:
-  - [ ] a. Metadata v12+ sends cached topic IDs (`lib/client.js:463-480`); any non-zero ID makes the
+  - [x] a. Metadata v12+ sends cached topic IDs (`lib/client.js:463-480`); any non-zero ID makes the
         broker ignore names (`KafkaApis.scala:889-903`), so the stale ID gets UNKNOWN_TOPIC_ID and
         named-only topics in the same request are dropped (a group leader refreshing `[cached A,
         new B]` never sees B). Fix: ask by name only, as Java does for explicit topics; remove the
