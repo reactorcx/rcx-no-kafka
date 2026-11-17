@@ -241,6 +241,13 @@ PR #6 review of 586a588 (2026-11-17):
         gone through: a retried commit duplicates the output, and the next V1 transaction's sends
         reused the gapped sequences. Commit and abort now resolve and log it; `_needsReinit`
         stays set and a transaction's first send re-initializes while nothing is registered yet.
+- Codex review (gpt-6.1-sol, xhigh), round 1:
+  - [x] P2 A `send()` rejected for a bad topic (validated per call since 4a1ac1d) didn't fail its
+        transaction, so the commit published the rest; the base refused it. It sets `_txnFailed`
+        now, as Java's `doSend` does.
+  - [x] P2 A transaction starting with `sendOffsets()` registered the offsets before the owed
+        re-init, so its sends reused the gapped sequences. With a re-init owed, `sendOffsets()`
+        queues it on `_sendChain` and registers only after it ran.
 - Verification: each new test fails on 586a588 (4); removing any of the 10 new pieces fails a
   test; the CRC check moved after the drop fails the new decode test; live on 3.9.2 and 4.2.0
   with the commit response dropped: 586a588's abort resolves after the commit went through, the

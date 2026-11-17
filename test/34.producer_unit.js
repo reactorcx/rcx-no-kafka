@@ -690,8 +690,9 @@ describe('Producer (unit)', function () {
             });
         });
 
-        [true, false].forEach(function (committed) {
-            it('should not fail a ' + (committed ? 'commit' : 'abort') + ' that went through when re-initializing then fails', function () {
+        [[true, 'send'], [false, 'send'], [false, 'sendOffsets']].forEach(function (c) {
+            var committed = c[0], first = c[1];
+            it('should not fail ' + (committed ? 'a commit' : 'an abort') + ' that went through when re-initializing then fails (next: ' + first + ' first)', function () {
                 var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-reinit-fail', batch: { maxWait: 0 }, logger: { logLevel: 0 } });
                 var inits = 0, seqs = [];
                 p.client.producerId = 1;
@@ -709,19 +710,28 @@ describe('Producer (unit)', function () {
                         return { topic: r.topic, partition: r.partition, error: null, offset: 0 };
                     }));
                 });
+                sinon.stub(p.client, 'addOffsetsToTxnRequest').callsFake(function (id, pid, epoch) {
+                    seqs.push(['offsets', epoch]);
+                    return Promise.resolve();
+                });
+                sinon.stub(p.client, 'txnOffsetCommitRequest').returns(Promise.resolve());
 
                 p.beginTransaction();
                 p._txnPartitions = { 't:0': true };
                 p.sequenceNumbers = { 't:0': 3 };
                 p._needsReinit = true; // a send in it failed
                 return (committed ? p.commitTransaction() : p.abortTransaction()).then(function () {
+                    var offsets;
                     p._inTransaction.should.equal(false);
                     p._needsReinit.should.equal(true); // still owed
                     p.beginTransaction();
-                    return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
+                    if (first === 'sendOffsets') {
+                        offsets = p.sendOffsets([{ topic: 'in', partition: 0, offset: 5 }], 'g');
+                    }
+                    return Promise.all([p.send({ topic: 't', partition: 0, message: { value: 'b' } }), offsets]);
                 }).then(function () {
                     inits.should.equal(2); // before the next transaction registered anything
-                    seqs.should.eql([[1, 0]]);
+                    seqs.should.eql(first === 'sendOffsets' ? [['offsets', 1], [1, 0]] : [[1, 0]]);
                 });
             });
         });
@@ -810,6 +820,30 @@ describe('Producer (unit)', function () {
             return Promise.all([commit, late]).then(function () {
                 p.client.produceRequest.callCount.should.equal(0);
                 return late;
+            });
+        });
+
+        it('should refuse to commit after a send with a bad topic in the transaction', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-bad-topic', batch: { maxWait: 0 } });
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p._transactionV2 = true;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').callsFake(okResponse);
+            sinon.stub(p.client, 'endTxnRequest').returns(Promise.resolve());
+
+            p.beginTransaction();
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function () {
+                return p.send({ topic: '', partition: 0, message: { value: 'b' } }).then(function () {
+                    throw new Error('expected the bad send to reject');
+                }, function (err) { err.message.should.match(/topic/); });
+            }).then(function () {
+                return p.commitTransaction();
+            }).then(function () {
+                throw new Error('expected commitTransaction to reject');
+            }, function (err) {
+                err.message.should.match(/abortTransaction/);
+                p.client.endTxnRequest.callCount.should.equal(0);
             });
         });
 
