@@ -57,6 +57,19 @@ describe('Client (unit)', function () {
     });
 
     describe('legacy MessageSet compression', function () {
+        it('should give the inner messages of a LogAppendTime wrapper its timestamp', function () {
+            var c = makeClient();
+            var inner = Buffer.from(c.protocol.write().MessageSet([
+                { offset: 0, message: { value: Buffer.from('a') } },
+                { offset: 1, message: { value: Buffer.from('b') } }
+            ]).result);
+            var wrapper = { magicByte: 1, timestamp: 5e12, attributes: { _raw: 0x09, codec: 1 }, value: require('zlib').gzipSync(inner) };
+
+            return c._decompressMessageSet(wrapper).then(function (messages) {
+                messages.map(function (m) { return m.message.timestamp; }).should.eql([5e12, 5e12]);
+            });
+        });
+
         [1, 2].forEach(function (codec) { // gzip, snappy: their async compressors read the input later
             it('should compress each MessageSet from its own bytes, not the shared writer buffer (codec ' + codec + ')', function () {
                 var c = new Kafka.Producer({ clientId: 'client-unit', asyncCompression: true }).client;
