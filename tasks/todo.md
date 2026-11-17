@@ -311,7 +311,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
       `producer.js:179`; this also breaks the first send to an auto-created topic), and
       `subscribe()` resolves with nothing. Fix: don't cache an errored topic, log its error (it
       surfaces as UnknownTopicOrPartition, hiding e.g. TopicAuthorizationFailed).
-- [ ] 2.7 A deleted and recreated topic stays broken until restart:
+- [x] 2.7 A deleted and recreated topic stays broken until restart:
   - [x] a. Metadata v12+ sends cached topic IDs (`lib/client.js:463-480`); any non-zero ID makes the
         broker ignore names (`KafkaApis.scala:889-903`), so the stale ID gets UNKNOWN_TOPIC_ID and
         named-only topics in the same request are dropped (a group leader refreshing `[cached A,
@@ -323,7 +323,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
         `base_consumer.js:164`.)
   - [x] c. `ShareConsumer._partitionError` (`share_consumer.js:425`) doesn't refresh on either.
   Live check on 4.2.0: delete and recreate a topic under a running producer and consumer.
-- [ ] 2.8 Coordinators:
+- [x] 2.8 Coordinators:
   - [x] a. Never invalidated: `txnOffsetCommitRequest` (`client.js:2658`), GroupAdmin, InitProducerId
         on the transaction coordinator (`:2391`), and `describeGroupRequest`, whose NotCoordinator
         is inside `groups[0].error` (`:2155`). Fix: one helper for "coordinator error or lost
@@ -332,7 +332,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
         (`:2524, 2582, 2649`). Fix: the helper calls `updateTransactionCoordinator` (no callers yet).
   - [x] c. `_find*Coordinator`'s failure path deletes the cache entry unconditionally
         (`:1599, 2470, 2867`), possibly a newer one. Fix: delete only if it is still its own promise.
-- [ ] 2.9 ShareConsumer:
+- [x] 2.9 ShareConsumer:
   - [x] a. Records outside `acquiredRecords` are delivered (`client.js:3039` trims the ranges to
         the decoded batches, not the records to the ranges; noted, not fixed, at the PR #5 review).
         Fix: filter each record to the acquired ranges, as Java's `ShareCompletedFetch` does.
@@ -348,7 +348,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
         (`share_consumer.js:383`). Fix: refresh metadata (by name, so after 2.7a) for assigned
         topics it lacks.
   Live check: acks queued before `end()` are applied.
-- [ ] 2.10 GroupConsumer:
+- [x] 2.10 GroupConsumer:
   - [x] a. `end()` skips `BaseConsumer.end()` when LeaveGroup rejects
         (`group_consumer.js:403-406`), leaving sockets and timers. Fix: catch and warn as
         `ShareConsumer.end()` does; skip LeaveGroup when `memberId` is null (as `:320` does).
@@ -356,7 +356,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
         571, 603`): a throw fails the rebalance and the consumer rejoins over and over (at `:561` it
         also skips `_needsRejoin` and `ownedPartitions`); a rejecting async callback is an unhandled
         rejection. Fix: one helper that logs both.
-- [ ] 2.11 Protocol:
+- [x] 2.11 Protocol:
   - [x] a. MetadataResponse v13's top-level ErrorCode (last field, after Topics) isn't read
         (`lib/protocol/metadata.js:506`; the comment at `:489` has its position wrong). Read it and
         fail the refresh before the broker list is replaced (`client.js:333`). Java acts only on
@@ -519,3 +519,52 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   is being committed or aborted"); the outside-a-transaction check no longer repeats it, and
   "should reject a send made while the transaction is being committed" expects the new message.
   `task.data.flat()` was already here.
+
+### Phase 2 (2026-11-17), branch `fix-audit-phase2` (stacked on PR #6)
+
+- One commit per item (2.1-2.13, 2.15), each with a broker-free test written first and seen
+  failing; 2.14 moved to Phase 3 (3.11) and documented in the README. Decisions: numeric keys
+  move partition (CHANGELOG, README `hashKey` override that keeps the old mapping, checked to
+  give the old partitions); a Metadata v13 top-level error fails the refresh.
+- Plan reviewed first by a Fable 5.2 agent (xhigh): one "already fixed" claim was wrong (share
+  records outside `acquiredRecords`, now 2.9a), two problems were not real here (2.11e, 2.8's
+  ApiVersions leak), and several missed sites were added (2.15 base_consumer, CRC32 partitioner,
+  four coordinator paths, async rebalance callbacks, the lz4 truncated-frame crash).
+- Found while fixing: the 150k-send test first ran out of heap because its stub returned one
+  result per message (real produce returns one per partition); 40k sends take 96 ms, linear.
+  zstd-napi's shared decoder, left mid-frame by a truncated batch, failed every later zstd decode
+  in the process (now reset after each call). lz4 can't decode concatenated frames, before or
+  after (Kafka writes one per batch).
+- Review (security, maintainability, style subagents):
+  - High: ShareGroupHeartbeat never dropped a moved coordinator (a 2.8 sibling). Fixed.
+  - Medium: a late failure on an old coordinator dropped and closed its replacement; invalidation
+    now names the connection the request used. `ShareConsumer.end()` didn't wait for running
+    handlers, losing their acks. Rebalance callbacks lost `this`. All fixed with tests.
+  - Low, fixed: an extra zstd allocation per sized frame (+37% on 1 KB batches); `_fetch`
+    starting outside its promise chain; LogAppendTime on legacy compressed wrappers; CRC32
+    partitioner docs; CHANGELOG notes for `subscribe()` now rejecting on an errored topic and
+    by-name metadata re-creating a deleted topic when auto-creation is on.
+  - Low, accepted: a topic's real metadata error (e.g. TopicAuthorizationFailed) still surfaces
+    as UnknownTopicOrPartition, as before 2.6, and is logged on each refresh. Acks for a partition
+    revoked before a fetch can carry them are only sent on `end()` (by then their locks have
+    usually expired and the records are redelivered: at-least-once, as before but no longer
+    silent). Sending them earlier needs a ShareAcknowledge racing the fetch's session epoch.
+  - Style: two doc fixes (stacked JSDoc, CHANGELOG format).
+  - Security, three high (all reachable from a fetched batch; reproduced here first):
+    - lz4: the lz4 module's stream decoder loops forever on a 9-byte skippable frame, and
+      zero-fills a block-size buffer (up to 4 MB) per block, so 64 KB of 1-byte blocks took
+      5.8 s and 4.4 GB. Both pre-date Phase 2. lz4 frames are now parsed here and blocks decoded
+      with the module's native `decodeBlock` (skippable frames rejected; checksums checked as
+      before): 1 ms and 12 ms / 53 MB, and lz4 decode got 2-16x faster.
+    - zstd: 9dc7708 kept a 128 KB buffer per frame (each frame ends a decode call), so 1 MB of
+      10-byte frames took 2.8 s and 1.7 GB; one buffer at an offset now: 57 ms / 56 MB.
+  - Security, low: `ShareConsumer.end()` could wait forever on a fetch stuck refreshing metadata
+    (now 30 s at most, Java's default close timeout); a non-PEM SSL key (base64, DER) still landed
+    in the read error (now replaced by one that names only `ssl.key` and the error code).
+- Verification: unit tests 31-39: 197 pass; eslint 0 errors (7 pre-existing warnings); tsc
+  passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
+  suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
+  delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
+  consumed; now 10/10 sent and consumed); share acks queued at `end()` (Phase 1: all 3 records
+  redelivered to the next member; now none). 1 GiB bombs, peak RSS: zstd 1.1-2.2 GB -> 49-188 MB,
+  lz4 2.2 GB -> 194 MB; zstd and lz4 decode speed unchanged.
