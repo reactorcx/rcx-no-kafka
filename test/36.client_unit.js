@@ -197,6 +197,81 @@ describe('Client (unit)', function () {
             should.not.exist(c.groupCoordinators.g);
             return u;
         });
+
+        function lostConn() {
+            var conn = fakeConn('coord:1', function () {
+                return Promise.reject(new errors.NoKafkaConnectionError('coord:1', 'down'));
+            });
+            conn.close = sinon.spy();
+            return conn;
+        }
+
+        function rejected(p) {
+            return p.then(function () { throw new Error('expected rejection'); }, function (err) { return err; });
+        }
+
+        it('should drop and close the group coordinator when TxnOffsetCommit loses it', function () {
+            var c = makeClient(), conn = lostConn();
+            c.groupCoordinators.g = Promise.resolve(conn);
+
+            return rejected(c.txnOffsetCommitRequest('tx', 'g', 1, 0, [{ topic: 't', partition: 0, offset: 1 }])).then(function () {
+                should.not.exist(c.groupCoordinators.g);
+                return promiseUtils.delay(0);
+            }).then(function () {
+                conn.close.callCount.should.equal(1);
+            });
+        });
+
+        it('should drop the group coordinator when OffsetFetch loses it (GroupAdmin.fetchConsumerLag)', function () {
+            var c = makeClient(), conn = lostConn();
+            c.groupCoordinators.g = Promise.resolve(conn);
+
+            return rejected(c.offsetFetchRequestV1('g', [{ topicName: 't', partitions: [0] }])).then(function () {
+                should.not.exist(c.groupCoordinators.g);
+            });
+        });
+
+        it('should drop the group coordinator when DescribeGroups answers NotCoordinatorForGroup', function () {
+            var c = makeClient();
+            var conn = fakeConn('coord:1', function () { return Promise.resolve(Buffer.alloc(0)); });
+            c.groupCoordinators.g = Promise.resolve(conn);
+            sinon.stub(c.protocol, 'read').returns({
+                DescribeGroupResponse: function () { return { result: { groups: [{ error: errors.byName('NotCoordinatorForGroup'), groupId: 'g' }] } }; }
+            });
+
+            return c.describeGroupRequest('g').then(function (group) {
+                group.error.code.should.equal('NotCoordinatorForGroup'); // still returned to the caller
+                should.not.exist(c.groupCoordinators.g);
+            });
+        });
+
+        it('should close the transaction coordinator it drops after an error', function () {
+            var c = makeClient(), conn = lostConn();
+            c.transactionCoordinators.tx = Promise.resolve(conn);
+
+            return rejected(c.endTxnRequest('tx', 1, 0, true)).then(function () {
+                should.not.exist(c.transactionCoordinators.tx);
+                return promiseUtils.delay(0);
+            }).then(function () {
+                conn.close.callCount.should.equal(1);
+            });
+        });
+
+        it('should not drop a newer coordinator entry when an older lookup fails', function () {
+            var c = makeClient();
+            var lookup, newer = Promise.resolve(fakeConn('new:1'));
+
+            sinon.stub(c, '_sendToAnyBroker').returns(promiseUtils.delay(5).then(function () {
+                throw errors.byName('GroupCoordinatorNotAvailable');
+            }));
+            lookup = rejected(c._findGroupCoordinator('g'));
+            c.updateGroupCoordinator('g');
+            c.groupCoordinators.g = newer; // a request after the invalidation started its own lookup
+
+            return lookup.then(function () {
+                c.groupCoordinators.g.should.equal(newer);
+            });
+        });
     });
 
     describe('topic-level metadata errors', function () {

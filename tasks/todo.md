@@ -324,13 +324,13 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
   - [x] c. `ShareConsumer._partitionError` (`share_consumer.js:425`) doesn't refresh on either.
   Live check on 4.2.0: delete and recreate a topic under a running producer and consumer.
 - [ ] 2.8 Coordinators:
-  - [ ] a. Never invalidated: `txnOffsetCommitRequest` (`client.js:2658`), GroupAdmin, InitProducerId
+  - [x] a. Never invalidated: `txnOffsetCommitRequest` (`client.js:2658`), GroupAdmin, InitProducerId
         on the transaction coordinator (`:2391`), and `describeGroupRequest`, whose NotCoordinator
         is inside `groups[0].error` (`:2155`). Fix: one helper for "coordinator error or lost
         connection -> invalidate", used by these and the existing catch blocks.
-  - [ ] b. Transaction-coordinator errors `delete` the entry without closing its socket
+  - [x] b. Transaction-coordinator errors `delete` the entry without closing its socket
         (`:2524, 2582, 2649`). Fix: the helper calls `updateTransactionCoordinator` (no callers yet).
-  - [ ] c. `_find*Coordinator`'s failure path deletes the cache entry unconditionally
+  - [x] c. `_find*Coordinator`'s failure path deletes the cache entry unconditionally
         (`:1599, 2470, 2867`), possibly a newer one. Fix: delete only if it is still its own promise.
 - [ ] 2.9 ShareConsumer:
   - [ ] a. Records outside `acquiredRecords` are delivered (`client.js:3039` trims the ranges to

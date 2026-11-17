@@ -779,6 +779,27 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should find the coordinator again when InitProducerId reaches one that moved', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-moved' });
+            var oldConn = { close: sinon.spy(), send: sinon.stub().callsFake(function () { return Promise.reject(errors.byName('NotCoordinatorForGroup')); }) };
+            var newConn = { send: sinon.stub().returns(Promise.resolve(Buffer.alloc(0))) };
+            this.timeout(5000); // one 1 s backoff
+            p.client.transactionCoordinators['tx-moved'] = Promise.resolve(oldConn);
+            p.client.initialBrokers = [{ apiVersions: { 10: { min: 0, max: 3 } } }]; // FindCoordinator v3
+            sinon.stub(p.client, '_sendToAnyBroker').returns(Promise.resolve({ coordinatorHost: 'h', coordinatorPort: 2 }));
+            sinon.stub(p.client, '_createConnection').returns(newConn);
+            sinon.stub(p.client, 'apiVersionsRequest').returns(Promise.resolve({}));
+            sinon.stub(p.client.protocol, 'read').returns({
+                InitProducerIdResponse: function () { return { result: { error: null, producerId: 3, producerEpoch: 0 } }; }
+            });
+
+            return p._initProducerId().then(function (r) {
+                r.producerId.should.equal(3);
+                newConn.send.callCount.should.equal(1);
+                oldConn.close.callCount.should.equal(1);
+            });
+        });
+
         [
             ['ran out of retries', function () { return new errors.NoKafkaConnectionError('b:9092', 'down'); }],
             ['was rejected', function () { return errors.byName('MessageSizeTooLarge'); }]
