@@ -10,7 +10,7 @@ var protocol     = new Protocol({ bufferSize: 65536 });
 
 function noop() { return Promise.resolve(); }
 
-// acks are taken only for a partition's latest delivery: record one holding these offsets
+// acks are taken only for a partition's current delivery: record one holding these offsets
 function markDelivered(sc, topic, partition, offsets) {
     sc._delivered({ topic: topic, partition: partition, acquiredRecords: offsets.map(function (o) { return { firstOffset: o, lastOffset: o }; }) });
 }
@@ -397,7 +397,36 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
-        it('should refuse an ack for records outside the partition\'s latest delivery', function () {
+        it('should take acks while the delivery\'s handler runs, and refuse them after it settles', function () {
+            var sc = makeShareConsumer(), late, p;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([{
+                topic: 't', topicId: 'id-1', partition: 0,
+                messageSet: [{ offset: 1, message: { value: Buffer.from('x') } }, { offset: 2, message: { value: Buffer.from('y') } }],
+                acquiredRecords: [{ firstOffset: 1, lastOffset: 2, deliveryCount: 1 }]
+            }]));
+            sinon.spy(sc.client, 'warn');
+            sc._handler = function (messageSet, topic, partition) {
+                return promiseUtils.delay(5).then(function () { // async work, then an ack before it resolves
+                    return sc.acknowledge({ topic: topic, partition: partition, offset: 1 });
+                }).then(function () {
+                    late = function () { return sc.acknowledge({ topic: topic, partition: partition, offset: 2 }); }; // kept for later
+                });
+            };
+
+            p = sc._fetch();
+            sc._closed = true;
+            return p.then(function () {
+                return late(); // after the handler settled: the delivery is over, as Java's next poll()
+            }).then(function () {
+                sc._pendingAcks['t:0'].batches.map(function (b) { return b.firstOffset; }).should.eql([1]);
+                sc.client.warn.args.some(function (a) { return /handler/.test(a[0]) && a[1] === 't:0@2'; }).should.equal(true);
+            });
+        });
+
+        it('should refuse an ack for records outside the partition\'s current delivery', function () {
             var sc = makeShareConsumer();
             sinon.spy(sc.client, 'warn');
             markDelivered(sc, 't', 0, [7]); // offset 3 came in an earlier delivery (or from a since-recreated topic)
@@ -405,7 +434,7 @@ describe('Consumer loops (unit)', function () {
             return sc.acknowledge([{ topic: 't', partition: 0, offset: 3 }, { topic: 't', partition: 0, offset: 7 }, { topic: 't', partition: 1, offset: 7 }]).then(function () {
                 sc._pendingAcks['t:0'].batches.map(function (b) { return b.firstOffset; }).should.eql([7]);
                 should.not.exist(sc._pendingAcks['t:1']);
-                sc.client.warn.args.some(function (a) { return /latest delivery/.test(a[0]) && a[1] === 't:0@3, t:1@7'; }).should.equal(true);
+                sc.client.warn.args.some(function (a) { return /handler/.test(a[0]) && a[1] === 't:0@3, t:1@7'; }).should.equal(true);
             });
         });
 

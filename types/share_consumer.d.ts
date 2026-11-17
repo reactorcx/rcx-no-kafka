@@ -52,12 +52,9 @@ export class ShareConsumer {
 
     init(options: ShareConsumerInitOptions): Promise<void>;
     /**
-      * Queues acknowledgements, sent with the next fetch. Only records from their partition's latest
-      * delivery can be acknowledged (as in Java): others are logged and not sent, and are redelivered.
-      */
-    /**
-      * Queues acknowledgements, sent with the next fetch. Only records from their partition's latest
-      * delivery can be acknowledged (as in Java): others are logged and not sent, and are redelivered.
+      * Queues acknowledgements, sent with the next fetch. A delivery's records can be acknowledged only
+      * while its handler runs (before its promise settles): later ones are logged and not sent, and
+      * the records are redelivered.
       */
     acknowledge(records: AcknowledgeRecord | AcknowledgeRecord[], type?: ACKNOWLEDGE_TYPE): Promise<void>;
     /**

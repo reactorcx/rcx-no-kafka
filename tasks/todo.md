@@ -606,8 +606,10 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
         handed out records; nothing is fetched or delivered after `end()` now.
   - [x] P2 `end()` closes every open share session (epoch -1), acks or not, so records a handler
         is still working on are released at once, not when their locks expire.
-  - [ ] P1 A deferred ack still can't be told from one for records delivered since from a
-        recreated topic at the same offset (acks are `{topic, partition, offset}`). Needs a decision.
+  - [x] P1 A deferred ack still couldn't be told from one for records delivered since from a
+        recreated topic at the same offset (acks are `{topic, partition, offset}`). Decision
+        (2026-11-17): a delivery's records can be acknowledged only while its handler runs (Java:
+        until the next `poll()`); later acks are logged and the records redelivered.
 - Verification: unit tests 31-39: 217 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
