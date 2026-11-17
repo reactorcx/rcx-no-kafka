@@ -159,6 +159,22 @@ describe('Client (unit)', function () {
                 calls.should.equal(2);
             });
         });
+
+        it('should not fail requests waiting on a refresh that fails', function () {
+            var c = makeClient();
+            var refresh, offsets;
+
+            sinon.stub(c, 'metadataRequest').callsFake(function () {
+                return promiseUtils.delay(10).then(function () { throw new errors.NoKafkaConnectionError('b:9092', 'down'); });
+            });
+            refresh = c.updateMetadata(['A']).catch(function (err) { return err; });
+            offsets = c.offsetRequest({}); // no leaders: resolves with nothing once metadata is settled
+
+            return Promise.all([refresh, offsets]).then(function (r) {
+                r[0].should.be.instanceOf(errors.NoKafkaConnectionError); // the refresh's own caller sees it
+                r[1].should.eql([]);
+            });
+        });
     });
 
     describe('connection option plumbing', function () {
