@@ -163,6 +163,70 @@ describe('Compression limits (unit)', function () {
             });
         });
 
+        it('should not trust the header of a CRC-failed share batch for acquiredRecords', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            var corrupt = Buffer.from(protocol.write().RecordBatch({ baseOffset: 0, records: [{ value: 'a' }, { value: 'b' }] }).result);
+            var raw, batches;
+            corrupt.writeInt32BE(0, 23); // lastOffsetDelta 1 -> 0, CRC left as it was
+            raw = Buffer.concat([corrupt, smallBatch(2)]);
+            batches = protocol.read(raw).RecordBatch(null, raw.length).result;
+            return c._decompressShareFetchResults([{
+                topic: 't', partition: 0, messageSet: batches, acquiredRecords: [{ firstOffset: 0, lastOffset: 2, deliveryCount: 1 }]
+            }]).then(function (r) {
+                offsets(r[0]).should.eql([2]);
+                // offset 1 was never delivered, so it must not be acknowledgeable
+                r[0].acquiredRecords.should.eql([{ firstOffset: 2, lastOffset: 2, deliveryCount: 1 }]);
+            });
+        });
+
+        it('should leave a truncated trailing share batch out of acquiredRecords', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            var raw = Buffer.concat([smallBatch(0), smallBatch(1).slice(0, 40)]); // cut by maxBytes
+            var batches = protocol.read(raw).RecordBatch(null, raw.length).result;
+            return c._decompressShareFetchResults([{
+                topic: 't', partition: 0, messageSet: batches, acquiredRecords: [{ firstOffset: 0, lastOffset: 1, deliveryCount: 1 }]
+            }]).then(function (r) {
+                offsets(r[0]).should.eql([0]);
+                r[0].acquiredRecords.should.eql([{ firstOffset: 0, lastOffset: 0, deliveryCount: 1 }]);
+            });
+        });
+
+        it('should keep compaction gaps between decoded share batches acknowledgeable', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            var raw = Buffer.concat([smallBatch(3), smallBatch(5), smallBatch(9), bigBatch(10), smallBatch(14)]);
+            var batches = protocol.read(raw).RecordBatch(null, raw.length).result;
+            compression.maxOutputSize = 1024;
+            return c._decompressShareFetchResults([{
+                topic: 't', partition: 0, messageSet: batches, acquiredRecords: [{ firstOffset: 0, lastOffset: 14, deliveryCount: 1 }]
+            }]).then(function (r) {
+                offsets(r[0]).should.eql([3, 5, 9, 14]);
+                // 0-2 and 4, 6-8 were compacted away: the handler may ack them. 10-13 hold
+                // the batch that failed (its real span unknown): it may not
+                r[0].acquiredRecords.should.eql([
+                    { firstOffset: 0, lastOffset: 9, deliveryCount: 1 },
+                    { firstOffset: 14, lastOffset: 14, deliveryCount: 1 }
+                ]);
+            });
+        });
+
+        it('should stay linear when a broker sends overlapping acquiredRecords', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            var raw = Buffer.concat([smallBatch(0), bigBatch(1), smallBatch(2)]), acquired = [], i, t;
+            var batches = protocol.read(raw).RecordBatch(null, raw.length).result;
+            for (i = 0; i < 100000; i++) { acquired.push({ firstOffset: 0, lastOffset: 2, deliveryCount: 1 }); }
+            compression.maxOutputSize = 1024;
+            t = Date.now();
+            return c._decompressShareFetchResults([{ topic: 't', partition: 0, messageSet: batches, acquiredRecords: acquired }])
+            .then(function (r) {
+                r[0].acquiredRecords.length.should.equal(2); // before eql: diffing 200k entries hangs
+                r[0].acquiredRecords.should.eql([
+                    { firstOffset: 0, lastOffset: 0, deliveryCount: 1 },
+                    { firstOffset: 2, lastOffset: 2, deliveryCount: 1 }
+                ]);
+                (Date.now() - t).should.be.below(1000);
+            });
+        });
+
         it('should stop at a batch that fails its CRC check, for that partition only', function () {
             var corrupt = smallBatch(1);
             corrupt[corrupt.length - 2] ^= 0xFF;

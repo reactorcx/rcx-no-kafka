@@ -100,6 +100,23 @@ Found by the code reviews of these fixes (security, maintainability, style):
 - Not fixed here: per-record objects aren't bounded by `maxOutputSize` (~4 GB heap from one
   ~190 KB batch). Pre-existing; it is 2.14.
 
+Follow-up review of 384cdbd (2026-11-16):
+- [x] R9 [P1] Share fetch cut a failed batch's range out of `acquiredRecords` using that batch's
+      header, but a CRC failure means the header (e.g. `lastOffsetDelta`) may be what is corrupt:
+      a shrunk delta left undelivered offsets acknowledgeable. `acquiredRecords` now keeps only
+      offsets inside batches that decoded (CRC-verified headers) via `_withinRanges`, which
+      replaces `_withoutRanges`. Regression corrupts `lastOffsetDelta`, not just the payload.
+      Our review of this found the same hole for a truncated trailing batch (dropped by the
+      reader, its offsets still acquired) when no batch failed; the trim now always runs.
+      Its security review then found: (a) trimming cut compaction gaps between good batches,
+      which a range-acking handler then can't ack (locked until the 30 s timeout); spans are now
+      runs of consecutive decoded batches, gaps included, the first run open at the start; and
+      (b) overlapping `acquiredRecords` made the output ranges x batches (6000x6000: 10.8 s,
+      3.4 GB); overlaps are now clipped (1 ms). Both checked against a brute-force model.
+- Noted, not fixed (pre-existing, outside this PR): the share handler also gets records outside
+  `acquiredRecords` (the Java client filters them); a legacy magic 0/1 share response skips the
+  trim (Kafka 4.x share brokers never send one).
+
 ## Phase 1 — New data-loss and ordering bugs
 
 Consume path (one function, `_decompressRecordBatches`, `lib/client.js:2041-2077`):
@@ -268,5 +285,8 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
 - Verification: each new test fails without its fix (9 in total); `tsc` 5.9.3 on `types/index.d.ts`
   passes (TS2749 before); eslint 0 errors; unit tests 31-38: 93 pass; full suite on a fresh 4.2.0
   broker: 604 pass, same 10 failures as `master`.
+- Follow-up (R9 and its review fixes): each new test fails on 384cdbd (4); range helper matches a
+  brute-force model on 20,000 random cases; unit tests 31-38: 97 pass; eslint 0 errors; full suite
+  on a fresh 4.2.0 broker: 608 pass, same 10 failures as `master`.
 - `fix-audit-phase1` still needs these merged in. Its decoder already stops at the first failure;
   take that, and add the legacy path, the CRC marking, the commit guard and the share changes.
