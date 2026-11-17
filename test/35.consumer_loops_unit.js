@@ -295,6 +295,60 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        function twoLeaders(sc) {
+            sc.client.topicMetadata = Object.create(null);
+            sc.client.topicMetadata.t = { 0: { partitionId: 0, leader: 0 }, 1: { partitionId: 1, leader: 1 } };
+        }
+
+        it('should keep acks for a partition the next fetch does not carry', function () {
+            var sc = makeShareConsumer(), p;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2, 1: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([]));
+            sc.acknowledge([{ topic: 't', partition: 0, offset: 1 }, { topic: 't', partition: 1, offset: 1 }]);
+
+            p = sc._fetch();
+            sc._closed = true;
+            return p.then(function () {
+                Object.keys(sc.client.shareFetchRequest.args[0][5].t).should.eql(['0']);
+                Object.keys(sc._pendingAcks).should.eql(['t:1']); // not lost: sent when 1 is fetched again, or on end()
+            });
+        });
+
+        it('should send queued acks when it ends, closing each open share session', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 }; // broker 1 has no open session: it can't take acks
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sc.acknowledge([{ topic: 't', partition: 0, offset: 1 }, { topic: 't', partition: 1, offset: 1 }]);
+
+            return sc.end().then(function () {
+                var args = sc.client.shareAcknowledgeRequest.args[0];
+                args[2].should.equal(-1);
+                args[3].should.eql({ 0: [{ topicName: 't', partitions: [{
+                    partitionIndex: 0, acknowledgementBatches: [{ firstOffset: 1, lastOffset: 1, acknowledgeTypes: [1] }]
+                }] }] });
+                sc.client.end.callCount.should.equal(1);
+            });
+        });
+
+        it('should still close the client when the final acks fail', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 };
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').callsFake(function () {
+                return Promise.reject(new errors.NoKafkaConnectionError('b:9092', 'down'));
+            });
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            return sc.end().then(function () {
+                sc.client.end.callCount.should.equal(1);
+            });
+        });
+
         it('should rejoin on FencedMemberEpoch', function () {
             var sc = makeShareConsumer();
             var epochsSent = [];

@@ -336,12 +336,12 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
   - [x] a. Records outside `acquiredRecords` are delivered (`client.js:3039` trims the ranges to
         the decoded batches, not the records to the ranges; noted, not fixed, at the PR #5 review).
         Fix: filter each record to the acquired ranges, as Java's `ShareCompletedFetch` does.
-  - [ ] b. `end()` drops queued acks (`share_consumer.js:532`). Fix: send them with ShareAcknowledge
+  - [x] b. `end()` drops queued acks (`share_consumer.js:532`). Fix: send them with ShareAcknowledge
         at epoch -1 to each leader with an open session (the broker accepts it and closes the
         session; Java does the same on close), catch and warn so `client.end()` always runs.
         `shareAcknowledgeRequest` takes one epoch for all leaders today; give it a per-leader map
         like `shareFetchRequest`.
-  - [ ] c. Acks for a partition not in the next fetch are drained and never sent
+  - [x] c. Acks for a partition not in the next fetch are drained and never sent
         (`share_consumer.js:288`, `client.js:2937`). Fix: drain only acks the fetch will carry;
         acks for partitions no longer assigned go out with ShareAcknowledge (the 2.9b path).
   - [ ] d. An assigned partition missing from cached metadata is never fetched
