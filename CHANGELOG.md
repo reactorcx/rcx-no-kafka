@@ -5,6 +5,9 @@
 - During a rolling upgrade old and new producers split a number key across two partitions; on compacted topics the old partition keeps its last value
 - A topic whose metadata comes back with an error is no longer cached as having no partitions — `subscribe(topic)` without partitions now rejects with `UnknownTopicOrPartition` instead of resolving with nothing (the real error is logged)
 - Metadata is requested by topic name only (as Java does), never by a cached topic ID — on a broker with `auto.create.topics.enable=true` a consumer still subscribed to a deleted topic can re-create it
+- `ShareConsumer.acknowledge()` takes only records from their partition's latest delivery (as Java does); others are logged and redelivered
+- `ShareConsumer.end()` sends the acknowledgements made so far, closes every open share session and leaves within 30 s, without waiting for running handlers; nothing is fetched or delivered after it
+- An idempotent batch is no longer retried after `UnknownTopicId`/`InconsistentTopicId` (the topic was recreated): it fails, and the next send starts a fresh sequence space
 
 ### Fixed
 - `DefaultPartitioner` hashed a number key as that many zero bytes, and threw on negative, boolean and object keys
