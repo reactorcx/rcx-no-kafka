@@ -255,6 +255,110 @@ describe('Producer (unit)', function () {
             });
         });
 
+        [true, false].forEach(function (v2) {
+            it('should not fail the next transaction when the offset write of an aborted one fails late (' + (v2 ? 'V2' : 'V1') + ')', function () {
+                var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-late-' + v2, batch: { maxWait: 0 } });
+                var failA, ends = [];
+                p.client.producerId = 1;
+                p.client.producerEpoch = 0;
+                p._transactionV2 = v2;
+                sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+                sinon.stub(p.client, 'addPartitionsToTxnRequest').returns(Promise.resolve([]));
+                sinon.stub(p.client, 'addOffsetsToTxnRequest').returns(Promise.resolve());
+                sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                    return Promise.resolve(requests.map(function (r) { return { topic: r.topic, partition: r.partition, error: null, offset: 0 }; }));
+                });
+                sinon.stub(p.client, 'txnOffsetCommitRequest').callsFake(function () {
+                    return new Promise(function (resolve, reject) { failA = reject; }); // A's write hangs
+                });
+                sinon.stub(p.client, 'endTxnRequest').callsFake(function (id, pid, epoch, committed) {
+                    ends.push(committed);
+                    return Promise.resolve();
+                });
+
+                p.beginTransaction(); // A
+                return promiseUtils.delay(0).then(function () {
+                    var late = p.sendOffsets([{ topic: 'in', partition: 0, offset: 5 }], 'g').catch(function () { return null; });
+                    return promiseUtils.delay(0).then(function () {
+                        return p.abortTransaction(); // doesn't wait for A's offset write
+                    }).then(function () {
+                        p.beginTransaction(); // B
+                        return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
+                    }).then(function () {
+                        failA(errors.byName('CoordinatorNotAvailable'));
+                        return late;
+                    });
+                }).then(function () {
+                    return p.commitTransaction(); // B must still commit
+                }).then(function () {
+                    ends.should.eql([false, true]);
+                });
+            });
+        });
+
+        it('should reject a send racing an abort, so it cannot reach the next transaction', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-late-send', batch: { maxWait: 0 } });
+            var late, ends = [];
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p._transactionV2 = true;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                return Promise.resolve(requests.map(function (r) { return { topic: r.topic, partition: r.partition, error: null, offset: 0 }; }));
+            });
+            sinon.stub(p.client, 'endTxnRequest').callsFake(function (id, pid, epoch, committed) {
+                ends.push(committed);
+                if (!committed && !late) { // a send racing the abort, after flush() looked
+                    late = p.send({ topic: 't', partition: 0, message: { value: 'late' } });
+                }
+                return Promise.resolve();
+            });
+
+            p.beginTransaction(); // A
+            p._txnPartitions = { 't:9': true }; // something to abort
+            return p.abortTransaction().then(function () {
+                return late.then(function () {
+                    throw new Error('expected the late send to reject');
+                }, function (err) { err.message.should.match(/beginTransaction/); });
+            }).then(function () {
+                p.beginTransaction(); // B
+                return p.send({ topic: 't', partition: 1, message: { value: 'b' } });
+            }).then(function () {
+                return p.commitTransaction();
+            }).then(function () {
+                ends.should.eql([false, true]);
+                p.client.produceRequest.callCount.should.equal(1); // only B's send was produced
+            });
+        });
+
+        it('should count a send that failed before reaching a broker against its transaction', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-unsent', batch: { maxWait: 0 } });
+            var ends = [];
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p._transactionV2 = true;
+            sinon.stub(p.client, 'getTopicPartitions').callsFake(function () { // fails before any partition is registered
+                return Promise.reject(new errors.NoKafkaConnectionError('b:9092', 'down'));
+            });
+            sinon.stub(p.client, 'endTxnRequest').callsFake(function (id, pid, epoch, committed) {
+                ends.push(committed);
+                return Promise.resolve();
+            });
+
+            p.beginTransaction();
+            return p.send({ topic: 't', message: { value: 'a' } }).then(function () { // no partition: partitioner looks it up
+                throw new Error('expected send to reject');
+            }, function () {
+                p._txnPartitions.should.eql({}); // nothing was written
+                return p.commitTransaction(); // but its records are missing from the transaction
+            }).then(function () {
+                throw new Error('expected commitTransaction to reject');
+            }, function (err) {
+                err.message.should.match(/abortTransaction/);
+                ends.should.eql([]);
+            });
+        });
+
         it('should refuse to commit a transaction in which a send failed', function () {
             var p = new Kafka.Producer({
                 clientId: 'producer-unit',
