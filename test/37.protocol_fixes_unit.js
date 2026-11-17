@@ -88,12 +88,12 @@ describe('Protocol fixes (unit)', function () {
             result.batches[0].header.recordCount.should.equal(1);
         });
 
-        it('should reject a batch whose records bytes were corrupted', function () {
+        it('should mark a batch whose records bytes were corrupted', function () {
             var buf = writeBatch();
+            var result;
             buf[buf.length - 3] ^= 0xFF; // flip bits inside the records section
-            (function () {
-                protocol.read(buf).RecordBatch('batches', buf.length);
-            }).should.throw(/CRC/i);
+            result = protocol.read(buf).RecordBatch('batches', buf.length).result;
+            result.batches[0].error.message.should.match(/CRC/i);
         });
     });
 

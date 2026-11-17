@@ -64,6 +64,59 @@ throws inside the socket handler (`lib/connection.js:221`); S2 `ssl: true`, `ssl
 `{rejectUnauthorized: true}` and `{servername}` all connect in plaintext (`lib/connection.js:85`);
 C1 code 90 maps to TransactionAbortable and 120-123 are unmapped.
 
+## PR #5 review (2026-11-16)
+
+Adversarial review of 0209719, all four findings confirmed against the code before fixing:
+
+- [x] R1 [P1] A message/batch that failed to decompress or decode was dropped and later records
+      delivered, moving the offset past it (legacy `return []` added in the port; RecordBatch path
+      too, now reachable via the 128 MB cap). Fetch now stops at the first failure and reports it as
+      the partition error when it comes first (`_untilFailure`); README documents the stall. Share
+      fetch still skips bad batches, and now also removes them from `acquiredRecords` so a handler
+      acking by range can't accept records it never got.
+- [x] R2 [P1] `commitTransaction()` committed after a send in the transaction had failed (flush
+      discards outcomes; transport failures resolve as `result.error`). Now rejects; abort still works.
+- [x] R3 [P2] `ACKNOWLEDGE_TYPE` lost its type in the .d.ts (TS2749). Added the value-union type.
+- [x] R4 [P2] Top-level ShareFetch errors (ShareSessionNotFound, InvalidShareSessionEpoch) were
+      discarded. Now reported on that broker's partitions only (`_fakeTopicsErrorResponse`, as for
+      connection errors), so `_partitionError` reopens just that session, other brokers' records
+      are delivered, and that partition's acks are resent. Throwing instead (the reviewer's
+      suggestion) would discard every broker's records for the round. Found while fixing: the
+      broker rejects acks on an epoch-0 request (INVALID_REQUEST, `SharePartitionManager.newContext`),
+      so resent acks would loop forever; acks for a broker whose session is opening now wait one
+      fetch (Java's `ShareConsumeRequestManager` never sends acks on a new session either). Also
+      fixed: fake share errors lost their partition number in the flatten.
+
+Found by the code reviews of these fixes (security, maintainability, style):
+- [x] R5 [high] A decode failure is now retried by re-subscribing, and each re-subscribe re-wrapped
+      the handler: stack overflow after ~6,000 retries (~1.5 h). Ported Phase 1's `_promiseWrapped`
+      guard and its test.
+- [x] R6 A CRC-32C mismatch threw during response parsing, failing the fetch for every broker (the
+      check came with the June port). The batch is now marked and stops only its partition.
+- [x] R7 Acks resent once per partition, before handling (a partition listed twice doubled them,
+      and a rejecting `_partitionError` skipped the rest), and only where the broker sent no answer.
+- [x] R8 `_withoutRanges` was quadratic for a hostile broker (40k ranges x 4k batches: 14.8 s);
+      now one sorted sweep (18 ms), checked against a brute-force model.
+- Not fixed here: per-record objects aren't bounded by `maxOutputSize` (~4 GB heap from one
+  ~190 KB batch). Pre-existing; it is 2.14.
+
+Follow-up review of 384cdbd (2026-11-16):
+- [x] R9 [P1] Share fetch cut a failed batch's range out of `acquiredRecords` using that batch's
+      header, but a CRC failure means the header (e.g. `lastOffsetDelta`) may be what is corrupt:
+      a shrunk delta left undelivered offsets acknowledgeable. `acquiredRecords` now keeps only
+      offsets inside batches that decoded (CRC-verified headers) via `_withinRanges`, which
+      replaces `_withoutRanges`. Regression corrupts `lastOffsetDelta`, not just the payload.
+      Our review of this found the same hole for a truncated trailing batch (dropped by the
+      reader, its offsets still acquired) when no batch failed; the trim now always runs.
+      Its security review then found: (a) trimming cut compaction gaps between good batches,
+      which a range-acking handler then can't ack (locked until the 30 s timeout); spans are now
+      runs of consecutive decoded batches, gaps included, the first run open at the start; and
+      (b) overlapping `acquiredRecords` made the output ranges x batches (6000x6000: 10.8 s,
+      3.4 GB); overlaps are now clipped (1 ms). Both checked against a brute-force model.
+- Noted, not fixed (pre-existing, outside this PR): the share handler also gets records outside
+  `acquiredRecords` (the Java client filters them); a legacy magic 0/1 share response skips the
+  trim (Kafka 4.x share brokers never send one).
+
 ## Phase 1 — New data-loss and ordering bugs
 
 Consume path (one function, `_decompressRecordBatches`, `lib/client.js:2041-2077`):
@@ -223,6 +276,20 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   timeouts x7, producer unknown-topic x1), none new.
 - Security review found 2.13-2.15 (not port regressions; added to Phase 2).
 
+### PR #5 review fixes (2026-11-16), branch `fix-audit-2026-06-port`
+
+- R1-R4 from the PR review and R5-R8 from our own review of the fixes (see "PR #5 review" above).
+- Our review also caught a bug in the first R2 draft: successful produce results carry
+  `error: null`, so an `!== undefined` check would have rejected every real commit. The broker
+  run showed it (4 transactional integration tests); the unit test now uses the wire shape.
+- Verification: each new test fails without its fix (9 in total); `tsc` 5.9.3 on `types/index.d.ts`
+  passes (TS2749 before); eslint 0 errors; unit tests 31-38: 93 pass; full suite on a fresh 4.2.0
+  broker: 604 pass, same 10 failures as `master`.
+- Follow-up (R9 and its review fixes): each new test fails on 384cdbd (4); range helper matches a
+  brute-force model on 20,000 random cases; unit tests 31-38: 97 pass; eslint 0 errors; full suite
+  on a fresh 4.2.0 broker: 608 pass, same 10 failures as `master`.
+- Merged into `fix-audit-phase1` (see below).
+
 ### Phase 1 (2026-11-16), branch `fix-audit-phase1` (stacked on PR #5)
 
 - 1.1-1.8 (consume path): `_decompressRecordBatches` follows Java's CompletedFetch and returns
@@ -243,3 +310,11 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   112 pass; full suite on a fresh 4.2.0 broker: 624 pass, same 10 failures as `master`.
 - Still open (not done here): an undecodable batch halts its partition until fixed or skipped by
   hand (by design, matches Java, but the app only sees log lines) — consider an error callback.
+
+### Merge of PR #5 fixes into `fix-audit-phase1` (2026-11-16)
+
+- Phase 1's decoder kept (it already stops at the first failed batch, with nextOffset, marker and
+  aborted-txn handling); the CRC marker is folded into its throw-safe decode. Legacy path takes
+  PR #5's `_untilFailure`. Share path keeps Phase 1's per-batch decode and adds the
+  `acquiredRecords` trim. Commit guard sits in front of Phase 1's `_endTransaction`; README keeps
+  both transaction notes. Re-wrap guard and its test were identical on both sides (one copy kept).
