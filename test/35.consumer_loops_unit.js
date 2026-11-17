@@ -336,6 +336,27 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should wait for handlers still running before sending the final acks', function () {
+            var sc = makeShareConsumer(), finish;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 };
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sc._fetchPromise = new Promise(function (resolve) { finish = resolve; }).then(function () {
+                return sc.acknowledge({ topic: 't', partition: 0, offset: 7 }); // the handler acks as it finishes
+            });
+
+            return promiseUtils.delay(0).then(function () {
+                var ended = sc.end();
+                finish();
+                return ended;
+            }).then(function () {
+                sc.client.shareAcknowledgeRequest.callCount.should.equal(1);
+                sc.client.shareAcknowledgeRequest.args[0][3][0][0].partitions[0].acknowledgementBatches[0].firstOffset.should.equal(7);
+                Object.keys(sc._pendingAcks).should.eql([]);
+            });
+        });
+
         it('should send queued acks when it ends, closing each open share session', function () {
             var sc = makeShareConsumer();
             twoLeaders(sc);
@@ -602,6 +623,24 @@ describe('Consumer loops (unit)', function () {
                     gc.subscribe.callCount.should.equal(1);
                     unhandled.should.have.length(0);
                 });
+            });
+        });
+
+        it('should call rebalance callbacks with the consumer as this', function () {
+            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-cb' });
+            var seen = [];
+            gc._cooperative = true;
+            gc.strategyName = 'S';
+            gc.strategies = { S: { handler: noop } };
+            gc.ownedPartitions = [{ topic: 't', partitions: [0, 1] }];
+            gc._onPartitionsRevoked = function () { seen.push(this); };
+            gc._onPartitionsAssigned = function () { seen.push(this); };
+            sinon.stub(gc, 'unsubscribe').returns(Promise.resolve());
+
+            return gc._updateSubscriptions([{ topic: 't', partitions: [1] }]).then(function () {
+                seen.should.have.length(2);
+                seen[0].should.equal(gc);
+                seen[1].should.equal(gc);
             });
         });
 
