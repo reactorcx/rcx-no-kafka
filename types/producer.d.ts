@@ -34,10 +34,7 @@ export class Producer {
       */
     abortTransaction(): Promise<void>;
     /**
-      * Send consumer offsets within the current transaction.
-      */
-    /**
-      * Commit consumer offsets for groupId as part of the transaction. Each offset is the next one
+      * Send consumer offsets for groupId within the current transaction. Each offset is the next one
       * to consume (the last processed + 1), as stored: unlike GroupConsumer.commitOffset(), which
       * takes the last processed offset and adds 1.
       */

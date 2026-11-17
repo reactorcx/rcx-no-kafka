@@ -1,7 +1,14 @@
 ## Unreleased
 
 ### Changed
-- Partitioners hash a non-Buffer key as `String(key)`, the bytes sent. A number key moves partition: the default partitioner hashed it as that many zero bytes (and threw on negative, boolean and object keys), `HashCRC32Partitioner` sent every number key to partition 0 and threw on Buffer keys. While old and new producers run side by side, a number key is split across two partitions; on compacted topics the old partition keeps its last value. The README shows how to keep the old default mapping.
+- Partitioners hash a key that is neither a Buffer nor a string as `String(key)`, the bytes sent — a number key moves partition (README shows how to keep the old mapping)
+- During a rolling upgrade old and new producers split a number key across two partitions; on compacted topics the old partition keeps its last value
+- A topic whose metadata comes back with an error is no longer cached as having no partitions — `subscribe(topic)` without partitions now rejects with `UnknownTopicOrPartition` instead of resolving with nothing (the real error is logged)
+- Metadata is requested by topic name only (as Java does), never by a cached topic ID — on a broker with `auto.create.topics.enable=true` a consumer still subscribed to a deleted topic can re-create it
+
+### Fixed
+- `DefaultPartitioner` hashed a number key as that many zero bytes, and threw on negative, boolean and object keys
+- `HashCRC32Partitioner` sent every number key to partition 0 and threw on Buffer keys
 
 ## 4.10
 
