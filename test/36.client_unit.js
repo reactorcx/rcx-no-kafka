@@ -409,6 +409,22 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should close a coordinator socket still waiting for its ApiVersions reply when it ends', function () {
+            var c = makeClient(), conn = fakeConn('coord:1');
+            conn.close = sinon.spy();
+            c.initialBrokers = [];
+            sinon.stub(c, '_sendToAnyBroker').returns(Promise.resolve({ coordinatorHost: 'h', coordinatorPort: 1 }));
+            sinon.stub(c, '_createConnection').returns(conn);
+            sinon.stub(c, 'apiVersionsRequest').returns(new Promise(function () {})); // a silent broker
+
+            c._findGroupCoordinator('g');
+            return promiseUtils.delay(0).then(function () {
+                return c.end();
+            }).then(function () {
+                conn.close.callCount.should.be.at.least(1);
+            });
+        });
+
         it('should drop the group coordinator when a share group heartbeat answers NotCoordinatorForGroup', function () {
             var c = makeClient(), conn = lostConn();
             conn.apiVersions = { 76: { min: 1, max: 1 } };

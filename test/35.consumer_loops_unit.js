@@ -336,6 +336,28 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should settle a fetch in flight before draining the final acks', function () {
+            var sc = makeShareConsumer(), fail, fetching, ended;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(new Promise(function (resolve, reject) { fail = reject; }));
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sinon.spy(sc.client, 'warn');
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            fetching = sc._fetch(); // drains the ack into the request
+            return promiseUtils.delay(0).then(function () {
+                ended = sc.end();
+                fail(new errors.NoKafkaConnectionError('b:9092', 'down')); // the fetch requeues it
+                return Promise.all([fetching, ended]);
+            }).then(function () {
+                // the session went with the failed request: the ack can't be sent, and that is said
+                sc.client.warn.args.some(function (a) { return /No open share session/.test(a[0]) && /t:0/.test(a[1]); }).should.equal(true);
+            });
+        });
+
         it('should not wait for the handler that calls end()', function () {
             var sc = makeShareConsumer(), ended;
             twoLeaders(sc);

@@ -578,7 +578,18 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
         request releases the rest for redelivery.
   - [x] P2 File URLs (`ssl.ca: new URL(...)`) were passed to tls as is since round 1; read again.
   - [x] P3 `Result.error` is `null` on success: typed.
-- Verification: unit tests 31-39: 203 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 3 (gpt-6.2-sol, xhigh):
+  - [x] P2 `end()` drained the final acks while a ShareFetch carrying acks was still in flight;
+        if it failed, the acks it requeued were neither sent nor reported. `end()` now settles
+        the request (not its handlers) first.
+  - [x] P2 `client.end()` waited for a coordinator lookup to resolve before closing its socket:
+        one waiting on a silent broker's ApiVersions reply held `end()` for `requestTimeout`
+        (pre-existing). A lookup records its connection as soon as it is created.
+  - [ ] P1 An ack made after the next delivery for its partition is tagged with that delivery's
+        topic ID, so across a topic recreation it can accept a new record. Needs a decision.
+  - [ ] P2 Acks kept for a revoked partition can overlap fresh acks if it is reacquired; the
+        broker rejects the overlapping batches. Needs a decision.
+- Verification: unit tests 31-39: 205 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
