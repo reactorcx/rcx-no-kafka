@@ -120,6 +120,28 @@ describe('Client (unit)', function () {
                 requested.should.include('B');
             });
         });
+
+        it('should send the next refresh after a request that threw synchronously', function () {
+            var c = makeClient();
+            var calls = 0;
+
+            sinon.stub(c, 'metadataRequest').callsFake(function () {
+                if (++calls === 1) { throw new TypeError('topicNames.map is not a function'); }
+                return Promise.resolve({ broker: [{ nodeId: 0, host: 'h', port: 1 }], topicMetadata: [] });
+            });
+            sinon.stub(c, 'apiVersionsRequest').returns(Promise.resolve({}));
+
+            return Promise.resolve().then(function () {
+                return c.updateMetadata(['A']);
+            }).then(function () {
+                throw new Error('expected the first refresh to reject');
+            }, function (err) {
+                err.should.be.instanceOf(TypeError);
+                return c.updateMetadata(['A']);
+            }).then(function () {
+                calls.should.equal(2);
+            });
+        });
     });
 
     describe('connection option plumbing', function () {

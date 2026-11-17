@@ -279,7 +279,7 @@ question. Dropped: 2.11e (async snappy is already wrapped in `attempt()`, `compr
 Each item: a broker-free test written first and seen failing, then the fix, one commit per item.
 Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12.
 
-- [ ] 2.1 **[R]** `updateMetadata` sets its pending latch, then calls `metadataRequest` synchronously
+- [x] 2.1 **[R]** `updateMetadata` sets its pending latch, then calls `metadataRequest` synchronously
       (`lib/client.js:313-314`). A non-array `topicNames` throws there (`ShareConsumer.init({topics:
       'name'})` reaches it, `share_consumer.js:75` only checks `.length`); the latch stays set, later
       refreshes send nothing and `updateMetadata(['x'])` re-enters itself in microtasks, starving
