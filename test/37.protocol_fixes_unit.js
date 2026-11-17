@@ -95,6 +95,15 @@ describe('Protocol fixes (unit)', function () {
             result = protocol.read(buf).RecordBatch('batches', buf.length).result;
             result.batches[0].error.message.should.match(/CRC/i);
         });
+
+        it('should share one Error among the corrupted batches of a read', function () {
+            var one = Buffer.from(writeBatch()), buf, result;
+            one[one.length - 3] ^= 0xFF;
+            buf = Buffer.concat([one, Buffer.from(writeBatch()), one]);
+            result = protocol.read(buf).RecordBatch('batches', buf.length).result;
+            should.not.exist(result.batches[1].error);
+            result.batches[2].error.should.equal(result.batches[0].error); // a flood costs one stack trace
+        });
     });
 
     describe('legacy magic-1 message format', function () {

@@ -117,6 +117,12 @@ Follow-up review of 384cdbd (2026-11-16):
       records visible without the consumer offsets, so the input is processed twice. It now sets
       the same flag (Java's producer also refuses the commit). The rejected-send branch of the
       guard had no test; one test now covers both.
+- [x] R11 (merge review) R6's CRC marking made a corrupt-batch flood expensive: one Error (with
+      stack) and one error-level log line per batch. 200,000 corrupt empty batches in one share
+      partition: 4.7 s, +799 MB heap, 226 MB of log output. Now one Error per read, no per-batch
+      log; the fetch path reports the failure as the partition error (already logged by the
+      consumer) and the share path logs once per partition: 940 ms, +190 MB, 1 line, about the
+      same as that payload with valid CRCs (943 ms, +177 MB).
 - Noted, not fixed (pre-existing, outside this PR): the share handler also gets records outside
   `acquiredRecords` (the Java client filters them); a legacy magic 0/1 share response skips the
   trim (Kafka 4.x share brokers never send one).

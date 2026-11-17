@@ -1,6 +1,6 @@
 'use strict';
 
-/* global describe, it, afterEach, should */
+/* global describe, it, afterEach, sinon, should */
 
 var compression = require('../lib/protocol/misc/compression');
 var zlib        = require('zlib');
@@ -160,6 +160,22 @@ describe('Compression limits (unit)', function () {
                     { firstOffset: 0, lastOffset: 0, deliveryCount: 1 },
                     { firstOffset: 2, lastOffset: 2, deliveryCount: 1 }
                 ]);
+            });
+        });
+
+        it('should log skipped share batches once per partition', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            var corrupt = smallBatch(1), raw, batches;
+            corrupt[corrupt.length - 2] ^= 0xFF;
+            raw = Buffer.concat([smallBatch(0), corrupt, bigBatch(2), corrupt, smallBatch(5)]);
+            batches = protocol.read(raw).RecordBatch(null, raw.length).result;
+            compression.maxOutputSize = 1024;
+            sinon.spy(c, 'error');
+            return c._decompressShareFetchResults([{ topic: 't', partition: 0, messageSet: batches, acquiredRecords: [] }])
+            .then(function (r) {
+                offsets(r[0]).should.eql([0, 5]);
+                c.error.callCount.should.equal(1);
+                c.error.firstCall.args[1].should.equal(3); // skipped
             });
         });
 
