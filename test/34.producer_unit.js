@@ -170,6 +170,21 @@ describe('Producer (unit)', function () {
                 });
             });
         });
+
+        it('should not retry an idempotent batch into a recreated topic, and start fresh sequences', function () {
+            var p = makeIdempotentProducer();
+            sinon.stub(p.client, 'updateMetadata').returns(Promise.resolve());
+            sinon.stub(p.client, 'produceRequest').callsFake(function () {
+                return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('UnknownTopicId') }]);
+            });
+
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }, { retries: FAST_RETRIES }).then(function (result) {
+                p.client.produceRequest.callCount.should.equal(1); // its sequences continue a log that is gone
+                result[0].error.code.should.equal('UnknownTopicId');
+                p.client.updateMetadata.args[0][0].should.eql(['t']); // the next send gets the new topic ID
+                p._needsReinit.should.equal(true);
+            });
+        });
     });
 
     describe('transactions', function () {

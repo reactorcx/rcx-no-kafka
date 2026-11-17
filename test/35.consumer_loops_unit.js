@@ -12,7 +12,7 @@ function noop() { return Promise.resolve(); }
 
 // acks are taken only for a partition's latest delivery: record one holding these offsets
 function markDelivered(sc, topic, partition, offsets) {
-    sc._deliveries[topic + ':' + partition] = { ranges: offsets.map(function (o) { return { firstOffset: o, lastOffset: o }; }) };
+    sc._delivered({ topic: topic, partition: partition, acquiredRecords: offsets.map(function (o) { return { firstOffset: o, lastOffset: o }; }) });
 }
 
 describe('Consumer loops (unit)', function () {
@@ -411,7 +411,7 @@ describe('Consumer loops (unit)', function () {
 
         it('should accept a range ack covered by the delivery\'s acquired ranges, gaps included', function () {
             var sc = makeShareConsumer();
-            sc._deliveries['t:0'] = { ranges: [{ firstOffset: 14, lastOffset: 20 }, { firstOffset: 10, lastOffset: 13 }] };
+            sc._delivered({ topic: 't', partition: 0, acquiredRecords: [{ firstOffset: 14, lastOffset: 20 }, { firstOffset: 10, lastOffset: 13 }] });
 
             return sc.acknowledge([{ topic: 't', partition: 0, firstOffset: 10, lastOffset: 20 }, { topic: 't', partition: 0, firstOffset: 9, lastOffset: 12 }]).then(function () {
                 sc._pendingAcks['t:0'].batches.map(function (b) { return [b.firstOffset, b.lastOffset]; }).should.eql([[10, 20]]);
@@ -438,6 +438,113 @@ describe('Consumer loops (unit)', function () {
                 should.not.exist(sc.client.shareFetchRequest.args[0][5]); // held, not carried
                 // sending the old ack for 2 next to a fresh one would overlap; 1 is still acquired
                 sc._pendingAcks['t:0'].batches.map(function (b) { return b.firstOffset; }).should.eql([1]);
+            });
+        });
+
+        it('should keep the parts of a queued range ack that were not delivered again', function () {
+            var sc = makeShareConsumer();
+            markDelivered(sc, 't', 0, [10, 11, 12]);
+            sc.acknowledge({ topic: 't', partition: 0, firstOffset: 10, lastOffset: 12 });
+
+            markDelivered(sc, 't', 0, [11]); // only 11 was reacquired
+            sc._pendingAcks['t:0'].batches.map(function (b) { return [b.firstOffset, b.lastOffset]; }).should.eql([[10, 10], [12, 12]]);
+        });
+
+        it('should keep its own copy of the acquired ranges a handler is given', function () {
+            var sc = makeShareConsumer(), ranges = [{ firstOffset: 1, lastOffset: 1 }, { firstOffset: 2, lastOffset: 2 }];
+            sc._delivered({ topic: 't', partition: 0, acquiredRecords: ranges });
+            ranges.shift(); // the handler takes ranges off its array as it goes
+
+            return sc.acknowledge({ topic: 't', partition: 0, offset: 1 }).then(function () {
+                sc._pendingAcks['t:0'].batches.length.should.equal(1);
+            });
+        });
+
+        it('should check an ack against thousands of acquired ranges quickly', function () {
+            var sc = makeShareConsumer(), ranges = [], acks = [], i, t0;
+            for (i = 0; i < 5000; i++) {
+                ranges.push({ firstOffset: i * 2, lastOffset: i * 2 });
+                acks.push({ topic: 't', partition: 0, offset: i * 2 });
+            }
+            sc._delivered({ topic: 't', partition: 0, acquiredRecords: ranges.reverse() });
+            t0 = Date.now();
+            return sc.acknowledge(acks).then(function () {
+                (Date.now() - t0).should.be.below(100); // a sort and scan per ack took ~280 ms
+                sc._pendingAcks['t:0'].batches.length.should.equal(5000);
+            });
+        });
+
+        it('should start no fetch, and deliver nothing, once end() has run', function () {
+            var sc = makeShareConsumer(), refreshed, p;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sinon.stub(sc, '_refreshMissingMetadata').returns(new Promise(function (resolve) { refreshed = resolve; }));
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+
+            p = sc._fetch(); // waiting on the metadata refresh
+            return sc.end().then(function () {
+                refreshed();
+                return p;
+            }).then(function () {
+                sc.client.shareFetchRequest.callCount.should.equal(0);
+            });
+        });
+
+        it('should not hand out records that arrive after end()', function () {
+            var sc = makeShareConsumer(), handled = 0, finish, p;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(new Promise(function (resolve) { finish = resolve; }));
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sc._handler = function () { handled++; return Promise.resolve(); };
+
+            p = sc._fetch();
+            return promiseUtils.delay(0).then(function () {
+                var ended = sc.end();
+                finish([{ topic: 't', topicId: 'id-1', partition: 0, messageSet: [{ offset: 1, message: { value: Buffer.from('x') } }],
+                    acquiredRecords: [{ firstOffset: 1, lastOffset: 1, deliveryCount: 1 }] }]);
+                return Promise.all([p, ended]);
+            }).then(function () {
+                handled.should.equal(0);
+            });
+        });
+
+        it('should share one shutdown between concurrent end() calls', function () {
+            var sc = makeShareConsumer(), first, second;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 };
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            first = sc.end();
+            second = sc.end(); // e.g. a handler and a shutdown hook
+            second.should.equal(first);
+            return second.then(function () {
+                sc.client.shareAcknowledgeRequest.callCount.should.equal(1);
+                sc.client.end.callCount.should.equal(1);
+            });
+        });
+
+        it('should close every open share session on end(), acks or not', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4, 1: 2 }; // a handler is still working on broker 1's records
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            return sc.end().then(function () {
+                var requests = sc.client.shareAcknowledgeRequest.args[0][3];
+                Object.keys(requests).sort().should.eql(['0', '1']);
+                requests[1].should.eql([]);
             });
         });
 
@@ -493,7 +600,8 @@ describe('Consumer loops (unit)', function () {
             return sc.end().then(function () {
                 return sc.acknowledge({ topic: 't', partition: 0, offset: 7 }); // a handler still running when end() was called
             }).then(function () {
-                sc.client.shareAcknowledgeRequest.callCount.should.equal(0);
+                sc.client.shareAcknowledgeRequest.callCount.should.equal(1); // the session close, before the ack
+                sc.client.shareAcknowledgeRequest.args[0][3].should.eql({ 0: [] });
                 Object.keys(sc._pendingAcks).should.eql([]);
                 sc.client.warn.args.some(function (a) { return /after end\(\)/.test(a[0]); }).should.equal(true);
             });
