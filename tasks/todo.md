@@ -293,7 +293,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
 - [x] 2.2 **[R]** If `ssl.cert` isn't PEM text, cert and key are both read as files
       (`lib/client.js:126-137`), so a PEM key lands in the ENOENT message and `err.path`.
       Fix: decide per value, with an unanchored PEM test (a template-literal PEM starts with `\n`).
-- [ ] 2.3 **[R]** `Buffer(key)` on a numeric key allocates that many zero bytes
+- [x] 2.3 **[R]** `Buffer(key)` on a numeric key allocates that many zero bytes
       (`lib/assignment/partitioners/default.js:34`): key 5 and "5" go to different partitions though
       both are sent as "5"; negative, boolean and timestamp keys throw and reject the whole linger
       batch; key 314,572,800 took 327 ms and 360 MB. `HashCRC32Partitioner`

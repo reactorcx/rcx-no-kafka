@@ -1,3 +1,8 @@
+## Unreleased
+
+### Changed
+- Partitioners hash a non-Buffer key as `String(key)`, the bytes sent. A number key moves partition: the default partitioner hashed it as that many zero bytes (and threw on negative, boolean and object keys), `HashCRC32Partitioner` sent every number key to partition 0 and threw on Buffer keys. While old and new producers run side by side, a number key is split across two partitions; on compacted topics the old partition keeps its last value. The README shows how to keep the old default mapping.
+
 ## 4.10
 
 ### Added (KIP-899 Re-bootstrap, KIP-390 Compression Level)

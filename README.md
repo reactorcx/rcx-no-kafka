@@ -146,6 +146,14 @@ producer.send({
 });
 ```
 
+The default partitioner hashes the key as the bytes sent: a Buffer as is, anything else as `String(key)` in UTF-8, as the Java client does for string keys. So `key: 5` and `key: '5'` go to the same partition. Before this, a number key was hashed as that many zero bytes, and negative, boolean and object keys threw. To keep the old partitions for non-negative integer keys, override `hashKey`:
+
+```javascript
+MyPartitioner.prototype.hashKey = function (key) {
+    return Kafka.DefaultPartitioner.prototype.hashKey.call(this, typeof key === 'number' ? Buffer.alloc(key) : key);
+};
+```
+
 ### Custom Partitioner
 
 Example: override the default partitioner with a custom partitioner that only uses a portion of the key.
