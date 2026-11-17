@@ -150,6 +150,26 @@ describe('Producer (unit)', function () {
                 result[0].should.have.property('error');
             });
         });
+
+        ['UnknownTopicId', 'InconsistentTopicId'].forEach(function (code) {
+            it('should refresh metadata and retry on ' + code + ' (topic recreated under a new ID)', function () {
+                var p = new Kafka.Producer({ clientId: 'producer-unit' });
+                var calls = 0;
+
+                sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+                sinon.stub(p.client, 'updateMetadata').returns(Promise.resolve());
+                sinon.stub(p.client, 'produceRequest').callsFake(function () {
+                    return Promise.resolve([++calls === 1
+                        ? { topic: 't', partition: 0, error: errors.byName(code) }
+                        : { topic: 't', partition: 0, offset: 7 }]);
+                });
+
+                return p.send({ topic: 't', partition: 0, message: { value: 'a' } }, { retries: FAST_RETRIES }).then(function (result) {
+                    p.client.updateMetadata.args[0][0].should.eql(['t']);
+                    result.should.eql([{ topic: 't', partition: 0, offset: 7 }]);
+                });
+            });
+        });
     });
 
     describe('transactions', function () {

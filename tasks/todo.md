@@ -317,7 +317,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
         named-only topics in the same request are dropped (a group leader refreshing `[cached A,
         new B]` never sees B). Fix: ask by name only, as Java does for explicit topics; remove the
         then-dead `:354-356`.
-  - [ ] b. The producer treats `UnknownTopicId` as fatal (`RETRIABLE_ERROR_CODES`,
+  - [x] b. The producer treats `UnknownTopicId` as fatal (`RETRIABLE_ERROR_CODES`,
         `producer.js:13`), so it never refreshes. Fix: add it and `InconsistentTopicId`, and check
         the retry refreshes metadata. (Consumers already refresh on both via
         `base_consumer.js:164`.)
