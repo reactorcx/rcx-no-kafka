@@ -620,7 +620,7 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 A fetch waiting on a metadata refresh still went out after `end()`.
   - [ ] P1 An ack scheduled by a handler that already returned can be accepted while a later
         delivery of the same offset is running. Needs a decision.
-- Verification: unit tests 31-39: 221 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Verification: unit tests 31-39: 222 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
