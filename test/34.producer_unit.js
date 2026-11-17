@@ -785,6 +785,7 @@ describe('Producer (unit)', function () {
             var newConn = { send: sinon.stub().returns(Promise.resolve(Buffer.alloc(0))) };
             this.timeout(5000); // one 1 s backoff
             p.client.transactionCoordinators['tx-moved'] = Promise.resolve(oldConn);
+            p.client.transactionCoordinators['tx-moved'].connection = oldConn; // as a resolved lookup leaves it
             p.client.initialBrokers = [{ apiVersions: { 10: { min: 0, max: 3 } } }]; // FindCoordinator v3
             sinon.stub(p.client, '_sendToAnyBroker').returns(Promise.resolve({ coordinatorHost: 'h', coordinatorPort: 2 }));
             sinon.stub(p.client, '_createConnection').returns(newConn);

@@ -216,6 +216,13 @@ describe('Client (unit)', function () {
             return u;
         });
 
+        // a cache entry as a resolved coordinator lookup leaves it
+        function cachedLookup(conn) {
+            var p = Promise.resolve(conn);
+            p.connection = conn;
+            return p;
+        }
+
         function lostConn() {
             var conn = fakeConn('coord:1', function () {
                 return Promise.reject(new errors.NoKafkaConnectionError('coord:1', 'down'));
@@ -230,7 +237,7 @@ describe('Client (unit)', function () {
 
         it('should drop and close the group coordinator when TxnOffsetCommit loses it', function () {
             var c = makeClient(), conn = lostConn();
-            c.groupCoordinators.g = Promise.resolve(conn);
+            c.groupCoordinators.g = cachedLookup(conn);
 
             return rejected(c.txnOffsetCommitRequest('tx', 'g', 1, 0, [{ topic: 't', partition: 0, offset: 1 }])).then(function () {
                 should.not.exist(c.groupCoordinators.g);
@@ -242,7 +249,7 @@ describe('Client (unit)', function () {
 
         it('should drop the group coordinator when OffsetFetch loses it (GroupAdmin.fetchConsumerLag)', function () {
             var c = makeClient(), conn = lostConn();
-            c.groupCoordinators.g = Promise.resolve(conn);
+            c.groupCoordinators.g = cachedLookup(conn);
 
             return rejected(c.offsetFetchRequestV1('g', [{ topicName: 't', partitions: [0] }])).then(function () {
                 should.not.exist(c.groupCoordinators.g);
@@ -252,7 +259,7 @@ describe('Client (unit)', function () {
         it('should drop the group coordinator when DescribeGroups answers NotCoordinatorForGroup', function () {
             var c = makeClient();
             var conn = fakeConn('coord:1', function () { return Promise.resolve(Buffer.alloc(0)); });
-            c.groupCoordinators.g = Promise.resolve(conn);
+            c.groupCoordinators.g = cachedLookup(conn);
             sinon.stub(c.protocol, 'read').returns({
                 DescribeGroupResponse: function () { return { result: { groups: [{ error: errors.byName('NotCoordinatorForGroup'), groupId: 'g' }] } }; }
             });
@@ -265,7 +272,7 @@ describe('Client (unit)', function () {
 
         it('should close the transaction coordinator it drops after an error', function () {
             var c = makeClient(), conn = lostConn();
-            c.transactionCoordinators.tx = Promise.resolve(conn);
+            c.transactionCoordinators.tx = cachedLookup(conn);
 
             return rejected(c.endTxnRequest('tx', 1, 0, true)).then(function () {
                 should.not.exist(c.transactionCoordinators.tx);
@@ -288,6 +295,43 @@ describe('Client (unit)', function () {
 
             return lookup.then(function () {
                 c.groupCoordinators.g.should.equal(newer);
+            });
+        });
+
+        it('should not drop the coordinator that replaced one a late request failed on', function () {
+            var c = makeClient(), fail, request, newConn = fakeConn('new:1'), newer = cachedLookup(newConn);
+            var oldConn = fakeConn('old:1', function () {
+                return new Promise(function (resolve, reject) { fail = reject; });
+            });
+            newConn.close = sinon.spy();
+            c.groupCoordinators.g = cachedLookup(oldConn);
+
+            request = rejected(c.txnOffsetCommitRequest('tx', 'g', 1, 0, [{ topic: 't', partition: 0, offset: 1 }]));
+            return promiseUtils.delay(0).then(function () {
+                c.updateGroupCoordinator('g'); // another request found the old one gone
+                c.groupCoordinators.g = newer; // and looked the coordinator up again
+                fail(new errors.NoKafkaConnectionError('old:1', 'Connection closed'));
+                return request;
+            }).then(function () {
+                c.groupCoordinators.g.should.equal(newer);
+                return promiseUtils.delay(0);
+            }).then(function () {
+                newConn.close.callCount.should.equal(0);
+            });
+        });
+
+        it('should drop the group coordinator when a share group heartbeat answers NotCoordinatorForGroup', function () {
+            var c = makeClient(), conn = lostConn();
+            conn.apiVersions = { 76: { min: 1, max: 1 } };
+            conn.send = function () { return Promise.resolve(Buffer.alloc(0)); };
+            c.groupCoordinators.g = cachedLookup(conn);
+            sinon.stub(c.protocol, 'read').returns({
+                ShareGroupHeartbeatResponseV1: function () { return { result: { error: errors.byName('NotCoordinatorForGroup') } }; }
+            });
+
+            return rejected(c.shareGroupHeartbeatRequest('g', 'm', 1, null, ['t'])).then(function (err) {
+                err.code.should.equal('NotCoordinatorForGroup');
+                should.not.exist(c.groupCoordinators.g); // the next heartbeat looks it up again
             });
         });
     });
