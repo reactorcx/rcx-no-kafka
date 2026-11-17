@@ -56,6 +56,24 @@ describe('Client (unit)', function () {
         });
     });
 
+    describe('legacy MessageSet compression', function () {
+        [1, 2].forEach(function (codec) { // gzip, snappy: their async compressors read the input later
+            it('should compress each MessageSet from its own bytes, not the shared writer buffer (codec ' + codec + ')', function () {
+                var c = new Kafka.Producer({ clientId: 'client-unit', asyncCompression: true }).client;
+                var compression = require('../lib/protocol/misc/compression');
+                var a = [{ offset: 0, message: { value: Buffer.alloc(200000, 'a') } }];
+                var b = [{ offset: 0, message: { value: Buffer.alloc(200000, 'b') } }];
+
+                return Promise.all([c._compressMessageSet(a, codec), c._compressMessageSet(b, codec)]).then(function (r) {
+                    return compression.decompressAsync(r[0][0].message.value, codec);
+                }).then(function (inner) {
+                    var decoded = c.protocol.read(inner).MessageSet(null, inner.length).result;
+                    decoded[0].message.value.equals(a[0].message.value).should.equal(true);
+                });
+            });
+        });
+    });
+
     describe('apiVersionsRequest failure handling', function () {
         it('should leave apiVersions null after a transport failure so discovery is retried', function () {
             var c = makeClient();

@@ -370,7 +370,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
         but the version isn't (0.11.0 brokers). Fix: send v5.
   - [x] d. LogAppendTime batches (attributes bit 3) should give every record the batch
         `maxTimestamp`; ignored today. Fix at `client.js:2194`, where record timestamps are set.
-  - [ ] f. Legacy MessageSet compression hands a slice of the shared protocol writer to async
+  - [x] f. Legacy MessageSet compression hands a slice of the shared protocol writer to async
         compression (`client.js:2266`); the next request overwrites it first (reproduced).
         Fix: `Buffer.from(...)`, as `:718` does.
 - [ ] 2.12 Types and docs: `Result` has no `error` (`types/producer.d.ts:218`); `asyncCompression`
