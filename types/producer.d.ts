@@ -1,23 +1,25 @@
 import * as tls from "tls";
 import * as Kafka from "./kafka";
-import { Client } from "./client";
 
 export class Producer {
     constructor(options?: ProducerOptions);
     /**
       * Initializes the client for the producer.
       *
-      * @returns {Promise<Client>}
-      *
       * @memberOf Producer
       */
-    init(): Promise<Client>;
+    init(): Promise<void>;
     /**
       * The send can take a single message or an array of messages.
       * It can have options
       * @memberOf Producer
       */
     send(data: Kafka.Message | Kafka.Message[], options?: SendOptions): Promise<Result[]>;
+    /**
+      * Send out all batches currently waiting on their batch.maxWait timer
+      * and wait for them to settle.
+      */
+    flush(): Promise<void>;
     /**
       * Begin a new transaction. Requires transactionalId option.
       */
@@ -98,35 +100,36 @@ export interface ProducerOptions {
       */
     partitioner?: Kafka.DefaultPartitioner;
     /**
-      * retries - controls number of attempts at delay 
-      * between them when produce request fails
+      * retries - controls number of attempts and the delay
+      * between them when a produce request fails
       */
-    retries?: number;
-    /**
-      * attempts - number of total attempts to send the message.
-      * 
-      * defaults to 3
-      */
-    attempts?: number;
-    /**
-      * delay - controls delay between retries, 
-      * the delay is progressive and incrememented 
-      * with each attempt with min value steps up 
-      * to but not exceeding max value
-      */
-    delay?: {
+    retries?: {
         /**
-          * min - minimum delay, used as increment value for next attempts.
-          * 
-          * defaults to 1000ms
+          * attempts - number of total attempts to send the message.
+          *
+          * defaults to 3
           */
-        min?: number;
+        attempts?: number;
         /**
-          * max - maximum delay value.
-          * 
-          * defaults to 3000ms
+          * delay - controls delay between retries,
+          * the delay is progressive and incrememented
+          * with each attempt with min value steps up
+          * to but not exceeding max value
           */
-        max?: number;
+        delay?: {
+            /**
+              * min - minimum delay, used as increment value for next attempts.
+              *
+              * defaults to 1000ms
+              */
+            min?: number;
+            /**
+              * max - maximum delay value.
+              *
+              * defaults to 3000ms
+              */
+            max?: number;
+        }
     }
 
     /**
@@ -147,6 +150,13 @@ export interface ProducerOptions {
       * codec - compression codec.
       */
     codec?: Kafka.COMPRESSION;
+    /**
+      * compressionLevel - codec-specific compression level
+      * (gzip 1-9, zstd 1-22). -1 uses the codec default.
+      *
+      * default: -1
+      */
+    compressionLevel?: number;
     /**
       * batch - control batching (grouping) of requests
       */
@@ -300,6 +310,10 @@ export interface SendOptions {
       *   Kafka.COMPRESSION_NONE, Kafka.COMPRESSION_SNAPPY, Kafka.COMPRESSION_GZIP
       */
     codec?: number; // Kafka.COMPRESSION_NONE | Kafka.COMPRESSION_SNAPPY | Kafka.COMPRESSION_GZIP;
+    /**
+      * compressionLevel - codec-specific compression level. -1 uses the codec default.
+      */
+    compressionLevel?: number;
     /**
       * batch - control batching (grouping) of requests
       */

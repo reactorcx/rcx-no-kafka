@@ -2,9 +2,11 @@
 
 /* global describe, it, before, after, afterEach, should */
 
-// These tests require a Kafka 4.2.0+ broker at localhost:9092 with:
-// - share groups enabled (KIP-932)
-// - __share_group_state topic created with RF=1 (for single-broker setups)
+// These tests require a Kafka 4.2.0+ broker at localhost:9092 with share groups
+// enabled (KIP-932) and the required topics created. Run ./test/setup-topics.sh
+// first — it creates the `test-share-integ` data topic and the internal
+// `__share_group_state` topic with RF=1 (its default RF=3 cannot be met on a
+// single-broker cluster, which otherwise leaves share members with no assignment).
 
 var Kafka        = require('../lib/index');
 var promiseUtils = require('../lib/promise-utils');

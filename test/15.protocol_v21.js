@@ -17,8 +17,8 @@ describe('v2.1 Protocol Upgrade', function () {
     //////////////////
 
     describe('Error Codes', function () {
-        it('should resolve error code 52 (UnsupportedCompressionType)', function () {
-            var err = errors.byCode(52);
+        it('should resolve error code 76 (UnsupportedCompressionType)', function () {
+            var err = errors.byCode(76);
             err.should.be.an.instanceOf(errors.KafkaError);
             err.code.should.equal('UnsupportedCompressionType');
         });
