@@ -1,5 +1,6 @@
 import * as tls from "tls";
 import * as Kafka from "./kafka";
+import { KafkaError, NoKafkaConnectionError } from "./errors";
 
 export class Producer {
     constructor(options?: ProducerOptions);
@@ -34,6 +35,11 @@ export class Producer {
     abortTransaction(): Promise<void>;
     /**
       * Send consumer offsets within the current transaction.
+      */
+    /**
+      * Commit consumer offsets for groupId as part of the transaction. Each offset is the next one
+      * to consume (the last processed + 1), as stored: unlike GroupConsumer.commitOffset(), which
+      * takes the last processed offset and adds 1.
       */
     sendOffsets(offsets: Array<{topic: string, partition: number, offset: number, metadata?: string}>, groupId: string): Promise<void>;
     /**
@@ -183,7 +189,7 @@ export interface ProducerOptions {
       * asyncCompression - boolean, use asynchronouse 
       * compression instead of synchronous.
       * 
-      * defaults to false
+      * defaults to true
       */
     asyncCompression?: boolean;
 
@@ -215,12 +221,21 @@ export interface ProducerOptions {
 }
 
 
+/**
+  * One per partition the send() went to. A failed partition (retries exhausted, or a
+  * non-retriable error) has `error` and no `offset`.
+  */
 export interface Result {
     topic: string;
     partition: number;
-    offset: number;
+    offset?: number;
+    error?: KafkaError | NoKafkaConnectionError | Error;
 }
 
+/**
+  * Only codec, compressionLevel, retries and batch.size / batch.maxWait apply per send().
+  * The other fields are producer options: send() ignores them (they stay so existing code compiles).
+  */
 export interface SendOptions {
     /**
       * requiredAcks - require acknoledgments for produce request. 
@@ -334,9 +349,7 @@ export interface SendOptions {
           */
         maxWait?: number;
         /**
-          * asyncCompression - boolean, 
-          * use asynchronouse compression instead of synchronous.
-          * default: false
+          * asyncCompression - ignored here: set it in the producer options.
           */
         asyncCompression?: boolean;
     }

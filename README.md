@@ -252,7 +252,7 @@ Transaction methods:
 * `beginTransaction()` - start a new transaction (synchronous). A transactional producer's `send()` rejects outside a transaction.
 * `commitTransaction()` - commit the current transaction (returns Promise). Batches still waiting on their `batch.maxWait` timer are flushed first so they are included in the transaction, and pending `sendOffsets()` calls are waited for. Rejects without committing if any send or `sendOffsets()` call in the transaction failed; call `abortTransaction()` then. If it rejects after sending the commit (for example the connection dropped), the transaction may have committed: retry `commitTransaction()`. `abortTransaction()` then rejects if the commit went through.
 * `abortTransaction()` - abort the current transaction (returns Promise). Also flushes queued batches and waits for pending `sendOffsets()` calls first.
-* `sendOffsets(offsets)` - commit consumer offsets as part of the transaction (returns Promise). Rejects while `commitTransaction()` or `abortTransaction()` is running, as do `send()` and a second commit or abort.
+* `sendOffsets(offsets, groupId)` - commit consumer offsets for `groupId` as part of the transaction (returns Promise). `offsets` is an array of `{topic, partition, offset, metadata}` where `offset` is the next offset to consume (the last processed + 1), as Kafka stores it; `GroupConsumer.commitOffset()` instead takes the last processed offset and adds 1. Rejects while `commitTransaction()` or `abortTransaction()` is running, as do `send()` and a second commit or abort.
 
 Other producer methods:
 * `flush()` - send out all batches currently waiting on their `batch.maxWait` timer and wait for them to settle (returns Promise)
@@ -279,7 +279,7 @@ Other producer methods:
 * `batch` - control batching (grouping) of requests
   * `size` - group messages together into single batch until their total size exceeds this value, defaults to 16384 bytes. Set to 0 to disable batching.
   * `maxWait` - send grouped messages after this amount of milliseconds expire even if their total size doesn't exceed `batch.size` yet, defaults to 10ms. Set to 0 to disable batching.
-* `asyncCompression` - boolean, use asynchronouse compression instead of synchronous, defaults to `false`
+* `asyncCompression` - boolean, use asynchronouse compression instead of synchronous, defaults to `true`
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms
 * `socketTimeout` - timeout for Kafka connection socket in milliseconds, defaults to 0 (disabled)
 
@@ -393,7 +393,7 @@ consumer.fetchOffset([
   * `min` - minimum delay, used as increment value for next attempts, defaults to 1000ms
   * `max` - maximum delay value, defaults to 1000ms
 * `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
-* `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `false`
+* `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `true`
 * `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
 * `handlerConcurrency` - specify concurrency level for the consumer handler function, defaults to 10
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms
@@ -515,7 +515,7 @@ This is a client-side-only feature and works with any Kafka broker version suppo
 * `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
 * `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
 * `groupInstanceId` - unique instance identifier for static group membership (KIP-345). When set, the consumer skips LeaveGroup on shutdown so it can rejoin the group without triggering a rebalance. If another consumer registers with the same `groupInstanceId`, the broker returns `FencedInstanceId` and the original consumer shuts down. Requires Kafka 2.4+
-* `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `false`
+* `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `true`
 * `handlerConcurrency` - specify concurrency level for the consumer handler function, defaults to 10
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms
 * `socketTimeout` - timeout for Kafka connection socket in milliseconds, defaults to 0 (disabled)

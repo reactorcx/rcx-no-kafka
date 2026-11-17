@@ -373,7 +373,7 @@ Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12
   - [x] f. Legacy MessageSet compression hands a slice of the shared protocol writer to async
         compression (`client.js:2266`); the next request overwrites it first (reproduced).
         Fix: `Buffer.from(...)`, as `:718` does.
-- [ ] 2.12 Types and docs: `Result` has no `error` (`types/producer.d.ts:218`); `asyncCompression`
+- [x] 2.12 Types and docs: `Result` has no `error` (`types/producer.d.ts:218`); `asyncCompression`
       is documented as defaulting to false (`README.md:274, 388, 510`; `types/producer.d.ts:186,
       339`; `group_consumer.d.ts:107`; `simple_consumer.d.ts:84`), the code says true; `SendOptions`
       fields `send()` ignores get a doc note (removing them breaks callers' compiles); `sendOffsets`

@@ -107,7 +107,7 @@ export interface GroupConsumerOptions {
       * asyncCompression - boolean, use asynchronouse decompression 
       * instead of synchronous.
       * 
-      * defaults to false
+      * defaults to true
       */
     asyncCompression?: boolean;
     /**
