@@ -718,7 +718,10 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
 - Codex review round 25 (gpt-6.2-sol, xhigh, Fast):
   - [x] P1 A mixed-ID Produce went wholly by name, dropping v13's ID check; split now.
   - [x] P2 `end()` put a partition's acks from different deliveries in one close; separate now.
-- Verification: unit tests 31-39: 283 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 26 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 Variadic apply on a 150,000-ack queue overflowed the stack; reduce/flat now.
+  - [x] P2 Final ack rounds went on after the leave started; each checks the cutoff now.
+- Verification: unit tests 31-39: 285 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

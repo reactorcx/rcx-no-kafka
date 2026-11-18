@@ -1061,6 +1061,52 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should drain and fetch with more queued acks than fit in a call stack', function () {
+            var sc = makeShareConsumer(), acks = [], i, sent;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            for (i = 0; i < 150000; i++) { acks.push({ topic: 't', partition: 0, offset: i }); }
+            sc._delivered({ topic: 't', partition: 0, acquiredRecords: [{ firstOffset: 0, lastOffset: 149999 }] });
+            sc.acknowledge(acks);
+            sc._delivered({ topic: 't', partition: 0, acquiredRecords: [{ firstOffset: 200000, lastOffset: 200000 }] }); // prunes the queue
+            sc._buildFetchRequests = function () { return { 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] }; };
+            sc.client.shareFetchRequest = function (g, m, e, r, f, a) { sent = a.t[0].length; return Promise.resolve([]); };
+
+            sc._closed = true;
+            return sc._fetch().then(function () {
+                sent.should.equal(150000);
+            });
+        });
+
+        it('should send no more final ack rounds once the leave has started', function () {
+            var sc = makeShareConsumer(), clock, ended, first;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 };
+            sc.memberEpoch = 5;
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').onFirstCall().returns(new Promise(function (resolve) { first = resolve; }))
+                .returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'shareGroupHeartbeatRequest').returns(Promise.resolve({}));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+            markDelivered(sc, 't', 0, [7]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 7 });
+
+            clock = sinon.useFakeTimers();
+            ended = sc.end();
+            return Array.apply(null, new Array(10)).reduce(function (p) { return p.then(function () { return null; }); }, Promise.resolve()).then(function () {
+                sc.client.shareAcknowledgeRequest.callCount.should.equal(1); // the first (earlier delivery's) round is out
+                clock.tick(25000); // and outlasts the acks' deadline
+                clock.restore();
+                return ended;
+            }).then(function () {
+                first([]);
+                return promiseUtils.delay(5);
+            }).then(function () {
+                sc.client.shareAcknowledgeRequest.callCount.should.equal(1); // no close racing the leave
+            });
+        });
+
         it('should close with acks from different deliveries in separate requests, the latest with the close', function () {
             var sc = makeShareConsumer();
             twoLeaders(sc);
