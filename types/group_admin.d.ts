@@ -54,8 +54,8 @@ export interface PartitionAssignment {
 }
 
 export interface FetchOptions {
-    topicName?: string;
-    partitions?: number[];
+    topicName: string;
+    partitions: number[];
 }
 
 /**

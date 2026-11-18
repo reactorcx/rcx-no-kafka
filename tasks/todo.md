@@ -681,7 +681,11 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
         topic-ID change now fails the send and starts a fresh epoch instead.
   - [x] P1 Compressed legacy share records were delivered as their wrapper and the rest GAP-acked;
         expanded now. Also resolved magic-1 relative inner offsets (regular consumer too).
-- Verification: unit tests 31-39: 261 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 17 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A truncated inner legacy message set was rebased to wrong offsets; rejected now.
+  - [x] P2 Metadata for the old topic ID stalled an assigned share partition; refreshed now.
+  - [x] P3 `FetchOptions` fields required.
+- Verification: unit tests 31-39: 263 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

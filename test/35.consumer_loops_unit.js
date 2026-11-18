@@ -332,6 +332,20 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should refresh metadata while it is another topic\'s than the assignment names', function () {
+            var sc = makeShareConsumer();
+            sc.assignedPartitions = { 'id-new': [0] }; // the assignment already names the recreated topic
+            sc.client.topicNames = { 'id-new': 't' };
+            sc.client.topicIds.t = 'id-old'; // a lagging broker still reports the old one
+            sc.client.topicMetadata = Object.create(null);
+            sc.client.topicMetadata.t = { 0: { partitionId: 0, leader: 0 } };
+            sinon.stub(sc.client, 'updateMetadata').returns(Promise.resolve());
+
+            return sc._refreshMissingMetadata().then(function () {
+                sc.client.updateMetadata.callCount.should.equal(1);
+            });
+        });
+
         it('should not fetch an assigned topic whose metadata is now a recreated topic\'s', function () {
             var sc = makeShareConsumer();
             sc.assignedPartitions = { 'id-old': [0] }; // the heartbeat hasn't brought the new assignment yet
