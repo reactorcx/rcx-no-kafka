@@ -450,6 +450,31 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should keep a broker\'s ShareAcknowledge decode failure to its own partitions', function () {
+            var c = makeClient(), finish;
+            c.brokerConnections = {
+                0: fakeConn('b0:1', function () { return Promise.resolve(Buffer.from('bad')); }),
+                1: fakeConn('b1:1', function () { return new Promise(function (resolve) { finish = resolve; }); })
+            };
+            sinon.stub(c.protocol, 'read').callsFake(function (buffer) {
+                if (buffer.toString() === 'bad') { throw new RangeError('Trying to access beyond buffer length'); }
+                return { ShareAcknowledgeResponseV1: function () {
+                    return { result: { error: null, responses: [{ topicId: 'id', partitions: [{ partitionIndex: 1, error: null }] }] } };
+                } };
+            });
+            c.topicNames.id = 't';
+
+            return Promise.all([
+                c.shareAcknowledgeRequest('g', 'm', -1, {
+                    0: [{ topicName: 't', partitions: [{ partitionIndex: 0, acknowledgementBatches: [] }] }],
+                    1: [{ topicName: 't', partitions: [{ partitionIndex: 1, acknowledgementBatches: [] }] }]
+                }),
+                promiseUtils.delay(5).then(function () { finish(Buffer.from('ok')); })
+            ]).then(function (r) {
+                r[0].map(function (x) { return [x.partition, x.error ? x.error.name : null]; }).should.eql([[0, 'RangeError'], [1, null]]);
+            });
+        });
+
         it('should drop the group coordinator when a share group heartbeat answers NotCoordinatorForGroup', function () {
             var c = makeClient(), conn = lostConn();
             conn.apiVersions = { 76: { min: 1, max: 1 } };

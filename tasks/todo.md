@@ -635,7 +635,12 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 `_fetchRequest` kept the last fetch's records alive; it holds nothing now.
   - [x] P3 Exhausted retries gave one result per message; one per partition again.
   - [x] P3 `send()` typing accepts number keys (`SendMessage`).
-- Verification: unit tests 31-39: 229 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 8 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 One silent broker's ShareFetch held up every broker's final acks past the deadline;
+        fetches and final acks are per broker now.
+  - [x] P2 A failed partition recovery ended the round under running handlers; logged instead.
+  - [x] P2 A ShareAcknowledge decode failure rejected the whole call; per broker now.
+- Verification: unit tests 31-39: 232 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

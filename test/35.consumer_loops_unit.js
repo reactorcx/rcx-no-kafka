@@ -258,12 +258,13 @@ describe('Consumer loops (unit)', function () {
             }).then(function () {
                 return sc._fetch();
             }).then(function () {
-                var calls = sc.client.shareFetchRequest.args;
+                var calls = sc.client.shareFetchRequest.args; // one request per broker per round
+                function to(id) { return calls.filter(function (c) { return c[3][id]; }); }
                 // broker 0 rejected its acks with the request: they are resent once its new
                 // session is open, never on the opening (epoch 0) request
-                calls.map(function (c) { return sent(c, 0); }).should.eql([[5, 3], [0, null], [1, 3]]);
+                to(0).map(function (c) { return sent(c, 0); }).should.eql([[5, 3], [0, null], [1, 3]]);
                 // broker 1 is unaffected: its acks went out the first time
-                calls.map(function (c) { return sent(c, 1); }).should.eql([[3, 4], [4, null], [5, null]]);
+                to(1).map(function (c) { return sent(c, 1); }).should.eql([[3, 4], [4, null], [5, null]]);
             });
         });
 
@@ -381,6 +382,79 @@ describe('Consumer loops (unit)', function () {
                 return sc._fetchRequest;
             }).then(function (held) {
                 should.not.exist(held);
+            });
+        });
+
+        it('should send a healthy broker\'s final acks while another broker\'s fetch hangs', function () {
+            var sc = makeShareConsumer(), clock, ended;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2, 1: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({
+                0: [{ topicName: 't', partitions: [{ partition: 0 }] }],
+                1: [{ topicName: 't', partitions: [{ partition: 1 }] }]
+            });
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, requests) {
+                return requests[1] ? new Promise(function () {}) : Promise.resolve([]); // broker 1 never answers
+            });
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+            sc._pendingAcks['t:0'].batches.length.should.equal(1);
+
+            sc._fetch(); // carries t:0's first ack; broker 0 answers, broker 1 never does
+            return promiseUtils.delay(5).then(function () {
+                markDelivered(sc, 't', 0, [2]);
+                sc.acknowledge({ topic: 't', partition: 0, offset: 2 }); // made while broker 1's fetch hangs
+                clock = sinon.useFakeTimers();
+                ended = sc.end();
+                return Promise.resolve();
+            }).then(function () {
+                var i, p = Promise.resolve();
+                for (i = 0; i < 20; i++) { p = p.then(function () { return Promise.resolve(); }); } // let broker 0's path run
+                return p;
+            }).then(function () {
+                var sentTo = sc.client.shareAcknowledgeRequest.args.map(function (a) { return Object.keys(a[3]); });
+                sentTo.should.eql([['0']]); // broker 0 closed, with its ack, before the deadline
+                clock.tick(30000);
+                clock.restore();
+                return ended;
+            }).then(function () {
+                sc.client.end.callCount.should.equal(1);
+            });
+        });
+
+        it('should keep running handlers\' deliveries when another partition\'s recovery fails', function () {
+            var sc = makeShareConsumer(), finish, p, acked;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }, { partition: 1 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([
+                { topic: 't', topicId: 'id-1', partition: 0, messageSet: [{ offset: 1, message: { value: Buffer.from('x') } }],
+                    acquiredRecords: [{ firstOffset: 1, lastOffset: 1, deliveryCount: 1 }] },
+                { topic: 't', partition: 1, error: errors.byName('NotLeaderForPartition'), messageSet: [] }
+            ]));
+            sinon.stub(sc.client, 'updateMetadata').callsFake(function () {
+                return Promise.reject(new errors.NoKafkaConnectionError('b:9092', 'down')); // recovery fails
+            });
+            sc._handler = function (messageSet, topic, partition) {
+                return new Promise(function (resolve) { finish = resolve; }).then(function () {
+                    return sc.acknowledge({ topic: topic, partition: partition, offset: 1 });
+                });
+            };
+
+            p = sc._fetch();
+            sc._closed = true;
+            return promiseUtils.delay(5).then(function () {
+                acked = false;
+                p.then(function () { acked = true; });
+                return promiseUtils.delay(5);
+            }).then(function () {
+                acked.should.equal(false); // the round waits for the running handler
+                finish();
+                return p;
+            }).then(function () {
+                sc._pendingAcks['t:0'].batches.map(function (b) { return b.firstOffset; }).should.eql([1]);
             });
         });
 
@@ -662,7 +736,8 @@ describe('Consumer loops (unit)', function () {
             sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
 
             return sc.end().then(function () {
-                var requests = sc.client.shareAcknowledgeRequest.args[0][3];
+                var requests = {};
+                sc.client.shareAcknowledgeRequest.args.forEach(function (a) { Object.assign(requests, a[3]); }); // one per broker
                 Object.keys(requests).sort().should.eql(['0', '1']);
                 requests[1].should.eql([]);
             });
