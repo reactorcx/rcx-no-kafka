@@ -617,6 +617,34 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should keep the gap acks inside a range a handler releases', function () {
+            var sc = makeShareConsumer();
+            var result = { messageSet: [record(0), record(3)], acquiredRecords: [{ firstOffset: 0, lastOffset: 4, deliveryCount: 1 }] };
+            function handler(messageSet, topic, partition) {
+                return sc.acknowledge({ topic: topic, partition: partition, firstOffset: 0, lastOffset: 4 }, Kafka.ShareConsumer.ACKNOWLEDGE_TYPE.RELEASE);
+            }
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            return fetchOnce(sc, result, handler).then(function () {
+                sc._drainPendingAcks().t[0].map(function (b) { return [b.firstOffset, b.lastOffset, b.acknowledgeTypes[0]]; })
+                    .should.eql([[0, 0, 2], [1, 2, 0], [3, 3, 2], [4, 4, 0]]); // RELEASE records only, missing ones archived
+            });
+        });
+
+        it('should prune queued acks against many acquired ranges quickly', function () {
+            var sc = makeShareConsumer(), ranges = [], acks = [], i, t0;
+            for (i = 0; i < 5000; i++) {
+                ranges.push({ firstOffset: i * 2, lastOffset: i * 2 });
+                acks.push({ topic: 't', partition: 0, offset: i * 2 });
+            }
+            sc._delivered({ topic: 't', partition: 0, acquiredRecords: ranges });
+            sc.acknowledge(acks);
+            t0 = Date.now();
+            sc._delivered({ topic: 't', partition: 0, acquiredRecords: ranges.map(function (r) { return { firstOffset: r.firstOffset + 20001, lastOffset: r.lastOffset + 20001 }; }) });
+            (Date.now() - t0).should.be.below(60); // was ~125 ms
+            sc._pendingAcks['t:0'].batches.length.should.equal(5000); // none overlap: all kept
+        });
+
         it('should let a range ack take the place of the gap acks inside it', function () {
             var sc = makeShareConsumer();
             var result = { messageSet: [record(0), record(3)], acquiredRecords: [{ firstOffset: 0, lastOffset: 4, deliveryCount: 1 }] };
@@ -1182,6 +1210,25 @@ describe('Consumer loops (unit)', function () {
                 return promiseUtils.delay(5);
             }).then(function () {
                 sc.client.shareAcknowledgeRequest.callCount.should.equal(1); // no close racing the leave
+            });
+        });
+
+        it('should stop the earlier final ack rounds after one the broker didn\'t take, still closing', function () {
+            var sc = makeShareConsumer(), sent = [];
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 };
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').callsFake(function (g, m, epoch) {
+                sent.push(epoch);
+                return Promise.resolve(sent.length === 1 ? [{ topic: 't', partition: 0, error: new errors.NoKafkaConnectionError('b', 'down'), notAcked: true }] : []);
+            });
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            [1, 5, 9].forEach(function (o) { // three deliveries' acks for one partition
+                markDelivered(sc, 't', 0, [o]);
+                sc.acknowledge({ topic: 't', partition: 0, offset: o });
+            });
+
+            return sc.end().then(function () {
+                sent.should.eql([4, -1]); // not 5: the epoch is unknown after the failed round
             });
         });
 

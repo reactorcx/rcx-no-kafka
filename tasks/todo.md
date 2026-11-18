@@ -731,7 +731,12 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
 - Codex review round 29 (gpt-6.2-sol, xhigh, Fast):
   - [x] P2 A failed handler's release used its (mutable) messageSet; snapshotted before now.
   - [x] P2 That release re-merged acks per run (5,000 records ~470 ms); one sweep now.
-- Verification: unit tests 31-39: 292 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 30 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A failed legacy share wrapper hid the records after it; runs of decoded entries now.
+  - [x] P2 A close-time round the broker didn't take advanced the epoch; later rounds stop now.
+  - [x] P2 A handler's RELEASE replaced gap acks; RELEASE yields to gaps now.
+  - [x] P3 Ack pruning was quadratic in ranges; one sweep now.
+- Verification: unit tests 31-39: 295 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
