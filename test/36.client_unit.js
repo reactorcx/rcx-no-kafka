@@ -782,8 +782,8 @@ describe('Client (unit)', function () {
             });
         });
 
-        it('should not go back to a recreated topic\'s old ID when a lagging broker reports it', function () {
-            var c = makeClient(), A = '00000000-0000-0000-0000-0000000000aa', B = '00000000-0000-0000-0000-0000000000bb', ids = [A, B, A];
+        it('should follow the latest metadata reply\'s topic ID: none is retired on one conflicting reply', function () {
+            var c = makeClient(), A = '00000000-0000-0000-0000-0000000000aa', B = '00000000-0000-0000-0000-0000000000bb', ids = [B, A, B];
             sinon.stub(c, '_createConnection').callsFake(function () {
                 var conn = fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); });
                 conn.apiVersions = {};
@@ -794,12 +794,14 @@ describe('Client (unit)', function () {
                     topicMetadata: [{ topicName: 't', topicId: ids.shift(), partitionMetadata: [{ partitionId: 0, leader: 0 }] }] });
             });
 
+            // the new ID first (an up-to-date broker), then the old one (a lagging broker), then the new again:
+            // which ID is newer can't be told from metadata, so the client can't retire either
             return c.updateMetadata(['t']).then(function () {
-                return c.updateMetadata(['t']); // recreated: A -> B
+                return c.updateMetadata(['t']);
             }).then(function () {
-                return c.updateMetadata(['t']); // a stale answer naming A again
+                return c.updateMetadata(['t']);
             }).then(function () {
-                c.topicIds.t.should.equal(B);
+                c.topicIds.t.should.equal(B); // not stuck on the deleted topic
             });
         });
 

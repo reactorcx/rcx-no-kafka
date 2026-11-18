@@ -857,6 +857,11 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P1 A lagging broker's metadata could take a recreated topic back to its old ID (two offset
     resets); replaced IDs are ignored now (UUIDs are never reused).
   - Live recreation: 100 of 100; integration (02, 03): 29 pass, 1 baseline failure.
+- Codex review round 50 (gpt-6.2-sol, xhigh, Fast): one finding.
+  - [x] P1 Round 49's ID retirement could leave a client stuck on a deleted topic (new ID learned
+    first, then a lagging broker's old one): reverted; the client follows the latest reply, as
+    Java's does. Round 49's double recovery while brokers disagree is documented, not fixed:
+    metadata carries nothing that orders two topic IDs.
 - Verification: unit tests 31-39: 345 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
