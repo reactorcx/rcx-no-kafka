@@ -667,6 +667,16 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should send Produce by name when a topic has no known ID, though the broker has v13', function () {
+            var c = makeClient(), sent;
+            c.brokerConnections = { 0: fakeConn('b:1', function (id, buffer) { sent = Buffer.from(buffer); return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
+            c.brokerConnections[0].apiVersions = { 0: { min: 0, max: 13 } };
+
+            return c.produceRequest([{ topic: 't', partition: 0, leader: 0, message: { value: 'x' } }], 0).then(function () {
+                sent.readInt16BE(2).should.equal(12); // v13 would send the zero UUID
+            });
+        });
+
         it('should send an unstamped Produce v13 to the topic ID known after compression', function () {
             var cl = new Kafka.Producer({ clientId: 'client-unit', asyncCompression: true }).client;
             var NEW = '00000000-0000-0000-0000-0000000000bb';

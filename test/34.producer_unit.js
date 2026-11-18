@@ -1,6 +1,6 @@
 'use strict';
 
-/* global describe, it, sinon */
+/* global describe, it, sinon, should */
 
 var Kafka  = require('../lib/index');
 var errors = require('../lib/errors');
@@ -262,6 +262,26 @@ describe('Producer (unit)', function () {
                     // sees the change fails (UnknownTopicId), the next one goes out under a new epoch from 0
                     results.should.eql(c[2]);
                 });
+            });
+        });
+
+        it('should fail a transactional send whose partition is missing from the reply', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-unanswered', retries: FAST_RETRIES });
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p._transactionV2 = true;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').returns(Promise.resolve([
+                // e.g. UnknownTopicId for a zero UUID: its topic can't be matched to the request
+                { topic: '00000000-0000-0000-0000-000000000000', partition: 0, error: errors.byName('UnknownTopicId') }
+            ]));
+
+            p.beginTransaction();
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function (result) {
+                result.should.have.length(1);
+                result[0].topic.should.equal('t');
+                should.exist(result[0].error);
+                p._txnFailed.should.equal(true); // the commit is refused, not made without these records
             });
         });
 

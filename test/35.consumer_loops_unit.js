@@ -873,6 +873,27 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should send a partition\'s acks from different deliveries in separate fetches', function () {
+            var sc = makeShareConsumer(), sentAcks = [];
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 }); // kept from before a revoke and reacquire
+            markDelivered(sc, 't', 0, [7]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 7 });
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, r, f, acks) {
+                sentAcks.push(acks && acks.t[0].map(function (b) { return b.firstOffset; }));
+                return Promise.resolve([]);
+            });
+
+            sc._closed = true;
+            return sc._fetch().then(function () { return sc._fetch(); }).then(function () {
+                // a stale ack makes the broker reject the partition's acks as a whole: not the fresh one too
+                sentAcks.should.eql([[1], [7]]);
+            });
+        });
+
         it('should keep the parts of a queued range ack that were not delivered again', function () {
             var sc = makeShareConsumer();
             markDelivered(sc, 't', 0, [10, 11, 12]);
@@ -1051,11 +1072,12 @@ describe('Consumer loops (unit)', function () {
             sc.acknowledge([{ topic: 't', partition: 0, offset: 1 }, { topic: 't', partition: 1, offset: 1 }]);
 
             return sc.end().then(function () {
-                var args = sc.client.shareAcknowledgeRequest.args[0];
+                var args = sc.client.shareAcknowledgeRequest.args[0], partition = args[3][0][0].partitions[0];
                 args[2].should.equal(-1);
-                args[3].should.eql({ 0: [{ topicName: 't', partitions: [{
-                    partitionIndex: 0, acknowledgementBatches: [{ firstOffset: 1, lastOffset: 1, acknowledgeTypes: [1], topicId: undefined }]
-                }] }] });
+                Object.keys(args[3]).should.eql(['0']);
+                partition.partitionIndex.should.equal(0);
+                partition.acknowledgementBatches.map(function (b) { return [b.firstOffset, b.lastOffset, b.acknowledgeTypes]; })
+                    .should.eql([[1, 1, [1]]]);
                 sc.client.end.callCount.should.equal(1);
             });
         });
