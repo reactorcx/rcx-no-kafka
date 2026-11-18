@@ -930,27 +930,36 @@ Acceptance bar: a finding is fixed only if it passes all five rules, else it is 
   current-leader fallback (only tests reach it; changing it rewrites 17 fixtures for no defect).
 - [x] Security review: no memory-safety, unbounded-loop or key-leak defect in the decompression,
   CRC or TLS code (LZ4 and zstd fuzzed with 120,000 mutated frames each). Two findings, neither
-  passing the bar, open for a decision:
-  - [ ] A topic writer can make a ShareConsumer GAP-ack (archive undelivered) other producers'
+  passing the bar, open for a decision. The user chose to fix both (2026-11-18):
+  - [x] A topic writer can make a ShareConsumer GAP-ack (archive undelivered) other producers'
     records with a valid-CRC batch whose record `offsetDelta` lies past the batch
     (`_recordsInRanges` then drops the partition's later records). A Phase 2 regression (phase 1
-    delivered them), but Java's `ShareCompletedFetch` does the same (rule 4). A ~5-line fix in the
-    share decode path: treat a batch with `offsetDelta < 0` or `> lastOffsetDelta` as failed.
-  - [ ] A legacy message with a corrupt key or value length, or legacy messages followed by a v2
+    delivered them), but Java's `ShareCompletedFetch` does the same (rule 4). `_outsideBatch` in
+    `_decompressShareFetchResults` now fails such a batch (one Error per partition). The regular
+    consumer still delivers the record at the offset it claims, so a handler committing it can
+    commit past the log end and restart at `recoveryOffset`: declined (phase 1, `master` and Java's
+    `CompletedFetch` take the offset as given; failing the batch there would stall the partition).
+  - [x] A legacy message with a corrupt key or value length, or legacy messages followed by a v2
     batch in one response (a segment written across a format upgrade), throws out of the response
     parser: the whole fetch fails for every partition, every poll. Phase 1 and `master` have it
-    (rule 1: backlog). Fix: bound the lengths by `messageSize` in `MessageSetItem.read`, marking
-    the entry `crcError`.
+    (rule 1: backlog). `MessageSetItem.read` now checks that the key and value lengths fill
+    `messageSize` exactly and that magic is 0 or 1, else skips the entry marked `crcError` (a
+    negative size skips nothing; the entries read after it fail the same checks). The fetch stops
+    at it for that partition; after a format upgrade the next fetch starts at the RecordBatch and
+    reads it as one, while a ShareConsumer gets the batch's records again once their lock expires.
 
 #### Outcome
 
 - Phase 2 items 2.1-2.13 and 2.15 done; 2.14 moved to Phase 3 (3.11). 51 Codex rounds (gpt-6.2-sol
   for 2-50, gpt-6.1-sol for 1 and 51); the last was clean once the loop's high-churn mechanisms
-  were removed and the bar adopted. `lib/` against `fix-audit-phase1`: +1,465 / -320 lines.
+  were removed and the bar adopted. `lib/` against `fix-audit-phase1`: +1,492 / -320 lines.
 - Behaviour changes are in CHANGELOG (Unreleased) and the README, with a Known limitations section
   for what was declined: topic recreation under a running client (Java's behaviour), best-effort
   share acks, a silent broker holding a round until `requestTimeout`, `end()` during a join, old
   message formats in share groups.
+- The two security findings, fixed after the user's decision: unit tests 326 pass; eslint 0 errors;
+  tsc passes; full suite on a fresh 4.2.0 broker 842 pass with `master`'s 10 failures. Security,
+  maintainability and style reviews: no defect; their test, wording and style points applied.
 - Verification at 3fac5da: unit tests 322 pass; eslint 0 errors; tsc passes; full suite on a fresh
   4.2.0 broker 839 pass with `master`'s 10 failures (at bd42a2b; 3fac5da re-ran the consumer and
   share integration tests, 48 pass and the baseline failure); live recreation 10/10, acks at

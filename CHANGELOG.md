@@ -12,6 +12,7 @@
 - A running SimpleConsumer or GroupConsumer finds a recreated topic and keeps its position, as Java's does; a shorter new topic restarts it at `recoveryOffset` (README, Known limitations)
 - `ShareConsumer` sends a revoked partition's queued acks on the next fetch to the broker that delivered them; acks for a broker that left the cluster are dropped with a warning
 - Legacy (pre-0.11) messages are verified against their CRC-32; a corrupt one fails the fetch
+- `ShareConsumer` skips a batch holding a record outside the batch's offsets, as undecodable (the broker redelivers it, then archives it at the delivery limit)
 - TLS `cert`, `key` and `ca` are each read as a file path unless they hold a PEM header line, so a file cert can go with an inline key
 
 ### Fixed
@@ -20,6 +21,7 @@
 - `HashCRC32Partitioner` sent every number key to partition 0 and threw on Buffer keys
 - Decompression stays within `compression.maxOutputSize` for every codec: LZ4 skippable frames and tiny blocks, and multi-frame zstd data, could hang the decoder or allocate far past the cap
 - A top-level Metadata v13 error (e.g. `RebootstrapRequired`) was ignored; the refresh now fails and keeps the known brokers
+- A legacy message with a corrupt key or value length, or a RecordBatch after legacy messages in one response (a segment written across a format upgrade), failed the whole fetch for every partition on every poll; it now counts as a corrupt message, and a consumer's next fetch starts at the batch (a ShareConsumer gets the batch's records again once their lock expires)
 - Typings: `GroupAdmin` methods return Promises, `SendMessage` keys may be numbers, booleans or objects, and `Result.error` may be null
 
 ## 4.10

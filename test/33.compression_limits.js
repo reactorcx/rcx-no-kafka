@@ -425,6 +425,25 @@ describe('Compression limits (unit)', function () {
             });
         });
 
+        it('should fail a share batch holding a record outside its offset span', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client, recs, crafted, raw, batches;
+            recs = Buffer.concat([0, 100].map(function (d) {
+                return Buffer.from(protocol.write().Record({
+                    attributes: 0, timestampDelta: 0, offsetDelta: d, key: null, value: Buffer.from('x'), headers: []
+                }).result);
+            }));
+            // a writer's own batch, its CRC valid, spanning 0-1 but with a record claiming offset 100
+            crafted = Buffer.from(protocol.write().RecordBatch({ baseOffset: 0, compressedRecords: recs, recordCount: 2, lastOffsetDelta: 1 }).result);
+            raw = Buffer.concat([crafted, smallBatch(2)]);
+            batches = protocol.read(raw).RecordBatch(null, raw.length).result;
+            return c._decompressShareFetchResults([{
+                topic: 't', partition: 0, messageSet: batches, acquiredRecords: [{ firstOffset: 0, lastOffset: 2, deliveryCount: 1 }]
+            }]).then(function (r) {
+                offsets(r[0]).should.eql([2]); // another producer's record, not dropped (and GAP-acked) behind offset 100
+                r[0].acquiredRecords.should.eql([{ firstOffset: 2, lastOffset: 2, deliveryCount: 1 }]);
+            });
+        });
+
         it('should keep a legacy share MessageSet acknowledgeable up to its last complete message', function () {
             var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
             return c._decompressShareFetchResults([{
@@ -470,6 +489,53 @@ describe('Compression limits (unit)', function () {
             }).then(function (p) {
                 offsets(p).should.eql([]);
                 should.exist(p.error); // the consumer stops at it, as at a corrupt RecordBatch
+            });
+        });
+
+        it('should take a legacy message with a corrupt key length as corrupt, not fail the whole fetch', function () {
+            var raw = legacy([smallMessage(0), smallMessage(1), smallMessage(2)]);
+            raw.writeInt32BE(1 << 20, 28 + 18); // message 1's key length (after offset, size, crc, magic, attributes)
+            return fetch(0, raw).then(function (p) {
+                offsets(p).should.eql([0]); // stops at it, as at a CRC mismatch
+                should.not.exist(p.error);
+                raw.writeInt32BE(3, 18); // message 0's, too short: its value length would be misread
+                return fetch(0, raw);
+            }).then(function (p) {
+                offsets(p).should.eql([]);
+                should.exist(p.error);
+            });
+        });
+
+        it('should read magic-1 legacy messages, and take one with bytes past its value as corrupt', function () {
+            function crc32(buf) { // CRC-32 (ISO 3309); zlib.crc32 needs Node 22
+                var c = -1, i, k;
+                for (i = 0; i < buf.length; i++) {
+                    c ^= buf[i];
+                    for (k = 0; k < 8; k++) { c = (c >>> 1) ^ (0xEDB88320 & -(c & 1)); }
+                }
+                return c ^ -1;
+            }
+            function magic1(offset, extra) { // null key, value 'ok', CRC valid; `extra` bytes after the value
+                var body = Buffer.concat([Buffer.from([1, 0]), Buffer.alloc(8), Buffer.from([0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 2]), Buffer.from('ok')]);
+                var item = Buffer.alloc(16 + body.length + extra);
+                item.writeInt32BE(offset, 4);
+                item.writeInt32BE(4 + body.length + extra, 8);
+                item.writeInt32BE(crc32(body), 12);
+                body.copy(item, 16);
+                return item;
+            }
+            return fetch(0, Buffer.concat([magic1(0, 0), magic1(1, 0), magic1(2, 1)])).then(function (p) {
+                offsets(p).should.eql([0, 1]);
+                should.not.exist(p.error);
+            });
+        });
+
+        it('should stop at a RecordBatch after legacy messages (a segment written across a format upgrade)', function () {
+            // read as a legacy message, this timestamp makes the batch's value length 8 MB
+            var batch = Buffer.from(protocol.write().RecordBatch({ baseOffset: 2, timestamp: 0x7FFFFFFF, records: [{ value: 'ok' }] }).result);
+            return fetch(4, Buffer.concat([legacy([smallMessage(0), smallMessage(1)]), batch])).then(function (p) {
+                offsets(p).should.eql([0, 1]); // the next fetch starts at the batch, and reads it as one
+                should.not.exist(p.error);
             });
         });
 

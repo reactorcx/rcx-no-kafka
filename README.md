@@ -680,7 +680,7 @@ Additional connection options:
 * `requestTimeout` - per-request cap in ms so a silent broker can't hang callers forever, set to 0 to disable. Defaults to 300000 (5 minutes).
 * `maxFrameSize` - maximum accepted response frame size in bytes; a frame larger than this (or with a malformed negative length) force-disconnects the connection. Defaults to 100MB (matches the broker's `socket.request.max.bytes` default).
 
-Fetched record batches are verified against their CRC-32C checksum, and legacy (pre-0.11) messages against their CRC-32; a corrupted batch or message fails the fetch (and is retried) rather than delivering corrupt data to the handler.
+Fetched record batches are verified against their CRC-32C checksum, and legacy (pre-0.11) messages against their CRC-32 and their key and value lengths; a corrupted batch or message fails that partition's fetch (and is retried) rather than delivering corrupt data to the handler. A ShareConsumer also skips a batch holding a record outside the batch's offsets, which would otherwise make the partition's later records look already delivered.
 
 ### SSL
 To connect to Kafka with [SSL endpoint enabled](http://kafka.apache.org/090/documentation.html#security_ssl) specify SSL certificate and key options to load cert/key from files or provide certificate/key directly as strings:
