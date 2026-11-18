@@ -7,6 +7,7 @@
 - Metadata is requested by topic name only (as Java does), never by a cached topic ID — on a broker with `auto.create.topics.enable=true` a consumer still subscribed to a deleted topic can re-create it
 - `ShareConsumer.acknowledge()` takes a delivery's records only while its handler runs (as Java takes them only until the next `poll()`); later acks are logged and the records redelivered
 - `ShareConsumer.end()` sends the acknowledgements made so far, closes every open share session and leaves within 30 s, without waiting for running handlers; nothing is fetched or delivered after it
+- `ShareConsumer` acknowledges acquired offsets that hold no record as gaps (as Java does), and sends acks to the broker that delivered the records
 - An idempotent batch is no longer retried after `UnknownTopicId`/`InconsistentTopicId` (the topic was recreated): it fails, and the next send starts a fresh sequence space
 
 ### Fixed

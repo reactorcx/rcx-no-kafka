@@ -494,6 +494,92 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        function fetchOnce(sc, result, handler) {
+            var p;
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([Object.assign({ topic: 't', topicId: 'id-1', partition: 0, leader: '0' }, result)]));
+            sc._handler = handler || noop;
+            p = sc._fetch();
+            sc._closed = true;
+            return p;
+        }
+
+        function record(offset) { return { offset: offset, message: { value: Buffer.from('v') } }; }
+
+        it('should acknowledge acquired offsets that hold no record as gaps', function () {
+            var sc = makeShareConsumer();
+            var result = { messageSet: [record(0), record(3)], acquiredRecords: [{ firstOffset: 0, lastOffset: 4, deliveryCount: 1 }] };
+            function handler(messageSet, topic, partition) {
+                return sc.acknowledge(messageSet.map(function (m) { return { topic: topic, partition: partition, offset: m.offset }; }));
+            }
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            return fetchOnce(sc, result, handler).then(function () {
+                var acks = sc._drainPendingAcks().t[0];
+                acks.map(function (b) { return [b.firstOffset, b.lastOffset, b.acknowledgeTypes[0]]; })
+                    .should.eql([[0, 0, 1], [1, 2, 0], [3, 3, 1], [4, 4, 0]]); // ACCEPT records, GAP the rest, in order
+            });
+        });
+
+        it('should acknowledge a delivery of gaps only, without calling the handler', function () {
+            var sc = makeShareConsumer(), called = false;
+            var result = { messageSet: [], acquiredRecords: [{ firstOffset: 1, lastOffset: 1, deliveryCount: 1 }] };
+            function handler() { called = true; return Promise.resolve(); }
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            return fetchOnce(sc, result, handler).then(function () {
+                called.should.equal(false);
+                sc._drainPendingAcks().t[0].map(function (b) { return [b.firstOffset, b.acknowledgeTypes[0]]; }).should.eql([[1, 0]]);
+            });
+        });
+
+        it('should let a range ack take the place of the gap acks inside it', function () {
+            var sc = makeShareConsumer();
+            var result = { messageSet: [record(0), record(3)], acquiredRecords: [{ firstOffset: 0, lastOffset: 4, deliveryCount: 1 }] };
+            function handler(messageSet, topic, partition) {
+                return sc.acknowledge({ topic: topic, partition: partition, firstOffset: 0, lastOffset: 3 });
+            }
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            return fetchOnce(sc, result, handler).then(function () {
+                sc._drainPendingAcks().t[0].map(function (b) { return [b.firstOffset, b.lastOffset, b.acknowledgeTypes[0]]; })
+                    .should.eql([[0, 3, 1], [4, 4, 0]]); // no overlapping batches
+            });
+        });
+
+        it('should send final acks to the broker that delivered the records, not the current leader', function () {
+            var sc = makeShareConsumer();
+            var result = { messageSet: [record(5)], acquiredRecords: [{ firstOffset: 5, lastOffset: 5, deliveryCount: 1 }] };
+            function handler(messageSet, topic, partition) {
+                sc.client.topicMetadata.t[0] = { partitionId: 0, leader: 1 }; // the partition moves meanwhile
+                return sc.acknowledge({ topic: topic, partition: partition, offset: 5 });
+            }
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2, 1: 2 };
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            return fetchOnce(sc, result, handler).then(function () {
+                sc._closed = false;
+                return sc.end();
+            }).then(function () {
+                var sent = {};
+                sc.client.shareAcknowledgeRequest.args.forEach(function (a) { Object.assign(sent, a[3]); });
+                sent[0][0].partitions[0].acknowledgementBatches[0].firstOffset.should.equal(5);
+                sent[1].should.eql([]); // broker 1 only gets its session closed
+            });
+        });
+
+        it('should drop queued acks for a partition delivered by another broker since', function () {
+            var sc = makeShareConsumer();
+            sinon.spy(sc.client, 'warn');
+            sc._delivered({ topic: 't', partition: 0, leader: '0', acquiredRecords: [{ firstOffset: 1, lastOffset: 1 }] });
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+            sc._delivered({ topic: 't', partition: 0, leader: '1', acquiredRecords: [{ firstOffset: 9, lastOffset: 9 }] });
+
+            should.not.exist(sc._pendingAcks['t:0']);
+            sc.client.warn.args.some(function (a) { return /moved from broker/.test(a[0] + ' ' + a.slice(1).join(' ')); }).should.equal(true);
+        });
+
         it('should leave the group even when a broker never answers the final acks', function () {
             var sc = makeShareConsumer(), clock, ended;
             twoLeaders(sc);

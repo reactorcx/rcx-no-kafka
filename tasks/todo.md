@@ -650,7 +650,16 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 A fetch that failed in transit dropped its still-open session from `end()`'s view.
   - [x] P2 Final acks waited on a metadata refresh stuck on another broker; they don't now.
   - [x] P3 `SendMessage` keeps `Message`'s optional `offset`.
-- Verification: unit tests 31-39: 238 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 11 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A recreated topic's partition inherited the deleted log's sequence counter; the
+        counter now records its topic ID and starts at 0 for a new one.
+  - [x] P2 `client.end()` waited for a coordinator lookup still in progress; it doesn't now.
+  - [x] P2 An unreadable epoch-0 fetch reply may have opened a session; `end()` tries to close it.
+  - [x] P2 Final acks went to the partition's current leader, not the broker that delivered
+        the records; acks remember their broker now.
+  - [x] P2 Acquired offsets with no record were never acknowledged; GAP-acked now, as in Java.
+  - [x] P3 Partitioner typings take the producer message type.
+- Verification: unit tests 31-39: 246 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
