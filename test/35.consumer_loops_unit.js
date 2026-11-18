@@ -139,6 +139,20 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should subscribe a pending subscription by its own options, not recoveryOffset, after a recreation', function () {
+            var c = makeConsumer(noop);
+            c.subscriptions['t:0'] = { topic: 't', partition: 0, options: { time: Kafka.EARLIEST_OFFSET }, leader: -1, handler: noop };
+            c.client.topicIds.t = 'id-old';
+            c._closed = true;
+            return c._fetch().then(function () {
+                should.not.exist(c.subscriptions['t:0'].topicId); // bound when it gets an offset, by its own lookup
+                c.client.topicIds.t = 'id-new'; // recreated before its leader appears
+                return c._fetch();
+            }).then(function () {
+                c.client.fetchRequest.callCount.should.equal(2); // still the normal retry (LeaderNotAvailable), not recovery
+            });
+        });
+
         it('should find the leader again when it repeats a recovery lookup', function () {
             var c = makeConsumer(noop);
             c.subscriptions['t:0'].topicId = 'id-old';
@@ -419,6 +433,7 @@ describe('Consumer loops (unit)', function () {
             var notSent = new errors.NoKafkaConnectionError('b:9092', 'down'), p;
             sc.shareSessionEpochs = { 0: 2 };
             sc.client.topicMetadata = { t: { 0: { leader: 0 }, 1: { leader: 0 } } };
+            sc.client.brokerConnections = { 0: {} };
             sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }, { partition: 1 }] }] });
             sinon.stub(sc.client, 'updateMetadata').returns(Promise.resolve());
             sinon.stub(sc.client, 'shareFetchRequest').callsFake(function () {
@@ -1037,6 +1052,7 @@ describe('Consumer loops (unit)', function () {
         it('should drain a fetch\'s acks over many partitions quickly', function () {
             var sc = makeShareConsumer(), partitions = [], i, t0;
             sc.client.topicMetadata = Object.create(null);
+            sc.client.brokerConnections = { 0: {} };
             sc.client.topicMetadata.t = {};
             for (i = 0; i < 20000; i++) {
                 sc.client.topicMetadata.t[i] = { partitionId: i, leader: 0 };
@@ -1237,6 +1253,27 @@ describe('Consumer loops (unit)', function () {
                 call.acks.t[0][0].topicId.should.equal('id-old');
                 call.forgotten.should.eql([{ topicId: 'id-old', partitions: [0] }]);
                 handled.should.eql([3]); // the new topic's records are still delivered
+            });
+        });
+
+        it('should drop acks for an absent broker that cached metadata still names as leader', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            delete sc.client.brokerConnections[1]; // gone from the broker list; t:1 still says leader 1
+            sc.shareSessionEpochs = { 1: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 1: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 1 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function () {
+                return Promise.resolve([{ topic: 't', partition: 1, leader: '1', notFetched: true, error: errors.byName('LeaderNotAvailable') }]);
+            });
+            sinon.stub(sc.client, 'updateMetadata').returns(Promise.resolve());
+            sc._closed = true;
+            markDelivered(sc, 't', 1, [1]);
+            sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
+            sc._pendingAcks['t:1'].queuedAt -= 61000;
+
+            return sc._fetch().then(function () {
+                Object.keys(sc._pendingAcks).should.eql([]); // not drained, failed and requeued with a fresh time
+                should.equal(sc.client.shareFetchRequest.args[0][5], null);
             });
         });
 

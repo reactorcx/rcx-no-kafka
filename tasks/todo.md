@@ -837,7 +837,16 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 Acks for a broker gone from metadata were retried every poll; not sent, kept 60 s.
   - Integration (02, 03, 27, 28): 48 pass, 1 baseline failure; live: revoked acks applied,
     recreation 100 of 100.
-- Verification: unit tests 31-39: 340 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 47 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A subscription with no offset yet was bound to a topic ID, so a recreation started it at
+    `recoveryOffset` instead of its own options; left to the normal retry now.
+  - [x] P2 Acks for an absent broker that metadata still names as leader were drained and requeued
+    with a fresh time (outliving the bound); not drained, expired in place now.
+  - [ ] P2 Verify with the responding broker that a recovery ListOffsets answered for the new topic:
+    **declined**. ListOffsets has no topic ID in any version (1-11); a check would need a separate
+    Metadata request to that broker, for a race needing the leader's metadata to lag the cluster's.
+  - Integration (02, 03, 27, 28): 48 pass, 1 baseline failure; live revoked acks applied.
+- Verification: unit tests 31-39: 342 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
