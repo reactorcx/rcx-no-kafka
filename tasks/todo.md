@@ -741,7 +741,10 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P3 Ack draining scanned requested partitions per ack; indexed once now.
 - Codex review round 32 (gpt-6.2-sol, xhigh, Fast): one finding.
   - [x] P2 An Error per corrupt legacy message; marked while parsing, one per message set now.
-- Verification: unit tests 31-39: 298 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 33 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A failed legacy wrapper's (unchecked) offset started the next run; its first record now.
+  - [x] P3 `end()`'s deadline used the wall clock; monotonic now.
+- Verification: unit tests 31-39: 300 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

@@ -692,6 +692,28 @@ describe('Consumer loops (unit)', function () {
             sc.client.warn.args.some(function (a) { return /moved from broker/.test(a[0] + ' ' + a.slice(1).join(' ')); }).should.equal(true);
         });
 
+        it('should keep end()\'s deadline when the wall clock goes back', function () {
+            var sc = makeShareConsumer(), clock, ended, done = false;
+            sc.memberEpoch = 5;
+            sinon.stub(sc.client, 'shareGroupHeartbeatRequest').returns(new Promise(function () {})); // the leave stalls
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+
+            clock = sinon.useFakeTimers(100000);
+            ended = sc.end().then(function () { done = true; });
+            clock.setSystemTime(40000); // the wall clock jumps back a minute
+            return Promise.resolve().then(function () {
+                var i, p = Promise.resolve();
+                for (i = 0; i < 10; i++) { p = p.then(function () { return null; }); }
+                return p;
+            }).then(function () {
+                clock.tick(30000);
+                clock.restore();
+                return Promise.race([ended, promiseUtils.delay(20)]);
+            }).then(function () {
+                done.should.equal(true); // within 30 s, not 90
+            });
+        });
+
         it('should leave the group even when a broker never answers the final acks', function () {
             var sc = makeShareConsumer(), clock, ended;
             twoLeaders(sc);

@@ -489,6 +489,20 @@ describe('Compression limits (unit)', function () {
             });
         });
 
+        it('should not trust a failed legacy wrapper\'s offset to start the next run', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            var bad = { offset: 5, message: { magicByte: 1, attributes: { codec: 1, _raw: 1 }, value: Buffer.from('not gzip') } }; // offset corrupted down
+            return c._decompressShareFetchResults([{
+                topic: 't', partition: 0, messageSet: [legacyWrapper(11, ['a', 'b']), bad, legacyWrapper(15, ['c', 'd'])],
+                acquiredRecords: [{ firstOffset: 10, lastOffset: 15, deliveryCount: 1 }]
+            }]).then(function (r) {
+                r[0].acquiredRecords.should.eql([ // 12-13 (the failed wrapper's real records) still not acknowledgeable
+                    { firstOffset: 10, lastOffset: 11, deliveryCount: 1 },
+                    { firstOffset: 14, lastOffset: 15, deliveryCount: 1 }
+                ]);
+            });
+        });
+
         it('should deliver the legacy share wrappers on either side of one that fails to decode', function () {
             var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
             var bad = { offset: 13, message: { magicByte: 1, attributes: { codec: 1, _raw: 1 }, value: Buffer.from('not gzip') } };
