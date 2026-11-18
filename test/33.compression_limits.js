@@ -159,6 +159,18 @@ describe('Compression limits (unit)', function () {
         });
     }
 
+    [['lz4', 3], ['zstd', 4]].forEach(function (c) {
+        it('should allocate an incompressible ' + c[0] + ' batch\'s size once, not twice', function () {
+            var data = require('crypto').randomBytes(8 * 1024 * 1024), frame;
+            if (!(c[1] === 4 ? zstd : lz4)) { return this.skip(); }
+            frame = c[1] === 4 ? zstd.compress(data) : lz4.encode(data); // stored blocks / a frame larger than its output
+            return bytesAllocated(function () { return compression.decompress(frame, c[1]); }).then(function (r) {
+                r.out.equals(data).should.equal(true);
+                r.bytes.should.be.below(9 * 1024 * 1024); // was 16 MB
+            });
+        });
+    });
+
     it('should not decode a size-less zstd frame past the cap, however large its input', function () {
         var frame;
         if (!zstd) { return this.skip(); }

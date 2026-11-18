@@ -709,7 +709,9 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 An empty compressed legacy set was GAP-acked; rejected now.
   - [x] P2 A fast broker's decoded records waited for the slowest broker; handed out per broker.
   - [x] P3 Send key type accepts boolean and object keys.
-- Verification: unit tests 31-39: 276 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 23 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 Incompressible lz4 and zstd batches were allocated twice (8 MB batch: 16 MB -> 8 MB).
+- Verification: unit tests 31-39: 278 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
