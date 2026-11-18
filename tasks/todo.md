@@ -775,7 +775,15 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
     the same request, as Java's ShareSessionHandler does. Acks no session can carry are dropped.
   - [x] P2 `end()` during the share join's coordinator lookup still sent the join heartbeat.
   - [x] P3 A TLS path holding "-----BEGIN " was taken for PEM; the header must start a line now.
-- Verification: unit tests 31-39: 312 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Live check after round 36: a revoked share partition's acks reach the broker (member B gets none
+  of A's acked records past the 30 s locks; on the round 35 commit B gets them all). Share group
+  integration tests (27, 28): 19 pass, twice.
+- Codex review round 37 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A moved partition's acks rode on both its old broker's (ack-only) and new broker's
+    request; each request now carries only the acks its broker delivered.
+  - [x] P2 A lost session on an ack-only fetch was never handled (filtered before
+    `_partitionError`); request-level failures on ack-only partitions are handled now.
+- Verification: unit tests 31-39: 314 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

@@ -934,6 +934,44 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should send a moved partition\'s acks to the broker that delivered it only', function () {
+            var sc = makeShareConsumer(), calls = {};
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 }; // broker 1's session opens on this fetch: no acks on it
+            sinon.stub(sc, '_buildFetchRequests').returns({ 1: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }] }] }); // t:0 moved to 1
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, only, forgotten, acks) {
+                calls[Object.keys(only)[0]] = acks;
+                return Promise.resolve([]);
+            });
+            sc._closed = true;
+            markDelivered(sc, 't', 0, [1]); // by broker 0
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            return sc._fetch().then(function () {
+                Object.keys(calls['0'].t).should.eql(['0']); // acknowledge-only, to the broker that delivered it
+                should.equal(calls['1'], null); // not on the opening request of its new leader
+            });
+        });
+
+        it('should handle a lost session on a fetch carrying only acknowledgements', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({}); // t:0 revoked
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, only) {
+                return Promise.resolve(only['0'][0].partitions.map(function (q) {
+                    return { topic: 't', partition: q.partition, leader: '0', notFetched: true, error: errors.byName('ShareSessionNotFound') };
+                }));
+            });
+            sc._closed = true;
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            return sc._fetch().then(function () {
+                should.not.exist(sc.shareSessionEpochs[0]); // forgotten, not retried every poll
+            });
+        });
+
         it('should drop acks no share session can carry, and keep those a fetch will', function () {
             var sc = makeShareConsumer();
             twoLeaders(sc);
