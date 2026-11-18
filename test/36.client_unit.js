@@ -409,6 +409,14 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should not wait for a coordinator lookup still in progress when it ends', function () {
+            var c = makeClient();
+            c.initialBrokers = [];
+            c.groupCoordinators.g = new Promise(function () {}); // FindCoordinator still in flight
+
+            return c.end();
+        });
+
         it('should close a coordinator socket still waiting for its ApiVersions reply when it ends', function () {
             var c = makeClient(), conn = fakeConn('coord:1');
             conn.close = sinon.spy();

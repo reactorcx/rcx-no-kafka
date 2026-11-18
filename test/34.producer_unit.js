@@ -171,6 +171,24 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should start a recreated topic\'s partition at sequence 0', function () {
+            var p = makeIdempotentProducer(), seqs = [];
+            p.client.topicIds.t = 'id-old';
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                seqs.push(requests[0]._baseSequence);
+                return Promise.resolve([{ topic: 't', partition: 0, offset: 0 }]);
+            });
+
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function () {
+                return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
+            }).then(function () {
+                p.client.topicIds.t = 'id-new'; // a refresh between sends learned it was recreated
+                return p.send({ topic: 't', partition: 0, message: { value: 'c' } });
+            }).then(function () {
+                seqs.should.eql([0, 1, 0]);
+            });
+        });
+
         it('should give one result per partition when retries run out', function () {
             var p = new Kafka.Producer({ clientId: 'producer-unit' }), msgs;
             sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));

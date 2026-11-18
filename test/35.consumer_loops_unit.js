@@ -476,6 +476,24 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should try to close a session the first fetch may have opened when its reply was unreadable', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = {}; // epoch 0: this fetch opens the session
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function () {
+                return Promise.reject(new RangeError('Trying to access beyond buffer length'));
+            });
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+
+            return sc._fetch().then(function () {
+                return sc.end();
+            }).then(function () {
+                sc.client.shareAcknowledgeRequest.args.map(function (a) { return Object.keys(a[3]); }).should.eql([['0']]);
+            });
+        });
+
         it('should leave the group even when a broker never answers the final acks', function () {
             var sc = makeShareConsumer(), clock, ended;
             twoLeaders(sc);
