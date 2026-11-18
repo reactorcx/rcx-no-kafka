@@ -1078,6 +1078,37 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should not advance the session epoch for a fetch the broker never took', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([
+                { topic: 't', partition: 0, leader: '0', notFetched: true, error: errors.byName('LeaderNotAvailable'), messageSet: [] }
+            ]));
+            sinon.stub(sc.client, 'updateMetadata').returns(Promise.resolve());
+
+            sc._closed = true;
+            return sc._fetch().then(function () {
+                sc.shareSessionEpochs.should.eql({ 0: 4 }); // not 5: the broker is still at 4
+            });
+        });
+
+        it('should send final acks under the topic ID of the delivery, not a lagging cache\'s', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 };
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sc._delivered({ topic: 't', topicId: 'id-new', partition: 0, leader: '0', acquiredRecords: [{ firstOffset: 1, lastOffset: 1 }] });
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+            sc.client.topicIds.t = 'id-old'; // a lagging metadata broker
+
+            return sc.end().then(function () {
+                sc.client.shareAcknowledgeRequest.args[0][3][0][0].topicId.should.equal('id-new');
+            });
+        });
+
         it('should send no more final ack rounds once the leave has started', function () {
             var sc = makeShareConsumer(), clock, ended, first;
             twoLeaders(sc);

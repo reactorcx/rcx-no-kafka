@@ -721,7 +721,11 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
 - Codex review round 26 (gpt-6.2-sol, xhigh, Fast):
   - [x] P2 Variadic apply on a 150,000-ack queue overflowed the stack; reduce/flat now.
   - [x] P2 Final ack rounds went on after the leave started; each checks the cutoff now.
-- Verification: unit tests 31-39: 285 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 27 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A ShareFetch the broker never took still advanced the session epoch; not now.
+  - [x] P2 Final acks went under a lagging cache's topic ID; under the delivery's now.
+  - [x] P2 Empty stored LZ4 blocks were kept, unbounded by the cap; skipped now.
+- Verification: unit tests 31-39: 289 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

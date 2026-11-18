@@ -603,6 +603,22 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should send ShareAcknowledge under the topic ID it is given', function () {
+            var c = makeClient(), writer = c.protocol.write(), topics;
+            c.topicIds.t = '00000000-0000-0000-0000-0000000000aa'; // a lagging cache
+            c.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
+            sinon.spy(writer, 'ShareAcknowledgeRequestV1');
+
+            return c.shareAcknowledgeRequest('g', 'm', -1, { 0: [{ topicName: 't', topicId: '00000000-0000-0000-0000-0000000000bb', partitions: [{
+                partitionIndex: 0, acknowledgementBatches: [{ firstOffset: 1, lastOffset: 1, acknowledgeTypes: [1], topicId: '00000000-0000-0000-0000-0000000000bb' }]
+            }] }] }).then(function () {
+                topics = writer.ShareAcknowledgeRequestV1.args[0][0].topics;
+                writer.ShareAcknowledgeRequestV1.restore();
+                topics[0].topicId.should.equal('00000000-0000-0000-0000-0000000000bb');
+                topics[0].partitions[0].acknowledgementBatches.should.have.length(1); // not filtered out as stale
+            });
+        });
+
         it('should report a close-only ShareAcknowledge failure, and a broker it has no connection to', function () {
             var c = makeClient();
             c.brokerConnections = { 0: fakeConn('b0:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b0:1', 'down')); }) };

@@ -238,6 +238,21 @@ describe('Compression limits (unit)', function () {
         });
     });
 
+    it('should keep nothing for empty stored lz4 blocks', function () {
+        var blocks = [], i, empty = Buffer.alloc(4), spy, frame;
+        if (!lz4) { return this.skip(); }
+        empty.writeUInt32LE(0x80000000, 0); // a stored block of 0 bytes
+        for (i = 0; i < 100000; i++) { blocks.push(empty); }
+        frame = lz4Frame(0x40, blocks);
+        spy = sinon.spy(Buffer, 'concat');
+        return compression.decompress(frame, 3).finally(function () {
+            spy.restore();
+        }).then(function (out) {
+            out.length.should.equal(0);
+            spy.args.some(function (a) { return a[0].length >= 100000; }).should.equal(false); // no slice kept per empty block
+        });
+    });
+
     it('should reject lz4 skippable frames and bad checksums', function () {
         var frame, corrupt;
         if (!lz4) { return this.skip(); }
