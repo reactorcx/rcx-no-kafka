@@ -676,7 +676,12 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P1 A topic ID flipping back (A -> B -> A) reused sequence 0 for A; per-ID sequences now.
   - [x] P2 Round 12 left legacy MessageSet share records unacknowledgeable; fixed.
   - [x] P2 ShareFetch went out a microtask after the `end()` check; same turn now.
-- Verification: unit tests 31-39: 258 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 16 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 Per-ID counters (round 15) could still reuse a sequence by name on Produce < v13; a
+        topic-ID change now fails the send and starts a fresh epoch instead.
+  - [x] P1 Compressed legacy share records were delivered as their wrapper and the rest GAP-acked;
+        expanded now. Also resolved magic-1 relative inner offsets (regular consumer too).
+- Verification: unit tests 31-39: 261 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

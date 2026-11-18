@@ -201,40 +201,31 @@ describe('Producer (unit)', function () {
             });
         });
 
-        it('should keep each topic ID\'s sequence when metadata flips back to an earlier ID', function () {
-            var p = makeIdempotentProducer(), seqs = [];
-            function send(id, v) {
-                p.client.topicIds.t = id;
-                return p.send({ topic: 't', partition: 0, message: { value: v } });
-            }
-            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
-                seqs.push(requests[0]._baseSequence);
-                return Promise.resolve([{ topic: 't', partition: 0, offset: 0 }]);
-            });
+        [
+            ['recreated', ['A', 'A', 'B', 'B'], [[0, 0], [1, 0], null, [0, 1]]],
+            ['flips back to an earlier ID', ['A', 'B', 'A', 'A'], [[0, 0], null, [0, 1], [1, 1]]] // a new epoch: A from 0 is safe
+        ].forEach(function (c) {
+            it('should fail a send whose topic ID changed and start a fresh epoch (' + c[0] + ')', function () {
+                var p = makeIdempotentProducer(), sent = [], results = [], epoch = 0;
+                sinon.stub(p.client, '_findTransactionCoordinator');
+                sinon.stub(p.client, 'initProducerIdRequest').callsFake(function () {
+                    return Promise.resolve({ producerId: 1, producerEpoch: ++epoch });
+                });
+                sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                    sent.push([requests[0]._baseSequence, p.client.producerEpoch]);
+                    return Promise.resolve([{ topic: 't', partition: 0, offset: 0 }]);
+                });
 
-            return send('A', 'a').then(function () { return send('A', 'b'); })
-            .then(function () { return send('B', 'c'); }) // brokers briefly disagree during a recreation
-            .then(function () { return send('A', 'd'); })
-            .then(function () {
-                seqs.should.eql([0, 1, 0, 2]); // A's log goes on at 2: a reused 0 would be taken as a duplicate
-            });
-        });
-
-        it('should start a recreated topic\'s partition at sequence 0', function () {
-            var p = makeIdempotentProducer(), seqs = [];
-            p.client.topicIds.t = 'id-old';
-            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
-                seqs.push(requests[0]._baseSequence);
-                return Promise.resolve([{ topic: 't', partition: 0, offset: 0 }]);
-            });
-
-            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function () {
-                return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
-            }).then(function () {
-                p.client.topicIds.t = 'id-new'; // a refresh between sends learned it was recreated
-                return p.send({ topic: 't', partition: 0, message: { value: 'c' } });
-            }).then(function () {
-                seqs.should.eql([0, 1, 0]);
+                return c[1].reduce(function (prev, id, i) {
+                    return prev.then(function () {
+                        p.client.topicIds.t = id;
+                        return p.send({ topic: 't', partition: 0, message: { value: 'v' + i } });
+                    }).then(function (r) { results.push(r[0].error ? null : sent[sent.length - 1]); });
+                }, Promise.resolve()).then(function () {
+                    // same epoch, the new log could take a sequence it reuses as a duplicate: the send that
+                    // sees the change fails (UnknownTopicId), the next one goes out under a new epoch from 0
+                    results.should.eql(c[2]);
+                });
             });
         });
 

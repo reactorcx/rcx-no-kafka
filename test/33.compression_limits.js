@@ -370,11 +370,42 @@ describe('Compression limits (unit)', function () {
             var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
             return c._decompressShareFetchResults([{
                 topic: 't', partition: 0,
-                messageSet: [{ offset: 5, message: { value: Buffer.from('a') } }, { offset: 6, _partial: true }],
+                messageSet: [{ offset: 5, message: { attributes: { codec: 0 }, value: Buffer.from('a') } }, { offset: 6, _partial: true }],
                 acquiredRecords: [{ firstOffset: 5, lastOffset: 6, deliveryCount: 1 }]
             }]).then(function (r) {
                 r[0].messageSet.map(function (m) { return m.offset; }).should.eql([5]);
                 r[0].acquiredRecords.should.eql([{ firstOffset: 5, lastOffset: 5, deliveryCount: 1 }]);
+            });
+        });
+
+        // a magic-1 gzip wrapper at offset `at` holding values with relative inner offsets 0..n-1
+        function legacyWrapper(at, values) {
+            var inner = Buffer.from(protocol.write().MessageSet(values.map(function (v, i) {
+                return { offset: i, message: { magicByte: 0, value: Buffer.from(v) } };
+            })).result);
+            return { offset: at, message: { magicByte: 1, attributes: { codec: 1, _raw: 1 }, value: zlib.gzipSync(inner) } };
+        }
+
+        it('should expand a compressed legacy share wrapper to its records at their absolute offsets', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            return c._decompressShareFetchResults([{
+                topic: 't', partition: 0, messageSet: [legacyWrapper(11, ['a', 'b'])],
+                acquiredRecords: [{ firstOffset: 10, lastOffset: 11, deliveryCount: 1 }]
+            }]).then(function (r) {
+                offsets(r[0]).should.eql([10, 11]); // not the wrapper alone: offset 10 is a record, not a gap
+                r[0].acquiredRecords.should.eql([{ firstOffset: 10, lastOffset: 11, deliveryCount: 1 }]);
+            });
+        });
+
+        it('should acknowledge nothing past a legacy share wrapper that fails to decode', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            var bad = { offset: 13, message: { magicByte: 1, attributes: { codec: 1, _raw: 1 }, value: Buffer.from('not gzip') } };
+            return c._decompressShareFetchResults([{
+                topic: 't', partition: 0, messageSet: [legacyWrapper(11, ['a', 'b']), bad],
+                acquiredRecords: [{ firstOffset: 10, lastOffset: 13, deliveryCount: 1 }]
+            }]).then(function (r) {
+                offsets(r[0]).should.eql([10, 11]);
+                r[0].acquiredRecords.should.eql([{ firstOffset: 10, lastOffset: 11, deliveryCount: 1 }]); // 12-13 redelivered
             });
         });
 

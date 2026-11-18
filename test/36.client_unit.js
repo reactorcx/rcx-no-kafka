@@ -107,6 +107,19 @@ describe('Client (unit)', function () {
     });
 
     describe('legacy MessageSet compression', function () {
+        it('should give the inner messages of a magic-1 wrapper their absolute offsets', function () {
+            var c = makeClient();
+            var inner = Buffer.from(c.protocol.write().MessageSet([
+                { offset: 0, message: { value: Buffer.from('a') } },
+                { offset: 1, message: { value: Buffer.from('b') } }
+            ]).result);
+            var wrapper = { magicByte: 1, attributes: { _raw: 0x01, codec: 1 }, value: require('zlib').gzipSync(inner) };
+
+            return c._decompressMessageSet(wrapper, 41).then(function (messages) {
+                messages.map(function (m) { return m.offset; }).should.eql([40, 41]); // inner offsets are relative
+            });
+        });
+
         it('should give the inner messages of a LogAppendTime wrapper its timestamp', function () {
             var c = makeClient();
             var inner = Buffer.from(c.protocol.write().MessageSet([

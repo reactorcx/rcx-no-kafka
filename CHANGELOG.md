@@ -8,9 +8,10 @@
 - `ShareConsumer.acknowledge()` takes a delivery's records only while its handler runs (as Java takes them only until the next `poll()`); later acks are logged and the records redelivered
 - `ShareConsumer.end()` sends the acknowledgements made so far, closes every open share session and leaves within 30 s, without waiting for running handlers; nothing is fetched or delivered after it
 - `ShareConsumer` acknowledges acquired offsets that hold no record as gaps (as Java does), and sends acks to the broker that delivered the records
-- An idempotent batch is no longer retried after `UnknownTopicId`/`InconsistentTopicId` (the topic was recreated): it fails, and the next send starts a fresh sequence space
+- An idempotent send that finds its topic recreated (a new topic ID) fails with `UnknownTopicId` instead of reusing the old log's sequence numbers; the next send starts a fresh producer epoch
 
 ### Fixed
+- Compressed legacy (magic 1) messages are delivered at their absolute offsets; their inner offsets were relative
 - `DefaultPartitioner` hashed a number key as that many zero bytes, and threw on negative, boolean and object keys
 - `HashCRC32Partitioner` sent every number key to partition 0 and threw on Buffer keys
 
