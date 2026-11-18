@@ -696,7 +696,15 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 A topic ID tied at dispatch was lost with the stamps; it becomes the partition's now.
   - [x] P2 Rebootstrap and late metadata responses reopened connections after `end()`.
   - [x] P2 A partition's metadata recovery held up the share fetch round; background now.
-- Verification: unit tests 31-39: 271 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 21 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 Background metadata refreshes piled up per poll; one at a time now, topics merged.
+  - [x] P2 A rejoin landing during `end()`'s ack phase sent its leave ahead of the acks.
+- Re-verified after round 20: full suite on a fresh 4.2.0 broker, 787 pass, same 10 failures as
+  `master`; live topic recreate 10/10; live share acks on `end()` applied (the check script now
+  waits 3 s before producing: the broker initializes the share partition at the latest offset on
+  the first fetch, and records produced before that were skipped, which first looked like a
+  regression).
+- Verification: unit tests 31-39: 273 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

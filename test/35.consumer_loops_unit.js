@@ -336,6 +336,25 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should keep one background metadata refresh in flight however often it polls', function () {
+            var sc = makeShareConsumer(), finish, i;
+            sinon.stub(sc.client, 'updateMetadata').returns(new Promise(function (resolve) { finish = resolve; })); // stalled
+            sc._refreshMetadata(['t']);
+            return promiseUtils.delay(0).then(function () {
+                for (i = 0; i < 50; i++) { // polls while it is stalled
+                    sc._refreshMetadata(['t']);
+                    sc._refreshMetadata(['u']);
+                }
+                sc.client.updateMetadata.callCount.should.equal(1);
+                sc.client.updateMetadata.returns(Promise.resolve());
+                finish();
+                return sc._refreshing;
+            }).then(function () {
+                sc.client.updateMetadata.callCount.should.equal(2); // once more, for everything asked meanwhile
+                sc.client.updateMetadata.args[1][0].sort().should.eql(['t', 'u']);
+            });
+        });
+
         it('should refresh metadata while it is another topic\'s than the assignment names', function () {
             var sc = makeShareConsumer();
             sc.assignedPartitions = { 'id-new': [0] }; // the assignment already names the recreated topic
@@ -1186,6 +1205,44 @@ describe('Consumer loops (unit)', function () {
             }).then(function () {
                 gc.client.leaveGroupRequest.lastCall.args.should.eql(['gc-unit-race', 'me']);
                 gc._runHeartbeat.callCount.should.equal(0);
+            });
+        });
+
+        it('ShareConsumer: a join landing while end() sends its final acks should leave after them', function () {
+            var sc = new Kafka.ShareConsumer({ clientId: 'unit-sc', groupId: 'sc-unit-race' });
+            var order = [], resolveJoin, ackDone, joinP, endP;
+
+            sc._topics = ['t'];
+            sc._handler = noop;
+            sc.client.topicMetadata = Object.create(null);
+            sc.client.topicMetadata.t = { 0: { partitionId: 0, leader: 0 } };
+            sc.shareSessionEpochs = { 0: 3 };
+            sinon.stub(sc.client, 'updateGroupCoordinator').returns(Promise.resolve());
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').callsFake(function () {
+                order.push('acks');
+                return new Promise(function (resolve) { ackDone = resolve; });
+            });
+            sinon.stub(sc.client, 'shareGroupHeartbeatRequest').callsFake(function (gid, mid, epoch) {
+                if (epoch === 0) { return new Promise(function (resolve) { resolveJoin = resolve; }); }
+                order.push('leave');
+                return Promise.resolve({});
+            });
+
+            joinP = sc._join(); // a rejoin in flight
+            return promiseUtils.delay(5).then(function () {
+                endP = sc.end();
+                return promiseUtils.delay(5);
+            }).then(function () {
+                resolveJoin({ memberId: sc.memberId, memberEpoch: 7, heartbeatIntervalMs: 100000, assignment: null });
+                return promiseUtils.delay(5);
+            }).then(function () {
+                order.should.eql(['acks']); // the leave waits for the acks
+                ackDone([]);
+                return Promise.all([endP, joinP]);
+            }).then(function () {
+                clearTimeout(sc._heartbeatTimeout);
+                order.should.eql(['acks', 'leave']);
             });
         });
 
