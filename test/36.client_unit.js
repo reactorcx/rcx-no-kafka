@@ -727,6 +727,23 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should not fetch by name a topic recreated since the caller\'s offsets were taken', function () {
+            var c = makeClient(), writer = c.protocol.write();
+            c.topicIds.t = '00000000-0000-0000-0000-0000000000bb'; // recreated
+            c.topicIds.u = '00000000-0000-0000-0000-0000000000cc';
+            c.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
+            c.brokerConnections[0].apiVersions = { 1: { min: 0, max: 12 } }; // Kafka 2.8: IDs in metadata, Fetch by name
+            sinon.spy(writer, 'FetchRequestV12');
+
+            return c.fetchRequest({ 0: [
+                { topicName: 't', topicId: '00000000-0000-0000-0000-0000000000aa', partitions: [{ partition: 0, offset: 50, maxBytes: 1024 }] },
+                { topicName: 'u', topicId: '00000000-0000-0000-0000-0000000000cc', partitions: [{ partition: 0, offset: 7, maxBytes: 1024 }] }
+            ] }).then(function (r) {
+                writer.FetchRequestV12.args[0][0].topics.map(function (t) { return t.topicName; }).should.eql(['u']);
+                r.filter(function (p) { return p.topic === 't'; })[0].error.code.should.equal('UnknownTopicId');
+            });
+        });
+
         it('should split a Produce mixing topics with and without IDs, keeping v13 for those with', function () {
             var c = makeClient(), versions = [];
             c.topicIds.a = '00000000-0000-0000-0000-0000000000aa';

@@ -1051,6 +1051,30 @@ describe('Consumer loops (unit)', function () {
             sc._pendingAcks['t:0'].batches.map(function (b) { return b.acknowledgeTypes[0]; }).should.eql([2]);
         });
 
+        it('should not hold up the fetch rounds for a former broker\'s acknowledge-only request', function () {
+            var sc = makeShareConsumer(), sent = [];
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2, 1: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }] }] }); // t:1 revoked
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, only) {
+                var l = Object.keys(only)[0];
+                sent.push(l);
+                return l === '1' ? new Promise(function () {}) : Promise.resolve([]); // broker 1 never answers
+            });
+            sc._closed = true;
+            markDelivered(sc, 't', 1, [1]); // delivered by broker 1
+            sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
+
+            return Promise.race([sc._fetch().then(function () { return 'done'; }), promiseUtils.delay(500).then(function () { return 'stuck'; })])
+            .then(function (r) {
+                r.should.equal('done');
+                return sc._fetch(); // the next round: broker 0 again, nothing more on broker 1's session
+            }).then(function () {
+                sent.should.eql(['0', '1', '0']);
+                should.exist(sc._fetchRequests['1']); // end() still waits for it
+            });
+        });
+
         it('should close an idle broker\'s reopening session with its queued acks', function () {
             var sc = makeShareConsumer();
             twoLeaders(sc);

@@ -806,7 +806,15 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 Subscriptions from before topic IDs never got one; bound to the first seen.
   - Integration (02, 03, 05, 06): 29 pass, 1 baseline failure (clean shutdown, init timeout); live
     recreation check: 100 of 100.
-- Verification: unit tests 31-39: 326 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 42 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A former broker's ack-only fetch or idle close gated every round; not waited for now
+    (one per broker at a time, `end()` still waits).
+  - [x] P2 Fetch < v13 could read a recreated topic by name at the old offsets; not sent now.
+  - [ ] P2 Don't close a coordinator socket on a request timeout: **declined**. Java's
+    NetworkClient disconnects a node on a request timeout, and Kafka answers a connection's
+    requests in order, so a later request on it can't be answered before the timed-out one.
+  - Share integration (27, 28): 19 pass; live revoked-ack check still applies the acks.
+- Verification: unit tests 31-39: 328 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
