@@ -1269,11 +1269,51 @@ describe('Consumer loops (unit)', function () {
             sc._closed = true;
             markDelivered(sc, 't', 1, [1]);
             sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
-            sc._pendingAcks['t:1'].queuedAt -= 61000;
+            sc._pendingAcks['t:1'].batches.forEach(function (b) { b._at -= 61000; });
 
             return sc._fetch().then(function () {
                 Object.keys(sc._pendingAcks).should.eql([]); // not drained, failed and requeued with a fresh time
                 should.equal(sc.client.shareFetchRequest.args[0][5], null);
+            });
+        });
+
+        it('should expire an absent broker\'s queued acks by delivery, keeping the recent ones', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            delete sc.client.brokerConnections[1];
+            sinon.stub(sc, '_buildFetchRequests').returns({});
+            sc._closed = true;
+            markDelivered(sc, 't', 1, [1]);
+            sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
+            sc._pendingAcks['t:1'].batches[0]._at -= 61000; // an old delivery's ack...
+            markDelivered(sc, 't', 1, [5]);
+            sc.acknowledge({ topic: 't', partition: 1, offset: 5 }); // ...and one made just now, same entry
+
+            return sc._fetch().then(function () {
+                sc._pendingAcks['t:1'].batches.map(function (b) { return b.firstOffset; }).should.eql([5]);
+            });
+        });
+
+        it('GroupConsumer: end() at any point after a join reply, before its member ID is stored, should leave with it', function () {
+            var depths = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+            function at(depth) { // end() this many microtasks after the reply
+                var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-race', logger: { logLevel: 0 } });
+                var answer, p = Promise.resolve(), i;
+                sinon.stub(gc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
+                sinon.stub(gc.client, 'joinConsumerGroupRequest').returns(new Promise(function (resolve) { answer = resolve; }));
+                sinon.stub(gc.client, 'leaveGroupRequest').returns(Promise.resolve());
+                sinon.stub(gc.client, 'end').returns(Promise.resolve());
+                gc._joinGroup().catch(noop);
+                return promiseUtils.delay(5).then(function () {
+                    answer({ memberId: 'me', leaderId: 'x', generationId: 1, members: [] });
+                    for (i = 0; i < depth; i++) { p = p.then(noop); }
+                    return p.then(function () { return gc.end(); });
+                }).then(function () {
+                    return gc.client.leaveGroupRequest.callCount === 1 && gc.client.leaveGroupRequest.args[0][1] === 'me';
+                });
+            }
+            return Promise.all(depths.map(at)).then(function (left) {
+                depths.filter(function (d, i) { return !left[i]; }).should.eql([]); // depths at which it didn't leave
             });
         });
 
@@ -1291,7 +1331,7 @@ describe('Consumer loops (unit)', function () {
             return sc._fetch().then(function () {
                 sc.client.shareFetchRequest.callCount.should.equal(0); // not every poll
                 Object.keys(sc._pendingAcks).should.eql(['t:1']); // in case it comes back
-                sc._pendingAcks['t:1'].queuedAt -= 61000;
+                sc._pendingAcks['t:1'].batches.forEach(function (b) { b._at -= 61000; });
                 return sc._fetch();
             }).then(function () {
                 Object.keys(sc._pendingAcks).should.eql([]);

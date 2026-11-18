@@ -846,7 +846,14 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
     **declined**. ListOffsets has no topic ID in any version (1-11); a check would need a separate
     Metadata request to that broker, for a race needing the leader's metadata to lag the cluster's.
   - Integration (02, 03, 27, 28): 48 pass, 1 baseline failure; live revoked acks applied.
-- Verification: unit tests 31-39: 342 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 48 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 The JoinGroup marker was cleared before the member ID was stored; now after the reply is
+    processed (not reproducible by microtask ordering on the old code; guarded at every depth).
+  - [x] P2 Absent-broker acks expired by queue-entry age; per delivery now.
+  - Integration (03, 28): 17 pass and the baseline failure, 4 runs; one run also failed the
+    piggybacked-acks share test (`pollUntil` timeout), which passed in 3 solo runs and the other
+    combined runs: the same intermittent failure seen once before Phase 2 round 1.
+- Verification: unit tests 31-39: 344 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
