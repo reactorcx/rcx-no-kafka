@@ -1040,6 +1040,13 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should not fetch the old member\'s assignment as the new one', function () {
+            var sc = makeShareConsumer();
+            sc.assignedPartitions = { 'id-1': [0] };
+            sc._newMember();
+            sc.assignedPartitions.should.eql({}); // until the coordinator gives the new member its own
+        });
+
         it('should leave the old member\'s sessions, acks and fetch behind when it rejoins as a new one', function () {
             var sc = makeShareConsumer(), oldMember = sc.memberId, finish, p;
             twoLeaders(sc);

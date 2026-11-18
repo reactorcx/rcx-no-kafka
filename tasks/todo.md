@@ -685,7 +685,11 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 A truncated inner legacy message set was rebased to wrong offsets; rejected now.
   - [x] P2 Metadata for the old topic ID stalled an assigned share partition; refreshed now.
   - [x] P3 `FetchOptions` fields required.
-- Verification: unit tests 31-39: 263 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 18 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A batch stamped before its topic had an ID escaped the recreated check; bound now.
+  - [x] P2 A replaced share member kept fetching the old assignment; cleared now.
+  - [x] P2 zstd's 128 MB window limit rejected valid frames under a raised cap; follows the cap.
+- Verification: unit tests 31-39: 266 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

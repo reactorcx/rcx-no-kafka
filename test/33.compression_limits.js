@@ -159,6 +159,28 @@ describe('Compression limits (unit)', function () {
         });
     }
 
+    it('should decode a zstd frame whose window fits a raised maxOutputSize', function () {
+        var binding, cctx, out = Buffer.alloc(1 << 16), parts = [], r, src = Buffer.from('hello'), frame;
+        if (!zstd) { return this.skip(); }
+        binding = require('zstd-napi/binding');
+        cctx = new binding.CCtx();
+        cctx.setParameter(binding.CParameter.windowLog, 28); // a 256 MB window, no content size
+        do {
+            r = cctx.compressStream2(out, src, binding.EndDirective.continue);
+            parts.push(Buffer.from(out.subarray(0, r[1])));
+            src = src.subarray(r[2]);
+        } while (src.length > 0);
+        do {
+            r = cctx.compressStream2(out, Buffer.alloc(0), binding.EndDirective.end);
+            parts.push(Buffer.from(out.subarray(0, r[1])));
+        } while (r[0] !== 0);
+        frame = Buffer.concat(parts);
+        compression.maxOutputSize = 300 * 1024 * 1024; // zstd's own default limit is 128 MB
+        return compression.decompress(frame, 4).then(function (o) {
+            o.toString().should.equal('hello');
+        });
+    });
+
     it('should not allocate per zstd frame when a batch holds many tiny frames', function () {
         var frames = [], i;
         if (!zstd) { return this.skip(); }

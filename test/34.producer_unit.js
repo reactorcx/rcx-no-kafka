@@ -186,6 +186,23 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should bind a retry stamped before its topic had an ID to the first ID it was sent with', function () {
+            var p = makeIdempotentProducer(), sentIds = [];
+            sinon.stub(p.client, 'updateMetadata').callsFake(function () {
+                p.client.topicIds.t = sentIds.length === 1 ? 'id-1' : 'id-2'; // learns an ID, then the topic is recreated
+                return Promise.resolve();
+            });
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                sentIds.push(requests[0]._topicId);
+                return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('RequestTimedOut') }]);
+            });
+
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }, { retries: FAST_RETRIES }).then(function (result) {
+                sentIds.should.eql([undefined, 'id-1']); // never sent to id-2's log
+                result[0].error.code.should.equal('UnknownTopicId');
+            });
+        });
+
         it('should keep a partition\'s sequence when its topic first gets an ID (broker upgrade)', function () {
             var p = makeIdempotentProducer(), seqs = [];
             sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
