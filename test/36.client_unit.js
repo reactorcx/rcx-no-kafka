@@ -498,6 +498,17 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should send ShareFetch without waiting for a metadata refresh in flight', function () {
+            var c = makeClient(), sent = false;
+            c._updateMetadata_pending = true;
+            c._updateMetadata_running = new Promise(function () {}); // its caller has already waited; a new one started since
+            c.brokerConnections = { 0: fakeConn('b0:1', function () { sent = true; return Promise.reject(new errors.NoKafkaConnectionError('b0:1', 'down')); }) };
+
+            return c.shareFetchRequest('g', 'm', { 0: 1 }, { 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] }, null, null).then(function () {
+                sent.should.equal(true);
+            });
+        });
+
         it('should send ShareAcknowledge without waiting for a metadata refresh in flight', function () {
             var c = makeClient(), sent = false;
             c._updateMetadata_pending = true;

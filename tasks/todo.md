@@ -668,7 +668,11 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 A stamped batch whose topic was recreated during compression was still sent by name.
   - [x] P2 Topic-ID errors kept retrying a stamped batch when the refresh learned no new ID.
   - [x] P2 After UnknownMemberId the old member's sessions and acks were sent as the new member.
-- Verification: unit tests 31-39: 252 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 14 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A broker that answered before a member change had its records delivered to the new one.
+  - [x] P2 ShareFetch waited for metadata again before sending, opening a gap for `end()`.
+  - [x] P3 A broker answering after the acks' deadline still started final acks during the leave.
+- Verification: unit tests 31-39: 255 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

@@ -1051,6 +1051,57 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should deliver nothing from a broker that answered before the member was replaced', function () {
+            var sc = makeShareConsumer(), finish, p, called = false;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2, 1: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({
+                0: [{ topicName: 't', partitions: [{ partition: 0 }] }],
+                1: [{ topicName: 't', partitions: [{ partition: 1 }] }]
+            });
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, requests) {
+                if (requests[1]) { return new Promise(function (resolve) { finish = resolve; }); }
+                return Promise.resolve([{ topic: 't', topicId: 'id-1', partition: 0, leader: '0',
+                    messageSet: [{ offset: 1, message: { value: Buffer.from('x') } }], acquiredRecords: [{ firstOffset: 0, lastOffset: 1 }] }]);
+            });
+            sc._handler = function () { called = true; return Promise.resolve(); };
+
+            p = sc._fetch();
+            return promiseUtils.delay(5).then(function () { // broker 0 has answered; broker 1 hasn't
+                sc._newMember();
+                finish([]);
+                sc._closed = true;
+                return p;
+            }).then(function () {
+                called.should.equal(false);
+                Object.keys(sc._pendingAcks).should.eql([]); // no gap acks under the new member either
+            });
+        });
+
+        it('should not send a broker\'s final acks once the leave has begun', function () {
+            var sc = makeShareConsumer(), clock, ended, answer;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 1: 2 };
+            sc.memberEpoch = 5;
+            sc._fetchRequests = { 1: new Promise(function (resolve) { answer = resolve; }) }; // broker 1's fetch in flight
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'shareGroupHeartbeatRequest').returns(Promise.resolve({}));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sinon.spy(sc.client, 'warn');
+
+            clock = sinon.useFakeTimers();
+            ended = sc.end();
+            clock.tick(25000);
+            clock.restore();
+            return ended.then(function () {
+                answer(); // answers after the deadline, the leave already sent
+                return promiseUtils.delay(5);
+            }).then(function () {
+                sc.client.shareAcknowledgeRequest.callCount.should.equal(0);
+                sc.client.warn.args.some(function (a) { return /after the acknowledgement deadline/.test(a.join(' ')); }).should.equal(true);
+            });
+        });
+
         it('should rejoin on FencedMemberEpoch', function () {
             var sc = makeShareConsumer();
             var epochsSent = [];
