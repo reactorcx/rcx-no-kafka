@@ -757,7 +757,18 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
     `sessionTimeout`) and leaves with it, no second join is sent after `end()`, and no join starts
     after it. The late leave in `_fullRejoin` (sent on a closed client) is gone.
   - [x] P3 Final ack requests looked topics up by scan; a map now (30,000 topics: ~1 s before).
-- Verification: unit tests 31-39: 303 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 35 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A moved partition stayed in the old broker's share session; forgotten now, and a reply
+    for a partition not asked of a broker is ignored.
+  - [x] P2 A top-level ShareFetch error after the session advanced kept the old epoch; only errors
+    Kafka returns before the session moves keep it now, others reopen.
+  - [x] P2 A GroupConsumer join retried after `end()` (GroupCoordinatorNotAvailable backoff); no
+    join is sent once `end()` has run.
+  - [x] P3 Share handler queue used `shift()`; an index now.
+  - [x] P3 Mixed-ID produce split scanned `withId` per topic; the ID predicate now (no timing test:
+    60,000 topics run 0.5 s vs 1.2 s end to end, too close to the fixture's own cost to assert).
+- Full suite after round 34 on a fresh 4.2.0 broker: 819 pass, same 10 failures as `master`.
+- Verification: unit tests 31-39: 308 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

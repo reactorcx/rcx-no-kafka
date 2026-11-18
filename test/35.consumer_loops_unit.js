@@ -543,6 +543,63 @@ describe('Consumer loops (unit)', function () {
 
         function record(offset) { return { offset: offset, message: { value: Buffer.from('v') } }; }
 
+        it('should forget a partition that moved to another broker, and ignore the old broker\'s reply for it', function () {
+            var sc = makeShareConsumer(), calls = [], handled = [], round = 0;
+            sc.shareSessionEpochs = { 0: 1 };
+            sc._closed = true; // one fetch per call
+            sc._handler = function (messageSet, topic, partition) { handled.push([topic, partition, messageSet[0].offset]); };
+            sinon.stub(sc, '_buildFetchRequests').callsFake(function () {
+                return round === 0 ? { 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }, { partition: 1 }] }] }
+                    : { 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 1 }] }], 1: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }] }] };
+            });
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, epochs, only, forgotten) {
+                var l = Object.keys(only)[0];
+                calls.push([l, epochs[l], forgotten]);
+                if (round === 0) { return Promise.resolve([]); }
+                return Promise.resolve([{ topic: 't', topicId: 'id1', partition: 0, leader: l, // both answer for t:0
+                    messageSet: [record(l === '0' ? 5 : 9)], acquiredRecords: [{ firstOffset: l === '0' ? 5 : 9, lastOffset: l === '0' ? 5 : 9, deliveryCount: 1 }] }]);
+            });
+            return sc._fetch().then(function () {
+                round = 1; // t:0 moved to broker 1
+                return sc._fetch();
+            }).then(function () {
+                calls.should.eql([
+                    ['0', 1, []],
+                    ['0', 2, [{ topicId: 'id1', partitions: [0] }]], // the old session lets go of it
+                    ['1', 0, []]
+                ]);
+                handled.should.eql([['t', 0, 9]]); // the new leader's delivery only
+            });
+        });
+
+        [['Unknown', undefined], ['InvalidRequest', 3]].forEach(function (c) {
+            it('should ' + (c[1] ? 'keep' : 'reopen') + ' the share session after a top-level ' + c[0] + ' error', function () {
+                var sc = makeShareConsumer();
+                sc.shareSessionEpochs = { 0: 3 };
+                sinon.stub(sc.client, 'updateMetadata').returns(Promise.resolve());
+                fetchOnce(sc, { notFetched: true, error: errors.byName(c[0]) });
+                return promiseUtils.delay(10).then(function () {
+                    should.equal(sc.shareSessionEpochs[0], c[1]); // Unknown may come after the session advanced
+                    should.equal(sc._reopening[0], c[1] ? undefined : true);
+                });
+            });
+        });
+
+        it('should dispatch a fetch of many empty partitions quickly', function () {
+            var sc = makeShareConsumer(), partitions = [], results = [], i, t0;
+            for (i = 0; i < 30000; i++) {
+                partitions.push({ partition: i });
+                results.push({ topic: 't', topicId: 'id1', partition: i, leader: '0', messageSet: [], acquiredRecords: [] });
+            }
+            sc._closed = true;
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', topicId: 'id1', partitions: partitions }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve(results));
+            t0 = Date.now();
+            return sc._fetch().then(function () {
+                (Date.now() - t0).should.be.below(200); // shift() per result was ~500 ms
+            });
+        });
+
         it('should acknowledge acquired offsets that hold no record as gaps', function () {
             var sc = makeShareConsumer();
             var result = { messageSet: [record(0), record(3)], acquiredRecords: [{ firstOffset: 0, lastOffset: 4, deliveryCount: 1 }] };
@@ -1509,6 +1566,34 @@ describe('Consumer loops (unit)', function () {
                 order.should.eql(['join', 'leave', 'end']); // no second join with the new ID
                 gc.client.leaveGroupRequest.lastCall.args.should.eql(['gc-unit-race', 'me']);
                 gc._runHeartbeat.callCount.should.equal(0);
+            });
+        });
+
+        it('GroupConsumer: end() should stop a join\'s retry instead of waiting for it', function () {
+            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-race' });
+            var fail, endP, t0;
+
+            sinon.stub(gc.client, 'updateGroupCoordinator').returns(Promise.resolve());
+            sinon.stub(gc.client, 'joinConsumerGroupRequest').callsFake(function () {
+                if (gc.client.joinConsumerGroupRequest.callCount > 1) { // a retry would get an ID
+                    return Promise.resolve({ memberId: 'late', leaderId: 'x', generationId: 1, members: [] });
+                }
+                return new Promise(function (resolve, reject) { fail = reject; });
+            });
+            sinon.stub(gc.client, 'leaveGroupRequest').returns(Promise.resolve());
+            sinon.stub(gc.client, 'end').returns(Promise.resolve());
+            sinon.stub(gc, '_syncGroup').returns(new Promise(function () {}));
+
+            gc._fullRejoin();
+            return promiseUtils.delay(5).then(function () {
+                t0 = Date.now();
+                endP = gc.end();
+                fail(errors.byName('GroupCoordinatorNotAvailable'));
+                return endP;
+            }).then(function () {
+                (Date.now() - t0).should.be.below(500); // not after the 1 s backoff
+                gc.client.joinConsumerGroupRequest.callCount.should.equal(1);
+                gc.client.leaveGroupRequest.callCount.should.equal(0);
             });
         });
 
