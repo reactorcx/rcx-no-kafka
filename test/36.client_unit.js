@@ -389,6 +389,39 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should give each OffsetFetch v10 result the topic ID its offset is for', function () {
+            var c = makeClient(), w = c.protocol.write(), OLD = '00000000-0000-0000-0000-0000000000aa', conn, response;
+            w.Int32BE(1).TaggedFields().Int32BE(0).compactArray([1], function () {
+                this.compactString('g').compactArray([1], function () {
+                    this.uuid(OLD).compactArray([1], function () {
+                        this.Int32BE(0).Int64BE(50).Int32BE(-1).compactNullableString(null).Int16BE(0).TaggedFields();
+                    }).TaggedFields();
+                }).Int16BE(0).TaggedFields();
+            }).TaggedFields();
+            response = Buffer.from(w.result); // a copy: the client's request is written with the same writer
+            conn = fakeConn('coord:1', function () { return Promise.resolve(response); });
+            conn.apiVersions = { 9: { min: 0, max: 10 } };
+            c.groupCoordinators.g = cachedLookup(conn);
+            c.topicNames[OLD] = 't';
+            c.topicIds.t = '00000000-0000-0000-0000-0000000000bb'; // recreated meanwhile
+
+            return c.offsetFetchRequestV1('g', [{ topicName: 't', partitions: [0] }]).then(function (r) {
+                r[0].topic.should.equal('t');
+                r[0].topicId.should.equal(OLD);
+            });
+        });
+
+        it('should record on a caller\'s topic the topic ID its fetch went by', function () {
+            var c = makeClient(), topic = { topicName: 't', partitions: [{ partition: 0, offset: 5, maxBytes: 1024 }] };
+            c.topicIds.t = '00000000-0000-0000-0000-0000000000aa';
+            c.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
+            c.brokerConnections[0].apiVersions = { 1: { min: 0, max: 16 } };
+
+            return c.fetchRequest({ 0: [topic] }).then(function () {
+                topic.topicId.should.equal('00000000-0000-0000-0000-0000000000aa');
+            });
+        });
+
         it('should drop the group coordinator when DescribeGroups answers NotCoordinatorForGroup', function () {
             var c = makeClient();
             var conn = fakeConn('coord:1', function () { return Promise.resolve(Buffer.alloc(0)); });

@@ -89,6 +89,34 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should bind a subscription without a topic ID to the one its fetch went by', function () {
+            var c = makeConsumer(noop);
+            c.client.fetchRequest.restore();
+            sinon.stub(c.client, 'fetchRequest').callsFake(function (data) {
+                data['0'][0].topicId = 'id-wire'; // as Client.fetchRequest records it, metadata having arrived meanwhile
+                return Promise.resolve([]);
+            });
+            c._closed = true;
+            return c._fetch().then(function () {
+                c.subscriptions['t:0'].topicId.should.equal('id-wire');
+            });
+        });
+
+        it('GroupConsumer: should subscribe a committed offset under the topic ID it was committed for', function () {
+            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-ids' });
+            gc.strategies = { S: { handler: noop } };
+            gc.strategyName = 'S';
+            gc.client.topicIds.t = 'id-new'; // recreated while OffsetFetch was out
+            sinon.stub(gc.client, 'updateMetadata').returns(Promise.resolve());
+            sinon.stub(gc.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(gc, 'fetchOffset').returns(Promise.resolve([{ topic: 't', partition: 0, offset: 50, topicId: 'id-old' }]));
+
+            return gc._updateSubscriptions([{ topic: 't', partitions: [0] }]).then(function () {
+                gc.subscriptions['t:0'].offset.should.equal(50);
+                gc.subscriptions['t:0'].topicId.should.equal('id-old'); // so the next fetch resumes at recoveryOffset
+            });
+        });
+
         it('should keep a re-subscribed offset\'s topic ID across a metadata refresh', function () {
             var c = makeConsumer(noop);
             c.subscriptions['t:0'].topicId = 'id-old';
@@ -209,6 +237,7 @@ describe('Consumer loops (unit)', function () {
 
         it('should start only one fetch loop across rejoins', function () {
             var sc = makeShareConsumer();
+            sinon.stub(sc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
             sinon.stub(sc.client, 'updateGroupCoordinator').returns(Promise.resolve());
             sinon.stub(sc.client, 'shareGroupHeartbeatRequest').returns(Promise.resolve({
                 memberId: sc.memberId, memberEpoch: 1, heartbeatIntervalMs: 100000, assignment: null
@@ -1746,6 +1775,7 @@ describe('Consumer loops (unit)', function () {
         it('should rejoin on FencedMemberEpoch', function () {
             var sc = makeShareConsumer();
             var epochsSent = [];
+            sinon.stub(sc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
             sinon.stub(sc.client, 'updateGroupCoordinator').returns(Promise.resolve());
             sinon.stub(sc.client, 'shareGroupHeartbeatRequest').callsFake(function (groupId, memberId, epoch) {
                 epochsSent.push(epoch);
@@ -1805,6 +1835,7 @@ describe('Consumer loops (unit)', function () {
         it('ShareConsumer: end() during the coordinator lookup should not join', function () {
             var sc = new Kafka.ShareConsumer({ clientId: 'unit-sc', groupId: 'sc-unit-race' });
             var lookedUp, joined;
+            sinon.stub(sc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
             sinon.stub(sc.client, 'updateGroupCoordinator').returns(new Promise(function (resolve) { lookedUp = resolve; }));
             sinon.stub(sc.client, 'shareGroupHeartbeatRequest').returns(Promise.resolve({ memberId: sc.memberId, memberEpoch: 1 }));
             sinon.stub(sc.client, 'end').returns(Promise.resolve());
@@ -1833,6 +1864,25 @@ describe('Consumer loops (unit)', function () {
                 return promiseUtils.delay(10);
             }).then(function () {
                 gc.client.joinConsumerGroupRequest.callCount.should.equal(0);
+            });
+        });
+
+        it('ShareConsumer: end() during the coordinator lookup the join heartbeat waits on should not join', function () {
+            var sc = new Kafka.ShareConsumer({ clientId: 'unit-sc', groupId: 'sc-unit-race' });
+            var found, joined;
+            sinon.stub(sc.client, 'updateGroupCoordinator').returns(Promise.resolve()); // only clears the cache
+            sinon.stub(sc.client, '_findGroupCoordinator').returns(new Promise(function (resolve) { found = resolve; }));
+            sinon.stub(sc.client, 'shareGroupHeartbeatRequest').returns(Promise.resolve({ memberId: sc.memberId, memberEpoch: 1 }));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+
+            joined = sc._join();
+            return promiseUtils.delay(5).then(function () {
+                return sc.end();
+            }).then(function () {
+                found({});
+                return joined;
+            }).then(function () {
+                sc.client.shareGroupHeartbeatRequest.args.filter(function (a) { return a[2] === 0; }).length.should.equal(0);
             });
         });
 
@@ -1910,6 +1960,7 @@ describe('Consumer loops (unit)', function () {
             sc.client.topicMetadata = Object.create(null);
             sc.client.topicMetadata.t = { 0: { partitionId: 0, leader: 0 } };
             sc.shareSessionEpochs = { 0: 3 };
+            sinon.stub(sc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
             sinon.stub(sc.client, 'updateGroupCoordinator').returns(Promise.resolve());
             sinon.stub(sc.client, 'end').returns(Promise.resolve());
             sinon.stub(sc.client, 'shareAcknowledgeRequest').callsFake(function () {
@@ -1946,6 +1997,7 @@ describe('Consumer loops (unit)', function () {
 
             sc._topics = ['t'];
             sc._handler = noop;
+            sinon.stub(sc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
             sinon.stub(sc.client, 'updateGroupCoordinator').returns(Promise.resolve());
             sinon.stub(sc.client, 'end').returns(Promise.resolve());
             sinon.stub(sc.client, 'shareGroupHeartbeatRequest').callsFake(function (gid, mid, epoch) {

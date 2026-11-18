@@ -814,7 +814,13 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
     NetworkClient disconnects a node on a request timeout, and Kafka answers a connection's
     requests in order, so a later request on it can't be answered before the timed-out one.
   - Share integration (27, 28): 19 pass; live revoked-ack check still applies the acks.
-- Verification: unit tests 31-39: 328 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 43 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A committed offset (OffsetFetch v10, by topic ID) was subscribed under the current ID;
+    it keeps the ID it was committed for now.
+  - [x] P2 A subscription without an ID wasn't bound to the ID its fetch went by; it is now.
+  - [x] P2 Share join checked shutdown before the heartbeat's coordinator lookup; after it now.
+  - Integration (02, 03, 27, 28): 48 pass, 1 baseline failure (clean shutdown).
+- Verification: unit tests 31-39: 333 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
