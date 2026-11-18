@@ -102,6 +102,23 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should read a relative file path that starts like a PEM header', function () {
+            var dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'nk-pem-')), cwd = process.cwd(), c;
+            fs.mkdirSync(path.join(dir, '-----BEGIN config-----'));
+            fs.copyFileSync(path.join(__dirname, './ssl/client.crt'), path.join(dir, '-----BEGIN config-----', 'ca.crt'));
+            c = new Kafka.Producer({ connectionString: 'kafka://127.0.0.1:9093', ssl: { ca: '-----BEGIN config-----/ca.crt' } }).client;
+            sinon.stub(c, 'apiVersionsRequest').returns(Promise.resolve({}));
+            sinon.stub(c, 'updateMetadata').returns(Promise.resolve());
+            process.chdir(dir);
+
+            return c.init().then(function () {
+                c.options.ssl.ca.toString().should.match(/^-----BEGIN CERTIFICATE-----/); // the file, read
+            }).finally(function () {
+                process.chdir(cwd);
+                fs.rmSync(dir, { recursive: true, force: true });
+            });
+        });
+
         it('should read only the values that are file paths, never a PEM key', function () {
             var certPath = path.join(__dirname, './ssl/client.crt');
             var key = '\n-----BEGIN PRIVATE KEY-----\nc2VjcmV0\n-----END PRIVATE KEY-----\n'; // template-literal style

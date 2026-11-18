@@ -965,6 +965,19 @@ describe('Consumer loops (unit)', function () {
             String(sc._pendingAcks['t:0'].leader).should.equal('1');
         });
 
+        it('should keep a new delivery\'s acks for its own broker when an old request fails before them', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc._delivered({ topic: 't', topicId: 'id1', partition: 0, leader: '1', acquiredRecords: [{ firstOffset: 1, lastOffset: 1 }] });
+            sc._requeueAcks({ t: { 0: [{ firstOffset: 1, lastOffset: 1, acknowledgeTypes: [1], topicId: 'id1', _gen: 0 }] } }, '0'); // nothing queued yet
+            should.not.exist(sc._pendingAcks['t:0']); // the new delivery's broker can't apply broker 0's acks
+
+            sc._pendingAcks['t:0'] = { topicName: 't', partition: 0, leader: '0', batches: [{ firstOffset: 1, lastOffset: 1, acknowledgeTypes: [1], _gen: 0 }] };
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 }, Kafka.ShareConsumer.ACKNOWLEDGE_TYPE.RELEASE);
+            String(sc._pendingAcks['t:0'].leader).should.equal('1'); // not appended to broker 0's entry
+            sc._pendingAcks['t:0'].batches.map(function (b) { return b.acknowledgeTypes[0]; }).should.eql([2]);
+        });
+
         it('should handle a lost session on a fetch carrying only acknowledgements', function () {
             var sc = makeShareConsumer();
             twoLeaders(sc);
