@@ -570,6 +570,21 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should release only the records a failed handler hadn\'t acknowledged, keeping the gaps', function () {
+            var sc = makeShareConsumer();
+            var result = { messageSet: [record(0), record(1), record(3)], acquiredRecords: [{ firstOffset: 0, lastOffset: 4, deliveryCount: 1 }] };
+            function handler(messageSet, topic, partition) {
+                sc.acknowledge({ topic: topic, partition: partition, offset: 0 }); // processed 0, then failed
+                return Promise.reject(new Error('handler bug'));
+            }
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            return fetchOnce(sc, result, handler).then(function () {
+                sc._drainPendingAcks().t[0].map(function (b) { return [b.firstOffset, b.lastOffset, b.acknowledgeTypes[0]]; })
+                    .should.eql([[0, 0, 1], [1, 1, 2], [2, 2, 0], [3, 3, 2], [4, 4, 0]]); // ACCEPT, RELEASE records, GAP the rest
+            });
+        });
+
         it('should let a range ack take the place of the gap acks inside it', function () {
             var sc = makeShareConsumer();
             var result = { messageSet: [record(0), record(3)], acquiredRecords: [{ firstOffset: 0, lastOffset: 4, deliveryCount: 1 }] };
