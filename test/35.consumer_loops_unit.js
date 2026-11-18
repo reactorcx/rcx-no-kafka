@@ -454,6 +454,28 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should still close, with its acks, a session whose fetch failed in transit', function () {
+            var sc = makeShareConsumer(), p;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 3 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function () {
+                return Promise.reject(new RangeError('Trying to access beyond buffer length')); // a response it can't decode
+            });
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            p = sc._fetch(); // carries the ack, fails, requeues it
+            return p.then(function () {
+                return sc.end();
+            }).then(function () {
+                var requests = sc.client.shareAcknowledgeRequest.args[0][3];
+                requests[0][0].partitions[0].acknowledgementBatches[0].firstOffset.should.equal(1);
+            });
+        });
+
         it('should leave the group even when a broker never answers the final acks', function () {
             var sc = makeShareConsumer(), clock, ended;
             twoLeaders(sc);
@@ -593,8 +615,8 @@ describe('Consumer loops (unit)', function () {
                 fail(new errors.NoKafkaConnectionError('b:9092', 'down')); // the fetch requeues it
                 return Promise.all([fetching, ended]);
             }).then(function () {
-                // the session went with the failed request: the ack can't be sent, and that is said
-                sc.client.warn.args.some(function (a) { return /No open share session/.test(a[0]) && /t:0/.test(a[1]); }).should.equal(true);
+                // a failed request doesn't close the session on the broker: the requeued ack goes out with its close
+                sc.client.shareAcknowledgeRequest.args[0][3][0][0].partitions[0].acknowledgementBatches[0].firstOffset.should.equal(1);
             });
         });
 

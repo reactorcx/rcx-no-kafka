@@ -475,6 +475,17 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should send ShareAcknowledge without waiting for a metadata refresh in flight', function () {
+            var c = makeClient(), sent = false;
+            c._updateMetadata_pending = true;
+            c._updateMetadata_running = new Promise(function () {}); // stuck on a silent broker
+            c.brokerConnections = { 0: fakeConn('b0:1', function () { sent = true; return Promise.reject(new errors.NoKafkaConnectionError('b0:1', 'down')); }) };
+
+            return c.shareAcknowledgeRequest('g', 'm', -1, { 0: [] }).then(function () {
+                sent.should.equal(true);
+            });
+        });
+
         it('should report a close-only ShareAcknowledge failure, and a broker it has no connection to', function () {
             var c = makeClient();
             c.brokerConnections = { 0: fakeConn('b0:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b0:1', 'down')); }) };
