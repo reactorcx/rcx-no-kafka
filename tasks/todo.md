@@ -739,7 +739,9 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
 - Codex review round 31 (gpt-6.2-sol, xhigh, Fast):
   - [x] P2 Legacy message CRCs were never checked; a corrupt wrapper led to wrong GAP acks.
   - [x] P3 Ack draining scanned requested partitions per ack; indexed once now.
-- Verification: unit tests 31-39: 297 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 32 (gpt-6.2-sol, xhigh, Fast): one finding.
+  - [x] P2 An Error per corrupt legacy message; marked while parsing, one per message set now.
+- Verification: unit tests 31-39: 298 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

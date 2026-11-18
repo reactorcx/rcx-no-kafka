@@ -473,6 +473,22 @@ describe('Compression limits (unit)', function () {
             });
         });
 
+        it('should make one Error, not one per message, for a fetch of corrupt legacy messages', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client, raw, i, msgs = [], messageSet, spy;
+            for (i = 0; i < 2000; i++) { msgs.push(smallMessage(i)); }
+            raw = legacy(msgs);
+            for (i = 0; i < 2000; i++) { raw[28 * i + 26] ^= 0xFF; } // each message is 28 bytes, its value at 26: corrupt each
+            spy = sinon.spy(global, 'Error');
+            messageSet = protocol.read(raw).MessageSet(null, raw.length).result;
+            spy.callCount.should.be.below(10); // marked while parsing (sinon makes one of its own), was one per message
+            spy.restore();
+            messageSet.every(function (m) { return m.message.crcError === true; }).should.equal(true);
+            return c._decompressShareFetchResults([{ topic: 't', partition: 0, messageSet: messageSet, acquiredRecords: [{ firstOffset: 0, lastOffset: 1999 }] }])
+            .then(function (r) {
+                r[0].acquiredRecords.should.eql([]);
+            });
+        });
+
         it('should deliver the legacy share wrappers on either side of one that fails to decode', function () {
             var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
             var bad = { offset: 13, message: { magicByte: 1, attributes: { codec: 1, _raw: 1 }, value: Buffer.from('not gzip') } };
