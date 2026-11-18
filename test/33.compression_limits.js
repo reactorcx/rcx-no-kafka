@@ -456,6 +456,23 @@ describe('Compression limits (unit)', function () {
             });
         });
 
+        it('should not take a corrupt legacy message (CRC mismatch) as decoded, in a share fetch or a fetch', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            var raw = legacy([bigMessage(1)]), messageSet;
+            raw[17] ^= 0x01; // attributes (after offset, size, crc, magic): gzip read as uncompressed, at its last offset
+            messageSet = protocol.read(raw).MessageSet(null, raw.length).result;
+            return c._decompressShareFetchResults([{
+                topic: 't', partition: 0, messageSet: messageSet, acquiredRecords: [{ firstOffset: 0, lastOffset: 1, deliveryCount: 1 }]
+            }]).then(function (r) {
+                offsets(r[0]).should.eql([]);
+                r[0].acquiredRecords.should.eql([]); // offset 0 not GAP-acked: it is a real record, redelivered
+                return fetch(0, raw);
+            }).then(function (p) {
+                offsets(p).should.eql([]);
+                should.exist(p.error); // the consumer stops at it, as at a corrupt RecordBatch
+            });
+        });
+
         it('should deliver the legacy share wrappers on either side of one that fails to decode', function () {
             var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
             var bad = { offset: 13, message: { magicByte: 1, attributes: { codec: 1, _raw: 1 }, value: Buffer.from('not gzip') } };

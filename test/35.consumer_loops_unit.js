@@ -808,6 +808,27 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should drain a fetch\'s acks over many partitions quickly', function () {
+            var sc = makeShareConsumer(), partitions = [], i, t0;
+            sc.client.topicMetadata = Object.create(null);
+            sc.client.topicMetadata.t = {};
+            for (i = 0; i < 20000; i++) {
+                sc.client.topicMetadata.t[i] = { partitionId: i, leader: 0 };
+                partitions.push({ partition: i });
+                sc._delivered({ topic: 't', partition: i, leader: '0', acquiredRecords: [{ firstOffset: 1, lastOffset: 1 }] });
+                sc.acknowledge({ topic: 't', partition: i, offset: 1 });
+            }
+            sc.shareSessionEpochs = { 0: 2 };
+            sc._buildFetchRequests = function () { return { 0: [{ topicName: 't', partitions: partitions }] }; };
+            sc.client.shareFetchRequest = function () { return Promise.resolve([]); };
+            sc._closed = true;
+            t0 = Date.now();
+            return sc._fetch().then(function () {
+                (Date.now() - t0).should.be.below(100); // a scan per ack was ~145 ms
+                Object.keys(sc._pendingAcks).should.eql([]);
+            });
+        });
+
         it('should keep acks for a partition the next fetch does not carry', function () {
             var sc = makeShareConsumer(), p;
             twoLeaders(sc);
