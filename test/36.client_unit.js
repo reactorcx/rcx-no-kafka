@@ -389,39 +389,6 @@ describe('Client (unit)', function () {
             });
         });
 
-        it('should give each OffsetFetch v10 result the topic ID its offset is for', function () {
-            var c = makeClient(), w = c.protocol.write(), OLD = '00000000-0000-0000-0000-0000000000aa', conn, response;
-            w.Int32BE(1).TaggedFields().Int32BE(0).compactArray([1], function () {
-                this.compactString('g').compactArray([1], function () {
-                    this.uuid(OLD).compactArray([1], function () {
-                        this.Int32BE(0).Int64BE(50).Int32BE(-1).compactNullableString(null).Int16BE(0).TaggedFields();
-                    }).TaggedFields();
-                }).Int16BE(0).TaggedFields();
-            }).TaggedFields();
-            response = Buffer.from(w.result); // a copy: the client's request is written with the same writer
-            conn = fakeConn('coord:1', function () { return Promise.resolve(response); });
-            conn.apiVersions = { 9: { min: 0, max: 10 } };
-            c.groupCoordinators.g = cachedLookup(conn);
-            c.topicNames[OLD] = 't';
-            c.topicIds.t = '00000000-0000-0000-0000-0000000000bb'; // recreated meanwhile
-
-            return c.offsetFetchRequestV1('g', [{ topicName: 't', partitions: [0] }]).then(function (r) {
-                r[0].topic.should.equal('t');
-                r[0].topicId.should.equal(OLD);
-            });
-        });
-
-        it('should record on a caller\'s topic the topic ID its fetch went by', function () {
-            var c = makeClient(), topic = { topicName: 't', partitions: [{ partition: 0, offset: 5, maxBytes: 1024 }] };
-            c.topicIds.t = '00000000-0000-0000-0000-0000000000aa';
-            c.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
-            c.brokerConnections[0].apiVersions = { 1: { min: 0, max: 16 } };
-
-            return c.fetchRequest({ 0: [topic] }).then(function () {
-                topic.topicId.should.equal('00000000-0000-0000-0000-0000000000aa');
-            });
-        });
-
         it('should drop the group coordinator when DescribeGroups answers NotCoordinatorForGroup', function () {
             var c = makeClient();
             var conn = fakeConn('coord:1', function () { return Promise.resolve(Buffer.alloc(0)); });
@@ -744,41 +711,6 @@ describe('Client (unit)', function () {
                 return c.metadataRequest(['A']).then(function () {
                     c._sendToAnyBroker.args[0][1].equals(expected).should.equal(true);
                 });
-            });
-        });
-
-        it('should not fetch, by ID either, a topic recreated since the caller\'s offsets were taken', function () {
-            var c = makeClient(), writer = c.protocol.write();
-            c.topicIds.t = '00000000-0000-0000-0000-0000000000bb'; // recreated
-            c.topicIds.u = '00000000-0000-0000-0000-0000000000cc';
-            c.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
-            c.brokerConnections[0].apiVersions = { 1: { min: 0, max: 16 } };
-            sinon.spy(writer, 'FetchRequestV16');
-
-            return c.fetchRequest({ 0: [
-                { topicName: 't', topicId: '00000000-0000-0000-0000-0000000000aa', partitions: [{ partition: 0, offset: 50, maxBytes: 1024 }] },
-                { topicName: 'u', topicId: '00000000-0000-0000-0000-0000000000cc', partitions: [{ partition: 0, offset: 7, maxBytes: 1024 }] }
-            ] }).then(function (r) {
-                // a broker yet to learn of the deletion would still serve the old ID's log
-                writer.FetchRequestV16.args[0][0].topics.map(function (t) { return t.topicId; }).should.eql(['00000000-0000-0000-0000-0000000000cc']);
-                r.filter(function (p) { return p.topic === 't'; })[0].error.code.should.equal('UnknownTopicId');
-            });
-        });
-
-        it('should not fetch by name a topic recreated since the caller\'s offsets were taken', function () {
-            var c = makeClient(), writer = c.protocol.write();
-            c.topicIds.t = '00000000-0000-0000-0000-0000000000bb'; // recreated
-            c.topicIds.u = '00000000-0000-0000-0000-0000000000cc';
-            c.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
-            c.brokerConnections[0].apiVersions = { 1: { min: 0, max: 12 } }; // Kafka 2.8: IDs in metadata, Fetch by name
-            sinon.spy(writer, 'FetchRequestV12');
-
-            return c.fetchRequest({ 0: [
-                { topicName: 't', topicId: '00000000-0000-0000-0000-0000000000aa', partitions: [{ partition: 0, offset: 50, maxBytes: 1024 }] },
-                { topicName: 'u', topicId: '00000000-0000-0000-0000-0000000000cc', partitions: [{ partition: 0, offset: 7, maxBytes: 1024 }] }
-            ] }).then(function (r) {
-                writer.FetchRequestV12.args[0][0].topics.map(function (t) { return t.topicName; }).should.eql(['u']);
-                r.filter(function (p) { return p.topic === 't'; })[0].error.code.should.equal('UnknownTopicId');
             });
         });
 

@@ -392,7 +392,7 @@ consumer.fetchOffset([
 * `reconnectionDelay` - controls optionally progressive delay between reconnection attempts in case of network error:
   * `min` - minimum delay, used as increment value for next attempts, defaults to 1000ms
   * `max` - maximum delay value, defaults to 1000ms
-* `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, or when the topic was deleted and recreated (a new topic ID) since its offset was taken, defaults to Kafka.LATEST_OFFSET. While brokers still disagree on a recreated topic's ID (some yet to learn of it), the client follows the latest metadata, as Java's does, and may recover more than once
+* `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
 * `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `true`
 * `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
 * `handlerConcurrency` - specify concurrency level for the consumer handler function, defaults to 10
@@ -512,7 +512,7 @@ This is a client-side-only feature and works with any Kafka broker version suppo
 * `heartbeatTimeout` - delay between heartbeat requests in ms, defaults to `1000`
 * `retentionTime` - offset retention time in ms, defaults to 1 day (24 * 3600 * 1000)
 * `startingOffset` - starting position (time) when there is no commited offset, defaults to `Kafka.LATEST_OFFSET`
-* `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, or when the topic was deleted and recreated (a new topic ID) since its offset was taken, defaults to Kafka.LATEST_OFFSET. While brokers still disagree on a recreated topic's ID (some yet to learn of it), the client follows the latest metadata, as Java's does, and may recover more than once
+* `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
 * `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
 * `groupInstanceId` - unique instance identifier for static group membership (KIP-345). When set, the consumer skips LeaveGroup on shutdown so it can rejoin the group without triggering a rebalance (without it, `end()` leaves the group; if a join is still waiting for its member ID, it waits for it, up to `sessionTimeout`, to leave with it). If another consumer registers with the same `groupInstanceId`, the broker returns `FencedInstanceId` and the original consumer shuts down. Requires Kafka 2.4+
 * `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `true`
@@ -610,7 +610,7 @@ Decompressed batch output is capped at 128MB by default to protect consumers aga
 
 A Simple or Group consumer never skips a batch it cannot decompress or decode (over the cap, a codec module that isn't installed, corrupt data): it delivers the records before it and then stops at that offset, retrying every `idleTimeout` and logging a warning, so no record is lost. To get past it, raise `maxOutputSize` or install the missing codec. A ShareConsumer skips such a batch instead and leaves its offsets out of `acquiredRecords`; the broker redelivers those records and archives them once they reach the delivery limit.
 
-`ShareConsumer.acknowledge()` takes a delivery's records only while its handler runs: acknowledge them before the promise the handler returns settles, the equivalent of the Java client's rule that records are acknowledged before the next `poll()`. A later acknowledgement is logged and not sent, and those records are redelivered; this keeps it from being applied to records delivered again since, or to a topic recreated under the same name. An acknowledgement carries only topic, partition and offset, so one made after its handler settled (from a timer, say) cannot be told apart if it happens to arrive while a later delivery of the same partition and offset is being handled: it is then taken for those records. Don't acknowledge after the handler's promise settles. Acquired offsets that hold no record (compacted away, or control records) are acknowledged as gaps automatically; a partition delivered with nothing but gaps doesn't call the handler. Acknowledgements for a partition a rebalance revoked are still sent, on the next fetch to the broker that delivered its records. `end()` sends the acknowledgements made so far, closes every open share session (releasing records still being handled) and leaves within 30 seconds; it doesn't wait for handlers still running, and nothing is fetched or delivered after it.
+`ShareConsumer.acknowledge()` takes a delivery's records only while its handler runs: acknowledge them before the promise the handler returns settles, the equivalent of the Java client's rule that records are acknowledged before the next `poll()`. A later acknowledgement is logged and not sent, and those records are redelivered; this keeps it from being applied to records delivered again since, or to a topic recreated under the same name. An acknowledgement carries only topic, partition and offset, so one made after its handler settled (from a timer, say) cannot be told apart if it happens to arrive while a later delivery of the same partition and offset is being handled: it is then taken for those records. Don't acknowledge after the handler's promise settles. Acquired offsets that hold no record (compacted away, or control records) are acknowledged as gaps automatically; a partition delivered with nothing but gaps doesn't call the handler. Acknowledgements for a partition a rebalance revoked are still sent, on the next fetch to the broker that delivered its records, while that broker's share session is open. `end()` sends the acknowledgements made so far, closes every open share session (releasing records still being handled) and leaves within 30 seconds; it doesn't wait for handlers still running, and nothing is fetched or delivered after it.
 
 Enable compression in Producer:
 
@@ -837,6 +837,18 @@ var consumer = new Kafka.GroupConsumer({
     }
 });
 ```
+
+## Known limitations
+
+**A topic deleted and recreated under a running client.** Producers and consumers carry on without a restart once the brokers report the new topic. An idempotent send in flight fails with `UnknownTopicId`, and the next one starts a fresh producer epoch. A SimpleConsumer or GroupConsumer keeps its position, as the Java client does: if the new topic holds fewer records than that position, the fetch fails with OffsetOutOfRange and the consumer restarts at `recoveryOffset`; if it holds more, the records before the position are skipped. While brokers still disagree about the topic, the client follows the latest metadata reply, since Kafka's metadata doesn't say which of two topic IDs is newer. Stop consumers before recreating a topic they depend on.
+
+**ShareConsumer acknowledgements are best effort.** An acknowledgement is sent with the next fetch to the broker that delivered the record. It is dropped with a warning, and the record is delivered again once its lock expires, when the partition's leader changed or the broker left the cluster before it was sent, when the share session was lost and no fetch goes to that broker any more, when the member was replaced, or when `end()` reached its deadline. Handlers must tolerate redelivery.
+
+**A broker that stops answering.** A consumer's fetch round waits for every broker it asked. A broker that goes silent without closing its connection holds up the next round until `requestTimeout` (5 minutes by default). Lower `requestTimeout` if that matters.
+
+**`end()` during a group join.** `GroupConsumer.end()` waits up to `sessionTimeout` for a join that is in flight, so that it can leave. If the join is never answered, the member stays in the group until its session times out.
+
+**Old message formats in share groups.** A record in the pre-0.11 format that cannot be decoded is skipped. The broker delivers it again and archives it at the delivery limit.
 
 ## Topic Creation
 

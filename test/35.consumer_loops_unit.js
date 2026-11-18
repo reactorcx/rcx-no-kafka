@@ -29,164 +29,6 @@ describe('Consumer loops (unit)', function () {
             return c;
         }
 
-        it('should resume a recreated topic at recoveryOffset, not at the deleted log\'s offset', function () {
-            var c = makeConsumer(noop);
-            c.subscriptions['t:0'].offset = 50;
-            c.subscriptions['t:0'].topicId = 'id-old';
-            c.client.topicIds.t = 'id-new'; // a by-name refresh found the topic recreated
-            sinon.stub(c.client, 'findLeader').returns(Promise.resolve(0));
-            sinon.stub(c.client, 'getPartitionOffset').returns(Promise.resolve(0));
-            c._closed = true;
-
-            return c._fetch().then(function () {
-                c.client.fetchRequest.callCount.should.equal(0); // not at 50 in the new log
-                return promiseUtils.delay(5);
-            }).then(function () {
-                c.client.getPartitionOffset.args[0][3].should.equal(c.options.recoveryOffset);
-                c.subscriptions['t:0'].offset.should.equal(0);
-                c.subscriptions['t:0'].topicId.should.equal('id-new');
-                c.subscriptions['t:0'].paused.should.equal(false);
-            });
-        });
-
-        it('should fetch by the topic ID of the subscription\'s offset', function () {
-            var c = makeConsumer(noop);
-            c.subscriptions['t:0'].topicId = 'id-old';
-            c.client.topicIds.t = 'id-old';
-            c._closed = true;
-            return c._fetch().then(function () {
-                c.client.fetchRequest.args[0][0]['0'][0].topicId.should.equal('id-old'); // not what metadata says when it is sent
-            });
-        });
-
-        it('should bind a subscription made before topic IDs to the first one, without moving it', function () {
-            var c = makeConsumer(noop);
-            c.client.topicIds.t = 'id1'; // the brokers now give topic IDs
-            c._closed = true;
-            return c._fetch().then(function () {
-                c.client.fetchRequest.callCount.should.equal(1);
-                c.subscriptions['t:0'].topicId.should.equal('id1');
-                c.subscriptions['t:0'].offset.should.equal(6); // fetched on from 5, not reset
-            });
-        });
-
-        it('should look an offset up again if its topic was recreated meanwhile', function () {
-            var c = new Kafka.SimpleConsumer({ clientId: 'unit-consumer' });
-            c.client.topicIds.t = 'id-old';
-            sinon.stub(c.client, 'findLeader').returns(Promise.resolve(0));
-            sinon.stub(c.client, 'getPartitionOffset').callsFake(function () {
-                if (c.client.getPartitionOffset.callCount === 1) {
-                    c.client.topicIds.t = 'id-new'; // recreated while the first lookup was out
-                    return Promise.resolve(50);
-                }
-                return Promise.resolve(0);
-            });
-
-            return c.subscribe('t', 0, noop).then(function () {
-                c.client.getPartitionOffset.callCount.should.equal(2);
-                c.subscriptions['t:0'].offset.should.equal(0);
-                c.subscriptions['t:0'].topicId.should.equal('id-new');
-            });
-        });
-
-        it('should bind a subscription without a topic ID to the one its fetch went by', function () {
-            var c = makeConsumer(noop);
-            c.client.fetchRequest.restore();
-            sinon.stub(c.client, 'fetchRequest').callsFake(function (data) {
-                data['0'][0].topicId = 'id-wire'; // as Client.fetchRequest records it, metadata having arrived meanwhile
-                return Promise.resolve([]);
-            });
-            c._closed = true;
-            return c._fetch().then(function () {
-                c.subscriptions['t:0'].topicId.should.equal('id-wire');
-            });
-        });
-
-        it('GroupConsumer: should subscribe a committed offset under the topic ID it was committed for', function () {
-            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-ids' });
-            gc.strategies = { S: { handler: noop } };
-            gc.strategyName = 'S';
-            gc.client.topicIds.t = 'id-new'; // recreated while OffsetFetch was out
-            sinon.stub(gc.client, 'updateMetadata').returns(Promise.resolve());
-            sinon.stub(gc.client, 'findLeader').returns(Promise.resolve(0));
-            sinon.stub(gc, 'fetchOffset').returns(Promise.resolve([{ topic: 't', partition: 0, offset: 50, topicId: 'id-old' }]));
-
-            return gc._updateSubscriptions([{ topic: 't', partitions: [0] }]).then(function () {
-                gc.subscriptions['t:0'].offset.should.equal(50);
-                gc.subscriptions['t:0'].topicId.should.equal('id-old'); // so the next fetch resumes at recoveryOffset
-            });
-        });
-
-        it('should look the recovery offset up again if metadata changed while it was looked up', function () {
-            var c = makeConsumer(noop);
-            c.subscriptions['t:0'].topicId = 'id-old';
-            c.client.topicIds.t = 'id-new';
-            sinon.stub(c.client, 'findLeader').returns(Promise.resolve(0));
-            sinon.stub(c.client, 'getPartitionOffset').callsFake(function () {
-                if (c.client.getPartitionOffset.callCount === 1) {
-                    c.client.topicIds.t = 'id-old'; // a lagging broker's metadata: the deleted topic again
-                    return Promise.resolve(50);
-                }
-                c.client.topicIds.t = 'id-new';
-                return Promise.resolve(0);
-            });
-            c._closed = true;
-
-            return c._fetch().then(function () { return promiseUtils.delay(10); }).then(function () {
-                c.client.getPartitionOffset.callCount.should.equal(3); // the 2nd was asked while metadata named the old topic
-                c.subscriptions['t:0'].offset.should.equal(0); // not the old log's 50 under the new ID
-                c.subscriptions['t:0'].topicId.should.equal('id-new');
-            });
-        });
-
-        it('should subscribe a pending subscription by its own options, not recoveryOffset, after a recreation', function () {
-            var c = makeConsumer(noop);
-            c.subscriptions['t:0'] = { topic: 't', partition: 0, options: { time: Kafka.EARLIEST_OFFSET }, leader: -1, handler: noop };
-            c.client.topicIds.t = 'id-old';
-            c._closed = true;
-            return c._fetch().then(function () {
-                should.not.exist(c.subscriptions['t:0'].topicId); // bound when it gets an offset, by its own lookup
-                c.client.topicIds.t = 'id-new'; // recreated before its leader appears
-                return c._fetch();
-            }).then(function () {
-                c.client.fetchRequest.callCount.should.equal(2); // still the normal retry (LeaderNotAvailable), not recovery
-            });
-        });
-
-        it('should find the leader again when it repeats a recovery lookup', function () {
-            var c = makeConsumer(noop);
-            c.subscriptions['t:0'].topicId = 'id-old';
-            c.client.topicIds.t = 'id-new';
-            sinon.stub(c.client, 'findLeader').callsFake(function () {
-                return Promise.resolve(c.client.findLeader.callCount === 1 ? 0 : 1);
-            });
-            sinon.stub(c.client, 'getPartitionOffset').callsFake(function () {
-                if (c.client.getPartitionOffset.callCount === 1) {
-                    c.client.topicIds.t = 'id-newer'; // metadata moved on, the partition's leader too
-                }
-                return Promise.resolve(0);
-            });
-            c._closed = true;
-
-            return c._fetch().then(function () { return promiseUtils.delay(10); }).then(function () {
-                c.client.getPartitionOffset.args[1][0].should.equal(1); // asked of the new leader, not broker 0
-                c.subscriptions['t:0'].leader.should.equal(1);
-                c.subscriptions['t:0'].topicId.should.equal('id-newer');
-            });
-        });
-
-        it('should keep a re-subscribed offset\'s topic ID across a metadata refresh', function () {
-            var c = makeConsumer(noop);
-            c.subscriptions['t:0'].topicId = 'id-old';
-            sinon.stub(c.client, 'updateMetadata').callsFake(function () { c.client.topicIds.t = 'id-new'; return Promise.resolve(); });
-            sinon.stub(c.client, 'findLeader').returns(Promise.resolve(0));
-
-            return c._updateSubscription('t', 0).then(function () {
-                c.subscriptions['t:0'].offset.should.equal(5);
-                c.subscriptions['t:0'].topicId.should.equal('id-old'); // so the next fetch sees the recreation
-            });
-        });
-
         it('should not advance the offset when the handler rejects (batch is redelivered)', function () {
             var c = makeConsumer(function () { return Promise.reject(new Error('db down')); });
             var p = c._fetch();
@@ -1141,94 +983,6 @@ describe('Consumer loops (unit)', function () {
             sc._pendingAcks['t:0'].batches.map(function (b) { return b.acknowledgeTypes[0]; }).should.eql([2]);
         });
 
-        it('should not hold up the fetch rounds for a former broker\'s acknowledge-only request', function () {
-            var sc = makeShareConsumer(), sent = [];
-            twoLeaders(sc);
-            sc.shareSessionEpochs = { 0: 2, 1: 2 };
-            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }] }] }); // t:1 revoked
-            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, only) {
-                var l = Object.keys(only)[0];
-                sent.push(l);
-                return l === '1' ? new Promise(function () {}) : Promise.resolve([]); // broker 1 never answers
-            });
-            sc._closed = true;
-            markDelivered(sc, 't', 1, [1]); // delivered by broker 1
-            sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
-
-            return Promise.race([sc._fetch().then(function () { return 'done'; }), promiseUtils.delay(500).then(function () { return 'stuck'; })])
-            .then(function (r) {
-                r.should.equal('done');
-                return sc._fetch(); // the next round: broker 0 again, nothing more on broker 1's session
-            }).then(function () {
-                sent.should.eql(['0', '1', '0']);
-                should.exist(sc._fetchRequests['1']); // end() still waits for it
-            });
-        });
-
-        it('should close an idle broker\'s reopening session with its queued acks', function () {
-            var sc = makeShareConsumer();
-            twoLeaders(sc);
-            sc.shareSessionEpochs = {};
-            sc._reopening = { 0: true }; // its ack-only fetch failed; no partitions left on it
-            sc.client.brokerConnections = { 0: {} };
-            sinon.stub(sc, '_buildFetchRequests').returns({});
-            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
-            sc._closed = true;
-            markDelivered(sc, 't', 0, [1]);
-            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
-
-            return sc._fetch().then(function () {
-                var args = sc.client.shareAcknowledgeRequest.args[0];
-                args[2].should.equal(-1);
-                args[3]['0'][0].partitions[0].acknowledgementBatches[0].firstOffset.should.equal(1);
-                Object.keys(sc._pendingAcks).should.eql([]);
-                should.not.exist(sc._reopening[0]);
-            });
-        });
-
-        it('should keep an idle broker\'s acks, and its session to close, when the broker didn\'t take the close', function () {
-            var sc = makeShareConsumer();
-            twoLeaders(sc);
-            sc._reopening = { 0: true };
-            sc.client.brokerConnections = { 0: {} };
-            sinon.stub(sc, '_buildFetchRequests').returns({});
-            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([
-                { topic: 't', partition: 0, error: new errors.NoKafkaConnectionError('b:1', 'down'), notAcked: true }
-            ]));
-            sc._closed = true;
-            markDelivered(sc, 't', 0, [1]);
-            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
-
-            return sc._fetch().then(function () {
-                return sc._fetchRequests['0'];
-            }).then(function () {
-                sc.client.shareAcknowledgeRequest.callCount.should.equal(1);
-                sc._pendingAcks['t:0'].batches[0].firstOffset.should.equal(1); // sent again next round, or by end()
-                sc._reopening[0].should.equal(true);
-            });
-        });
-
-        it('should not close an idle session again once the broker says it is gone', function () {
-            var sc = makeShareConsumer();
-            twoLeaders(sc);
-            sc._reopening = { 0: true };
-            sc.client.brokerConnections = { 0: {} };
-            sinon.stub(sc, '_buildFetchRequests').returns({});
-            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([
-                { topic: 't', partition: 0, error: errors.byName('ShareSessionNotFound'), notAcked: true }
-            ]));
-            sc._closed = true;
-            markDelivered(sc, 't', 0, [1]);
-            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
-
-            return sc._fetch().then(function () {
-                return sc._fetchRequests['0'];
-            }).then(function () {
-                Object.keys(sc._pendingAcks).should.eql([]);
-                should.not.exist(sc._reopening[0]); // not tried every poll
-            });
-        });
-
         it('should send a recreated topic\'s old acks under its old ID, beside the new topic\'s fetch', function () {
             var sc = makeShareConsumer(), call, handled = [];
             twoLeaders(sc);
@@ -1269,28 +1023,10 @@ describe('Consumer loops (unit)', function () {
             sc._closed = true;
             markDelivered(sc, 't', 1, [1]);
             sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
-            sc._pendingAcks['t:1'].batches.forEach(function (b) { b._at -= 61000; });
 
             return sc._fetch().then(function () {
                 Object.keys(sc._pendingAcks).should.eql([]); // not drained, failed and requeued with a fresh time
                 should.equal(sc.client.shareFetchRequest.args[0][5], null);
-            });
-        });
-
-        it('should expire an absent broker\'s queued acks by delivery, keeping the recent ones', function () {
-            var sc = makeShareConsumer();
-            twoLeaders(sc);
-            delete sc.client.brokerConnections[1];
-            sinon.stub(sc, '_buildFetchRequests').returns({});
-            sc._closed = true;
-            markDelivered(sc, 't', 1, [1]);
-            sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
-            sc._pendingAcks['t:1'].batches[0]._at -= 61000; // an old delivery's ack...
-            markDelivered(sc, 't', 1, [5]);
-            sc.acknowledge({ topic: 't', partition: 1, offset: 5 }); // ...and one made just now, same entry
-
-            return sc._fetch().then(function () {
-                sc._pendingAcks['t:1'].batches.map(function (b) { return b.firstOffset; }).should.eql([5]);
             });
         });
 
@@ -1314,52 +1050,6 @@ describe('Consumer loops (unit)', function () {
             }
             return Promise.all(depths.map(at)).then(function (left) {
                 depths.filter(function (d, i) { return !left[i]; }).should.eql([]); // depths at which it didn't leave
-            });
-        });
-
-        it('should not send acks to a broker gone from metadata, and drop them after a while', function () {
-            var sc = makeShareConsumer();
-            twoLeaders(sc);
-            delete sc.client.brokerConnections[1]; // decommissioned
-            sc.shareSessionEpochs = { 1: 2 };
-            sinon.stub(sc, '_buildFetchRequests').returns({});
-            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([]));
-            sc._closed = true;
-            markDelivered(sc, 't', 1, [1]);
-            sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
-
-            return sc._fetch().then(function () {
-                sc.client.shareFetchRequest.callCount.should.equal(0); // not every poll
-                Object.keys(sc._pendingAcks).should.eql(['t:1']); // in case it comes back
-                sc._pendingAcks['t:1'].batches.forEach(function (b) { b._at -= 61000; });
-                return sc._fetch();
-            }).then(function () {
-                Object.keys(sc._pendingAcks).should.eql([]);
-            });
-        });
-
-        it('should not let the old member\'s stalled requests hold up the new member\'s fetches', function () {
-            var sc = makeShareConsumer();
-            sc._busy = { 0: new Promise(function () {}) }; // an ack-only fetch that never answers
-            sc._newMember();
-            sc._addAckOnly({ 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }] }] }).should.have.property('0');
-        });
-
-        it('should keep an idle broker\'s acks while there is no connection to close its session on', function () {
-            var sc = makeShareConsumer();
-            twoLeaders(sc);
-            sc._reopening = { 0: true };
-            sc.client.brokerConnections = {}; // not in metadata just now
-            sinon.stub(sc, '_buildFetchRequests').returns({});
-            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
-            sc._closed = true;
-            markDelivered(sc, 't', 0, [1]);
-            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
-
-            return sc._fetch().then(function () {
-                sc.client.shareAcknowledgeRequest.callCount.should.equal(0);
-                Object.keys(sc._pendingAcks).should.eql(['t:0']);
-                sc._reopening[0].should.equal(true); // tried again once the broker is back
             });
         });
 
@@ -2324,6 +2014,7 @@ describe('Consumer loops (unit)', function () {
             sc._handler = noop;
             sc.shareSessionEpochs = { 0: 2 };
             sc.client.topicMetadata = metadata('__proto__');
+            sc.client.brokerConnections = { 0: {} };
             sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: '__proto__', partitions: [{ partition: 0 }] }] });
             sinon.stub(sc.client, 'updateMetadata').returns(Promise.resolve());
             sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, r, f, acks) {

@@ -869,3 +869,42 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   consumed; now 10/10 sent and consumed); share acks queued at `end()` (Phase 1: all 3 records
   redelivered to the next member; now none). 1 GiB bombs, peak RSS: zstd 1.1-2.2 GB -> 49-188 MB,
   lz4 2.2 GB -> 194 MB; zstd and lz4 decode speed unchanged.
+
+### Phase 2 convergence plan (2026-11-18)
+
+The Codex loop ran 50 rounds without converging. A Fable 5.2 review (xhigh) of rounds 30-50 found 11
+real findings, 31 edge cases and 11 wrong or overreach; 120 of 145 findings flagged lines an earlier
+round's fix wrote. Plan approved 2026-11-18. Codex reviews now use gpt-6.1-sol, xhigh, Fast.
+
+Acceptance bar: a finding is fixed only if it passes all five rules, else it is documented or declined.
+1. In scope: a defect in a Phase 2 item (2.1-2.15) or a regression against `fix-audit-phase1`.
+2. One event: at most one failure or operator action, brokers otherwise agreeing on metadata.
+3. Impact: records lost or skipped silently, a wrong acknowledgement, a crash or unhandled
+   rejection, a call that never settles, a request or warning repeated every poll without end,
+   unbounded memory, key material in a log. Not: redelivery of share records, a delay bounded by a
+   timeout or lock, one wasted request, log noise, cost above 1,000 partitions per consumer.
+4. Not stricter than Java: if the Java client behaves the same, it is a limitation.
+5. Small fix: about 15 lines in `lib/`, no new consumer/client field, timer or constant; larger
+   needs sign-off. Performance findings go to Phase 3.
+
+- [x] Remove the topic-recreation recovery (rounds 40-47): `BaseConsumer._recreated`, subscription
+  topic IDs, fetches by the caller's topic ID, the stale-ID skip, OffsetFetch topic IDs. Java keeps
+  the position across a recreation (`Metadata.updateLatestMetadata` resets only the leader epoch).
+  `lib/base_consumer.js` and `lib/client.js` back to round 39; `_topicId` out of `group_consumer.js`.
+- [x] Delete three share-ack mechanisms: `_busy`/`_setBusy`/`_ackOnly` (rounds 42, 44),
+  `_closeIdleSessions` (40, 41, 44, 45), `ACK_RETAIN_MS` per-delivery retention (46-48): an absent
+  broker's acks are dropped at once.
+- [x] Remove the tests of both, and restore the README `recoveryOffset` text.
+- [x] README "Known limitations" section; qualify the revoked-ack sentence; code comments for the
+  limits of rounds 34 (gap acks), 42 (request timeout), 47 (ListOffsets), 49/50 (ID order).
+- [x] Unit tests, eslint, tsc; share and consumer integration tests; live revoked-ack and
+  recreation checks.
+  - Done: `lib/` -176 lines against round 50 (`share_consumer.js` 1,344 -> 1,251); 22 tests of the
+    removed code deleted; unit tests 323 pass (3 runs), eslint 0 errors, tsc passes; integration
+    (02, 03, 27, 28) 48 pass and the baseline clean-shutdown failure. Live: a revoked partition's
+    acks are still applied; a consumer at offset 50 of a topic recreated with 100 records now
+    skips the first 50 (as Java does, documented) instead of restarting at `recoveryOffset`.
+- [ ] Codex round 51 (whole branch), each finding triaged against the bar in one line.
+- [ ] Round 52 on the fixes only, if round 51 led to any; a fix that draws an accepted finding is
+  reverted and documented. No third round.
+- [ ] Final: full suite on a fresh broker, live checks, review subagents, review section.
