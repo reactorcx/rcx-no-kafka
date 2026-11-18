@@ -1256,6 +1256,24 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should build final acks over many topics quickly', function () {
+            var sc = makeShareConsumer(), i, t0, sent;
+            sc.shareSessionEpochs = { 0: 2 };
+            for (i = 0; i < 30000; i++) {
+                sc._delivered({ topic: 't' + i, partition: 0, leader: '0', acquiredRecords: [{ firstOffset: 1, lastOffset: 1 }] });
+                sc.acknowledge({ topic: 't' + i, partition: 0, offset: 1 });
+            }
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').callsFake(function (g, m, epoch, requests) {
+                sent = requests['0'];
+                return Promise.resolve([]);
+            });
+            t0 = Date.now();
+            return sc._sendFinalAcks('0').then(function () {
+                (Date.now() - t0).should.be.below(300); // a scan per partition was ~1.5 s
+                sent.length.should.equal(30000);
+            });
+        });
+
         it('should stop the earlier final ack rounds after one the broker didn\'t take, still closing', function () {
             var sc = makeShareConsumer(), sent = [];
             twoLeaders(sc);
@@ -1460,28 +1478,71 @@ describe('Consumer loops (unit)', function () {
     });
 
     describe('end() racing an in-flight join', function () {
-        it('GroupConsumer: a rejoin that lands after end() should leave instead of squatting', function () {
+        it('GroupConsumer: end() during a join without a member ID should leave with the ID it gets', function () {
             var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-race' });
-            var resolveJoin, rejoinP;
+            var order = [], answerJoin, rejoinP, endP;
 
             sinon.stub(gc.client, 'updateGroupCoordinator').returns(Promise.resolve());
-            sinon.stub(gc.client, 'leaveGroupRequest').returns(Promise.resolve());
-            sinon.stub(gc.client, 'end').returns(Promise.resolve());
-            sinon.stub(gc, '_runHeartbeat').returns(Promise.resolve());
-            sinon.stub(gc, '_rejoin').callsFake(function () {
-                return new Promise(function (resolve) {
-                    resolveJoin = function () { gc.memberId = 'me'; resolve(); };
+            sinon.stub(gc.client, 'joinConsumerGroupRequest').callsFake(function () {
+                order.push('join');
+                return new Promise(function (resolve, reject) {
+                    answerJoin = function () { // KIP-394: the broker now holds 'me' as a member
+                        var err = errors.byCode(79);
+                        err.memberId = 'me';
+                        reject(err);
+                    };
                 });
             });
+            sinon.stub(gc.client, 'leaveGroupRequest').callsFake(function () { order.push('leave'); return Promise.resolve(); });
+            sinon.stub(gc.client, 'end').callsFake(function () { order.push('end'); return Promise.resolve(); });
+            sinon.stub(gc, '_runHeartbeat').returns(Promise.resolve());
 
             rejoinP = gc._fullRejoin();
             return promiseUtils.delay(10).then(function () {
-                var endP = gc.end(); // memberId is still null here
-                resolveJoin();
+                endP = gc.end(); // memberId is still null here
+                return promiseUtils.delay(10);
+            }).then(function () {
+                order.should.eql(['join']); // waiting for the join, the client still open
+                answerJoin();
                 return Promise.all([endP, rejoinP]);
             }).then(function () {
+                order.should.eql(['join', 'leave', 'end']); // no second join with the new ID
                 gc.client.leaveGroupRequest.lastCall.args.should.eql(['gc-unit-race', 'me']);
                 gc._runHeartbeat.callCount.should.equal(0);
+            });
+        });
+
+        it('GroupConsumer: end() should wait for an unanswered join only up to the session timeout', function () {
+            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-race', sessionTimeout: 30 });
+
+            sinon.stub(gc.client, 'updateGroupCoordinator').returns(Promise.resolve());
+            sinon.stub(gc.client, 'joinConsumerGroupRequest').returns(new Promise(function () {}));
+            sinon.stub(gc.client, 'leaveGroupRequest').returns(Promise.resolve());
+            sinon.stub(gc.client, 'end').returns(Promise.resolve());
+
+            gc._fullRejoin();
+            return promiseUtils.delay(5).then(function () {
+                return gc.end();
+            }).then(function () {
+                gc.client.leaveGroupRequest.callCount.should.equal(0); // never got an ID
+                gc.client.end.callCount.should.equal(1);
+            });
+        });
+
+        it('GroupConsumer: no join should start after end()', function () {
+            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-race' });
+            var lookedUp;
+
+            sinon.stub(gc.client, 'updateGroupCoordinator').returns(new Promise(function (resolve) { lookedUp = resolve; }));
+            sinon.stub(gc.client, 'joinConsumerGroupRequest').returns(Promise.resolve({}));
+            sinon.stub(gc.client, 'end').returns(Promise.resolve());
+
+            gc._fullRejoin();
+            return gc.end().then(function () {
+                lookedUp();
+                return promiseUtils.delay(10);
+            }).then(function () {
+                gc.client.joinConsumerGroupRequest.callCount.should.equal(0);
             });
         });
 

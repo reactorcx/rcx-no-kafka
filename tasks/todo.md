@@ -744,7 +744,20 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
 - Codex review round 33 (gpt-6.2-sol, xhigh, Fast):
   - [x] P2 A failed legacy wrapper's (unchecked) offset started the next run; its first record now.
   - [x] P3 `end()`'s deadline used the wall clock; monotonic now.
-- Verification: unit tests 31-39: 300 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 34 (gpt-6.2-sol, xhigh, Fast):
+  - [ ] P2 GAP-acking offsets outside "verified" batch spans: **declined**. A batch's baseOffset is
+    outside its CRC by design (the broker assigns it), so no span is verifiable; Java's
+    ShareCompletedFetch trusts it and GAPs every acquired offset without a record; and the broker
+    acquires from a cached batch's start (compaction after acquisition), so not GAP-acking offsets
+    before/between batches would leave each compaction hole locked until its lock times out. Our
+    client already goes further than Java's (a failed batch's offsets are never acked). Reasoning
+    added to the code comment.
+  - [x] P2 GroupConsumer `end()` closed the client under a join awaiting its member ID (KIP-394),
+    so the broker held the member until its session timed out; `end()` now waits for it (up to
+    `sessionTimeout`) and leaves with it, no second join is sent after `end()`, and no join starts
+    after it. The late leave in `_fullRejoin` (sent on a closed client) is gone.
+  - [x] P3 Final ack requests looked topics up by scan; a map now (30,000 topics: ~1 s before).
+- Verification: unit tests 31-39: 303 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
