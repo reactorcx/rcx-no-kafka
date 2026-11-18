@@ -782,6 +782,27 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should not go back to a recreated topic\'s old ID when a lagging broker reports it', function () {
+            var c = makeClient(), A = '00000000-0000-0000-0000-0000000000aa', B = '00000000-0000-0000-0000-0000000000bb', ids = [A, B, A];
+            sinon.stub(c, '_createConnection').callsFake(function () {
+                var conn = fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); });
+                conn.apiVersions = {};
+                return conn;
+            });
+            sinon.stub(c, 'metadataRequest').callsFake(function () {
+                return Promise.resolve({ broker: [{ nodeId: 0, host: 'b', port: 1 }],
+                    topicMetadata: [{ topicName: 't', topicId: ids.shift(), partitionMetadata: [{ partitionId: 0, leader: 0 }] }] });
+            });
+
+            return c.updateMetadata(['t']).then(function () {
+                return c.updateMetadata(['t']); // recreated: A -> B
+            }).then(function () {
+                return c.updateMetadata(['t']); // a stale answer naming A again
+            }).then(function () {
+                c.topicIds.t.should.equal(B);
+            });
+        });
+
         it('should split a Produce mixing topics with and without IDs, keeping v13 for those with', function () {
             var c = makeClient(), versions = [];
             c.topicIds.a = '00000000-0000-0000-0000-0000000000aa';
