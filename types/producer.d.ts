@@ -15,7 +15,7 @@ export class Producer {
       * It can have options
       * @memberOf Producer
       */
-    send(data: Kafka.Message | Kafka.Message[], options?: SendOptions): Promise<Result[]>;
+    send(data: SendMessage | SendMessage[], options?: SendOptions): Promise<Result[]>;
     /**
       * Send out all batches currently waiting on their batch.maxWait timer
       * and wait for them to settle.
@@ -217,6 +217,16 @@ export interface ProducerOptions {
     logger?: Kafka.Logger;
 }
 
+
+/**
+  * A message to send. Its key may also be a number (or anything with a String form): it is sent,
+  * and hashed by the partitioners, as String(key).
+  */
+export interface SendMessage {
+    topic: string;
+    partition?: number;
+    message: Omit<Kafka.Message["message"], "key"> & { key?: Buffer | string | number };
+}
 
 /**
   * One per partition the send() went to. A failed partition (retries exhausted, or a

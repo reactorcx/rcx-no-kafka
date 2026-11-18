@@ -171,6 +171,21 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should give one result per partition when retries run out', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit' }), msgs;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'updateMetadata').returns(Promise.resolve());
+            sinon.stub(p.client, 'produceRequest').callsFake(function () {
+                return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('UnknownTopicId') }]);
+            });
+
+            msgs = [{ topic: 't', partition: 0, message: { value: 'a' } }, { topic: 't', partition: 0, message: { value: 'b' } }];
+            return p.send(msgs, { retries: FAST_RETRIES }).then(function (result) {
+                result.should.have.length(1);
+                result[0].error.code.should.equal('UnknownTopicId');
+            });
+        });
+
         it('should reject a large batch for a recreated topic in linear time', function () {
             var p = new Kafka.Producer({ idempotent: true, clientId: 'producer-unit', batch: { size: 1024 * 1024 * 1024, maxWait: 10 } });
             var msgs = [], i, t0;

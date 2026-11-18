@@ -358,6 +358,32 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should forget only the session of the broker that reported it lost', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4, 1: 3 };
+            delete sc.client.topicMetadata.t[1]; // a refresh since dropped the partition's metadata
+
+            sc._partitionError(errors.byName('ShareSessionNotFound'), 't', 1, '1');
+            sc.shareSessionEpochs.should.eql({ 0: 4 }); // broker 0's session is untouched
+        });
+
+        it('should not keep the last fetch\'s records alive for end()', function () {
+            var sc = makeShareConsumer(), p;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([{ topic: 't', partition: 0, messageSet: [] }]));
+
+            p = sc._fetch();
+            sc._closed = true;
+            return p.then(function () {
+                return sc._fetchRequest;
+            }).then(function (held) {
+                should.not.exist(held);
+            });
+        });
+
         it('should still close a session the broker says is out of step (InvalidShareSessionEpoch)', function () {
             var sc = makeShareConsumer();
             twoLeaders(sc);
