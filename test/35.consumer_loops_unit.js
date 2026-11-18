@@ -170,22 +170,6 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
-        it('should not clobber a session reset that happens while a fetch is in flight', function () {
-            var sc = makeShareConsumer();
-            var p;
-            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
-            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function () {
-                sc._resetShareSessions(); // assignment changed while the fetch was in flight
-                return Promise.resolve([]);
-            });
-
-            p = sc._fetch();
-            sc._closed = true;
-            return p.then(function () {
-                (sc.shareSessionEpochs['0'] || 0).should.equal(0);
-            });
-        });
-
         it('should reopen the session on InvalidShareSessionEpoch', function () {
             var sc = makeShareConsumer();
             var p;
@@ -193,7 +177,7 @@ describe('Consumer loops (unit)', function () {
             sc.client.topicMetadata = { t: { 0: { leader: 0 } } };
             sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
             sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([
-                { topic: 't', partition: 0, error: errors.byName('InvalidShareSessionEpoch'), messageSet: [] }
+                { topic: 't', partition: 0, leader: '0', error: errors.byName('InvalidShareSessionEpoch'), messageSet: [] }
             ]));
 
             p = sc._fetch();
@@ -280,8 +264,8 @@ describe('Consumer loops (unit)', function () {
             sinon.stub(sc.client, 'updateMetadata').returns(Promise.resolve());
             sinon.stub(sc.client, 'shareFetchRequest').callsFake(function () {
                 return Promise.resolve([
-                    { topic: 't', partition: 0, error: notSent, messageSet: [] },
-                    { topic: 't', partition: 0, error: notSent, messageSet: [] }, // listed twice
+                    { topic: 't', partition: 0, error: notSent, notFetched: true, messageSet: [] },
+                    { topic: 't', partition: 0, error: notSent, notFetched: true, messageSet: [] }, // listed twice
                     { topic: 't', partition: 1, error: errors.byName('NotLeaderForPartition'), acknowledgeError: null, messageSet: [] }
                 ]);
             });
@@ -420,9 +404,9 @@ describe('Consumer loops (unit)', function () {
             p = sc._fetch();
             sc._closed = true;
             return p.then(function () {
-                return sc._fetchRequest;
+                return sc._fetchRequests['0'];
             }).then(function (held) {
-                should.not.exist(held);
+                should.not.exist(held); // what end() waits on resolves to nothing, not the fetched records
             });
         });
 
@@ -869,7 +853,7 @@ describe('Consumer loops (unit)', function () {
             sinon.stub(sc.client, 'end').returns(Promise.resolve());
             markDelivered(sc, 't', 0, [1]);
             sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
-            sc._partitionError(errors.byName('InvalidShareSessionEpoch'), 't', 0); // the session is still there
+            sc._partitionError(errors.byName('InvalidShareSessionEpoch'), 't', 0, '0'); // the session is still there
 
             return sc.end().then(function () {
                 sc.client.shareAcknowledgeRequest.args[0][3][0][0].partitions[0].acknowledgementBatches[0].firstOffset.should.equal(1);
@@ -888,28 +872,6 @@ describe('Consumer loops (unit)', function () {
             sc._closed = true;
             return sc._fetch().then(function () {
                 sc.client.shareFetchRequest.callCount.should.equal(1);
-            });
-        });
-
-        it('should drain a fetch\'s acks over many partitions quickly', function () {
-            var sc = makeShareConsumer(), partitions = [], i, t0;
-            sc.client.topicMetadata = Object.create(null);
-            sc.client.brokerConnections = { 0: {} };
-            sc.client.topicMetadata.t = {};
-            for (i = 0; i < 20000; i++) {
-                sc.client.topicMetadata.t[i] = { partitionId: i, leader: 0 };
-                partitions.push({ partition: i });
-                sc._delivered({ topic: 't', partition: i, leader: '0', acquiredRecords: [{ firstOffset: 1, lastOffset: 1 }] });
-                sc.acknowledge({ topic: 't', partition: i, offset: 1 });
-            }
-            sc.shareSessionEpochs = { 0: 2 };
-            sc._buildFetchRequests = function () { return { 0: [{ topicName: 't', partitions: partitions }] }; };
-            sc.client.shareFetchRequest = function () { return Promise.resolve([]); };
-            sc._closed = true;
-            t0 = Date.now();
-            return sc._fetch().then(function () {
-                (Date.now() - t0).should.be.below(100); // a scan per ack was ~145 ms
-                Object.keys(sc._pendingAcks).should.eql([]);
             });
         });
 
@@ -1025,31 +987,47 @@ describe('Consumer loops (unit)', function () {
             sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
 
             return sc._fetch().then(function () {
-                Object.keys(sc._pendingAcks).should.eql([]); // not drained, failed and requeued with a fresh time
+                Object.keys(sc._pendingAcks).should.eql([]); // dropped, not drained and failed locally
                 should.equal(sc.client.shareFetchRequest.args[0][5], null);
             });
         });
 
-        it('GroupConsumer: end() at any point after a join reply, before its member ID is stored, should leave with it', function () {
-            var depths = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-            function at(depth) { // end() this many microtasks after the reply
-                var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-race', logger: { logLevel: 0 } });
-                var answer, p = Promise.resolve(), i;
-                sinon.stub(gc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
-                sinon.stub(gc.client, 'joinConsumerGroupRequest').returns(new Promise(function (resolve) { answer = resolve; }));
-                sinon.stub(gc.client, 'leaveGroupRequest').returns(Promise.resolve());
-                sinon.stub(gc.client, 'end').returns(Promise.resolve());
-                gc._joinGroup().catch(noop);
-                return promiseUtils.delay(5).then(function () {
-                    answer({ memberId: 'me', leaderId: 'x', generationId: 1, members: [] });
-                    for (i = 0; i < depth; i++) { p = p.then(noop); }
-                    return p.then(function () { return gc.end(); });
-                }).then(function () {
-                    return gc.client.leaveGroupRequest.callCount === 1 && gc.client.leaveGroupRequest.args[0][1] === 'me';
-                });
-            }
-            return Promise.all(depths.map(at)).then(function (left) {
-                depths.filter(function (d, i) { return !left[i]; }).should.eql([]); // depths at which it didn't leave
+        it('should drop acks for a broker whose session is being reopened when no fetch goes to it', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc._reopening = { 1: true }; // broker 1's ack-only fetch failed; its partitions are all revoked
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([]));
+            sinon.spy(sc.client, 'warn');
+            sc._closed = true;
+            markDelivered(sc, 't', 1, [1]);
+            sc._deliveries['t:1'].leader = '1';
+            sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
+            sc._pendingAcks['t:1'].leader = '1';
+
+            return sc._fetch().then(function () {
+                Object.keys(sc._pendingAcks).should.eql([]); // not held silently until end()
+                sc.client.warn.args.some(function (a) { return /t:1/.test(a.join(' ')); }).should.equal(true);
+            });
+        });
+
+        it('should not hand records from an acknowledge-only partition to the handler', function () {
+            var sc = makeShareConsumer(), handled = [];
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 1: 2 };
+            sc._handler = function (messageSet, topic, partition) { handled.push(partition); };
+            sinon.stub(sc, '_buildFetchRequests').returns({});
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([{ topic: 't', topicId: 'id1', partition: 1, leader: '1',
+                messageSet: [record(5)], acquiredRecords: [{ firstOffset: 5, lastOffset: 5, deliveryCount: 1 }] }]));
+            sc._closed = true;
+            markDelivered(sc, 't', 1, [1]); // t:1 revoked since: its acks go acknowledge-only
+            sc._deliveries['t:1'].leader = '1';
+            sc._deliveries['t:1'].topicId = 'id1';
+            sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
+
+            return sc._fetch().then(function () {
+                sc.client.shareFetchRequest.args[0][3]['1'][0].partitions.should.eql([{ partition: 1, ackOnly: true }]);
+                handled.should.eql([]); // the broker answered it, but this member no longer owns it
             });
         });
 
@@ -2019,7 +1997,7 @@ describe('Consumer loops (unit)', function () {
             sinon.stub(sc.client, 'updateMetadata').returns(Promise.resolve());
             sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, r, f, acks) {
                 Object.keys(acks).should.eql(['__proto__']);
-                return Promise.resolve([{ topic: '__proto__', partition: 0, error: new errors.NoKafkaConnectionError('b:9092', 'down'), messageSet: [] }]);
+                return Promise.resolve([{ topic: '__proto__', partition: 0, error: new errors.NoKafkaConnectionError('b:9092', 'down'), notFetched: true, messageSet: [] }]);
             });
             markDelivered(sc, '__proto__', 0, [1]);
             sc.acknowledge({ topic: '__proto__', partition: 0, offset: 1 });

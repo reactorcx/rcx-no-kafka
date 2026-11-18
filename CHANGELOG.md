@@ -9,11 +9,18 @@
 - `ShareConsumer.end()` sends the acknowledgements made so far, closes every open share session and leaves within 30 s, without waiting for running handlers; nothing is fetched or delivered after it
 - `ShareConsumer` acknowledges acquired offsets that hold no record as gaps (as Java does), and sends acks to the broker that delivered the records
 - An idempotent send that finds its topic recreated (a new topic ID) fails with `UnknownTopicId` instead of reusing the old log's sequence numbers; the next send starts a fresh producer epoch
+- A running SimpleConsumer or GroupConsumer finds a recreated topic and keeps its position, as Java's does; a shorter new topic restarts it at `recoveryOffset` (README, Known limitations)
+- `ShareConsumer` sends a revoked partition's queued acks on the next fetch to the broker that delivered them; acks for a broker that left the cluster are dropped with a warning
+- Legacy (pre-0.11) messages are verified against their CRC-32; a corrupt one fails the fetch
+- TLS `cert`, `key` and `ca` are each read as a file path unless they hold a PEM header line, so a file cert can go with an inline key
 
 ### Fixed
 - Compressed legacy (magic 1) messages are delivered at their absolute offsets; their inner offsets were relative
 - `DefaultPartitioner` hashed a number key as that many zero bytes, and threw on negative, boolean and object keys
 - `HashCRC32Partitioner` sent every number key to partition 0 and threw on Buffer keys
+- Decompression stays within `compression.maxOutputSize` for every codec: LZ4 skippable frames and tiny blocks, and multi-frame zstd data, could hang the decoder or allocate far past the cap
+- A top-level Metadata v13 error (e.g. `RebootstrapRequired`) was ignored; the refresh now fails and keeps the known brokers
+- Typings: `GroupAdmin` methods return Promises, `SendMessage` keys may be numbers, booleans or objects, and `Result.error` may be null
 
 ## 4.10
 

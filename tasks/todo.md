@@ -907,4 +907,21 @@ Acceptance bar: a finding is fixed only if it passes all five rules, else it is 
 - [x] Codex round 51 (gpt-6.1-sol, xhigh, Fast; whole branch, no AGENTS.md): no findings ("No
   actionable regressions were found"; 697 broker-free tests passed in its sandbox).
 - [x] Round 52: not needed (round 51 led to no fix). The loop is over.
-- [ ] Final: full suite on a fresh broker, live checks, review subagents, review section.
+- [x] Full suite on a fresh 4.2.0 broker: 839 pass, the same 10 failures as `master`. Live: topic
+  recreated under a running producer and consumer, 10/10 sent and consumed; acks queued at `end()`
+  applied; a revoked partition's acks applied.
+- [x] Style review: CHANGELOG gaps filled (recreation position, revoked acks, legacy CRC, TLS,
+  decompression caps, Metadata v13 error, typings); README TLS sentence matched to the code (a PEM
+  header line). Declined: the `Unreleased` heading (the version is chosen at release), `new Set`
+  in the producer (it holds request objects), `{}` for `topic:partition` maps (a colon key can't
+  hit `__proto__`), comment and README length (churn without a defect).
+- [x] Maintainability review, fixed: a test that could never fail (`_fetchRequest`, renamed in
+  round 8); acks for a reopening broker no fetch goes to were held silently until `end()`, now
+  dropped with a warning as the docstring and README say; dead session-reset machinery
+  (`epochsAtSend`, `_resetShareSessions`, the no-leader fallback in `_partitionError`) and its
+  stale comments; a false comment in `shareFetchRequest`; `r.notFetched` instead of an implicit
+  check; `_within` moved to `promise-utils.within`; a timing test with under 2x margin and a test
+  that passed on the old code removed; a coverage test for the ack-only result filter added.
+  Fixtures now match the client's results (`leader`, `notFetched`). Declined: `_ackLeader`'s
+  current-leader fallback (only tests reach it; changing it rewrites 17 fixtures for no defect).
+- [ ] Security review; review section.
