@@ -585,6 +585,38 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should release a record a failed handler took off its array', function () {
+            var sc = makeShareConsumer();
+            var result = { messageSet: [record(0), record(1)], acquiredRecords: [{ firstOffset: 0, lastOffset: 1, deliveryCount: 1 }] };
+            function handler(messageSet) {
+                messageSet.shift(); // takes 0 off, then fails before acknowledging it
+                return Promise.reject(new Error('handler bug'));
+            }
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            return fetchOnce(sc, result, handler).then(function () {
+                sc._drainPendingAcks().t[0].map(function (b) { return [b.firstOffset, b.lastOffset, b.acknowledgeTypes[0]]; })
+                    .should.eql([[0, 1, 2]]); // both released, not 0 left locked
+            });
+        });
+
+        it('should work out a failed handler\'s releases quickly, however scattered', function () {
+            var sc = makeShareConsumer(), records = [], i, t0;
+            for (i = 0; i < 5000; i++) { records.push(record(i * 2)); } // a compaction gap after each
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            function handler(messageSet, topic, partition) {
+                messageSet.filter(function (m, j) { return j % 2 === 0; }).forEach(function (m) {
+                    sc.acknowledge({ topic: topic, partition: partition, offset: m.offset });
+                });
+                t0 = Date.now();
+                return Promise.reject(new Error('handler bug'));
+            }
+            return fetchOnce(sc, { messageSet: records, acquiredRecords: [{ firstOffset: 0, lastOffset: 9998, deliveryCount: 1 }] }, handler).then(function () {
+                (Date.now() - t0).should.be.below(100); // was ~400 ms
+            });
+        });
+
         it('should let a range ack take the place of the gap acks inside it', function () {
             var sc = makeShareConsumer();
             var result = { messageSet: [record(0), record(3)], acquiredRecords: [{ firstOffset: 0, lastOffset: 4, deliveryCount: 1 }] };
