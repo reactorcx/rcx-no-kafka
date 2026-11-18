@@ -1061,6 +1061,24 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should close with acks from different deliveries in separate requests, the latest with the close', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 4 };
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 }); // kept from an earlier delivery
+            markDelivered(sc, 't', 0, [7]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 7 });
+
+            return sc.end().then(function () {
+                sc.client.shareAcknowledgeRequest.args.map(function (a) {
+                    return [a[2], a[3][0][0].partitions[0].acknowledgementBatches.map(function (b) { return b.firstOffset; })];
+                }).should.eql([[4, [1]], [-1, [7]]]);
+            });
+        });
+
         it('should send queued acks when it ends, closing each open share session', function () {
             var sc = makeShareConsumer();
             twoLeaders(sc);

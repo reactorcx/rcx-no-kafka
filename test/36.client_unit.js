@@ -667,6 +667,24 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should split a Produce mixing topics with and without IDs, keeping v13 for those with', function () {
+            var c = makeClient(), versions = [];
+            c.topicIds.a = '00000000-0000-0000-0000-0000000000aa';
+            c.brokerConnections = { 0: fakeConn('b:1', function (id, buffer) {
+                versions.push(Buffer.from(buffer).readInt16BE(2));
+                return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down'));
+            }) };
+            c.brokerConnections[0].apiVersions = { 0: { min: 0, max: 13 } };
+
+            return c.produceRequest([
+                { topic: 'a', partition: 0, leader: 0, message: { value: 'x' } },
+                { topic: 'b', partition: 0, leader: 0, message: { value: 'y' } } // no known ID
+            ], 0).then(function (r) {
+                versions.sort().should.eql([12, 13]); // 'a' still checked by ID on the wire
+                r.map(function (x) { return x.topic; }).sort().should.eql(['a', 'b']);
+            });
+        });
+
         it('should send Produce by name when a topic has no known ID, though the broker has v13', function () {
             var c = makeClient(), sent;
             c.brokerConnections = { 0: fakeConn('b:1', function (id, buffer) { sent = Buffer.from(buffer); return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };

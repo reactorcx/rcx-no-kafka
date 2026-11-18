@@ -715,7 +715,10 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P1 Produce v13 without a topic ID sent the zero UUID and the unmatched reply let a
         transaction commit without the partition; by name now, and unanswered partitions fail.
   - [x] P2 Stale and fresh acks for one partition went in one fetch; one delivery's per fetch now.
-- Verification: unit tests 31-39: 281 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 25 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A mixed-ID Produce went wholly by name, dropping v13's ID check; split now.
+  - [x] P2 `end()` put a partition's acks from different deliveries in one close; separate now.
+- Verification: unit tests 31-39: 283 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
