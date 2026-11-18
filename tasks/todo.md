@@ -946,7 +946,7 @@ Acceptance bar: a finding is fixed only if it passes all five rules, else it is 
 
 - Phase 2 items 2.1-2.13 and 2.15 done; 2.14 moved to Phase 3 (3.11). 51 Codex rounds (gpt-6.2-sol
   for 2-50, gpt-6.1-sol for 1 and 51); the last was clean once the loop's high-churn mechanisms
-  were removed and the bar adopted. `lib/` against `fix-audit-phase1`: +1,452 / -312 lines.
+  were removed and the bar adopted. `lib/` against `fix-audit-phase1`: +1,465 / -320 lines.
 - Behaviour changes are in CHANGELOG (Unreleased) and the README, with a Known limitations section
   for what was declined: topic recreation under a running client (Java's behaviour), best-effort
   share acks, a silent broker holding a round until `requestTimeout`, `end()` during a join, old
