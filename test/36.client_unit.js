@@ -714,6 +714,19 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should fetch by the topic ID a caller gives, not the one metadata has since', function () {
+            var c = makeClient(), writer = c.protocol.write();
+            c.topicIds.t = '00000000-0000-0000-0000-0000000000bb'; // recreated
+            c.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
+            c.brokerConnections[0].apiVersions = { 1: { min: 0, max: 16 } };
+            sinon.spy(writer, 'FetchRequestV16');
+
+            return c.fetchRequest({ 0: [{ topicName: 't', topicId: '00000000-0000-0000-0000-0000000000aa', partitions: [{ partition: 0, offset: 50, maxBytes: 1024 }] }] })
+            .then(function () {
+                writer.FetchRequestV16.args[0][0].topics[0].topicId.should.equal('00000000-0000-0000-0000-0000000000aa');
+            });
+        });
+
         it('should split a Produce mixing topics with and without IDs, keeping v13 for those with', function () {
             var c = makeClient(), versions = [];
             c.topicIds.a = '00000000-0000-0000-0000-0000000000aa';

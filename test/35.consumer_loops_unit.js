@@ -49,6 +49,46 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should fetch by the topic ID of the subscription\'s offset', function () {
+            var c = makeConsumer(noop);
+            c.subscriptions['t:0'].topicId = 'id-old';
+            c.client.topicIds.t = 'id-old';
+            c._closed = true;
+            return c._fetch().then(function () {
+                c.client.fetchRequest.args[0][0]['0'][0].topicId.should.equal('id-old'); // not what metadata says when it is sent
+            });
+        });
+
+        it('should bind a subscription made before topic IDs to the first one, without moving it', function () {
+            var c = makeConsumer(noop);
+            c.client.topicIds.t = 'id1'; // the brokers now give topic IDs
+            c._closed = true;
+            return c._fetch().then(function () {
+                c.client.fetchRequest.callCount.should.equal(1);
+                c.subscriptions['t:0'].topicId.should.equal('id1');
+                c.subscriptions['t:0'].offset.should.equal(6); // fetched on from 5, not reset
+            });
+        });
+
+        it('should look an offset up again if its topic was recreated meanwhile', function () {
+            var c = new Kafka.SimpleConsumer({ clientId: 'unit-consumer' });
+            c.client.topicIds.t = 'id-old';
+            sinon.stub(c.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(c.client, 'getPartitionOffset').callsFake(function () {
+                if (c.client.getPartitionOffset.callCount === 1) {
+                    c.client.topicIds.t = 'id-new'; // recreated while the first lookup was out
+                    return Promise.resolve(50);
+                }
+                return Promise.resolve(0);
+            });
+
+            return c.subscribe('t', 0, noop).then(function () {
+                c.client.getPartitionOffset.callCount.should.equal(2);
+                c.subscriptions['t:0'].offset.should.equal(0);
+                c.subscriptions['t:0'].topicId.should.equal('id-new');
+            });
+        });
+
         it('should keep a re-subscribed offset\'s topic ID across a metadata refresh', function () {
             var c = makeConsumer(noop);
             c.subscriptions['t:0'].topicId = 'id-old';
@@ -139,6 +179,7 @@ describe('Consumer loops (unit)', function () {
 
             gc.strategies = { S: { handler: noop } };
             sinon.stub(gc.client, 'updateGroupCoordinator').returns(Promise.resolve());
+            sinon.stub(gc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
             sinon.stub(gc.client, 'joinConsumerGroupRequest').returns(Promise.resolve({
                 memberId: 'me', leaderId: 'other', generationId: 1, members: [], groupProtocol: 'S'
             }));
@@ -1015,6 +1056,7 @@ describe('Consumer loops (unit)', function () {
             twoLeaders(sc);
             sc.shareSessionEpochs = {};
             sc._reopening = { 0: true }; // its ack-only fetch failed; no partitions left on it
+            sc.client.brokerConnections = { 0: {} };
             sinon.stub(sc, '_buildFetchRequests').returns({});
             sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
             sc._closed = true;
@@ -1027,6 +1069,24 @@ describe('Consumer loops (unit)', function () {
                 args[3]['0'][0].partitions[0].acknowledgementBatches[0].firstOffset.should.equal(1);
                 Object.keys(sc._pendingAcks).should.eql([]);
                 should.not.exist(sc._reopening[0]);
+            });
+        });
+
+        it('should keep an idle broker\'s acks while there is no connection to close its session on', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc._reopening = { 0: true };
+            sc.client.brokerConnections = {}; // not in metadata just now
+            sinon.stub(sc, '_buildFetchRequests').returns({});
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sc._closed = true;
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            return sc._fetch().then(function () {
+                sc.client.shareAcknowledgeRequest.callCount.should.equal(0);
+                Object.keys(sc._pendingAcks).should.eql(['t:0']);
+                sc._reopening[0].should.equal(true); // tried again once the broker is back
             });
         });
 
@@ -1688,6 +1748,7 @@ describe('Consumer loops (unit)', function () {
             var order = [], answerJoin, rejoinP, endP;
 
             sinon.stub(gc.client, 'updateGroupCoordinator').returns(Promise.resolve());
+            sinon.stub(gc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
             sinon.stub(gc.client, 'joinConsumerGroupRequest').callsFake(function () {
                 order.push('join');
                 return new Promise(function (resolve, reject) {
@@ -1733,11 +1794,30 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('GroupConsumer: end() during the join\'s coordinator lookup should not send it, nor wait', function () {
+            var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-race' });
+            var found, t0;
+            sinon.stub(gc.client, '_findGroupCoordinator').returns(new Promise(function (resolve) { found = resolve; }));
+            sinon.stub(gc.client, 'joinConsumerGroupRequest').returns(Promise.resolve({}));
+            sinon.stub(gc.client, 'end').returns(Promise.resolve());
+
+            gc._joinGroup().catch(noop);
+            t0 = Date.now();
+            return gc.end().then(function () {
+                (Date.now() - t0).should.be.below(500); // no join sent: none to wait for
+                found({});
+                return promiseUtils.delay(10);
+            }).then(function () {
+                gc.client.joinConsumerGroupRequest.callCount.should.equal(0);
+            });
+        });
+
         it('GroupConsumer: end() should stop a join\'s retry instead of waiting for it', function () {
             var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-race' });
             var fail, endP, t0;
 
             sinon.stub(gc.client, 'updateGroupCoordinator').returns(Promise.resolve());
+            sinon.stub(gc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
             sinon.stub(gc.client, 'joinConsumerGroupRequest').callsFake(function () {
                 if (gc.client.joinConsumerGroupRequest.callCount > 1) { // a retry would get an ID
                     return Promise.resolve({ memberId: 'late', leaderId: 'x', generationId: 1, members: [] });
@@ -1765,6 +1845,7 @@ describe('Consumer loops (unit)', function () {
             var gc = new Kafka.GroupConsumer({ clientId: 'unit-gc', groupId: 'gc-unit-race', sessionTimeout: 30 });
 
             sinon.stub(gc.client, 'updateGroupCoordinator').returns(Promise.resolve());
+            sinon.stub(gc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
             sinon.stub(gc.client, 'joinConsumerGroupRequest').returns(new Promise(function () {}));
             sinon.stub(gc.client, 'leaveGroupRequest').returns(Promise.resolve());
             sinon.stub(gc.client, 'end').returns(Promise.resolve());
@@ -1783,6 +1864,7 @@ describe('Consumer loops (unit)', function () {
             var lookedUp;
 
             sinon.stub(gc.client, 'updateGroupCoordinator').returns(new Promise(function (resolve) { lookedUp = resolve; }));
+            sinon.stub(gc.client, '_findGroupCoordinator').returns(Promise.resolve({}));
             sinon.stub(gc.client, 'joinConsumerGroupRequest').returns(Promise.resolve({}));
             sinon.stub(gc.client, 'end').returns(Promise.resolve());
 

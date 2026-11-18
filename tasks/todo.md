@@ -796,7 +796,17 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
     `recoveryOffset` when it changes. Live: 100 of 100 records (round 39 code: the last 50).
   - [x] P2 An idle broker's reopening session kept its queued acks until `end()`; closed with them
     (epoch -1) on the next fetch round now.
-- Verification: unit tests 31-39: 320 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 41 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A fetch built before a metadata wait could go out with the new topic ID and the old
+    log's offset; fetches carry the subscriptions' topic ID now.
+  - [x] P1 An offset looked up during a recreation was tagged with the new ID; repeated now.
+  - [x] P2 Idle-session close tried without a connection (acks lost); only with one now.
+  - [x] P2 A JoinGroup could go out after `end()` (coordinator lookup in flight); checked at the
+    send, and `end()` waits only for a join sent.
+  - [x] P2 Subscriptions from before topic IDs never got one; bound to the first seen.
+  - Integration (02, 03, 05, 06): 29 pass, 1 baseline failure (clean shutdown, init timeout); live
+    recreation check: 100 of 100.
+- Verification: unit tests 31-39: 326 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
