@@ -366,6 +366,18 @@ describe('Compression limits (unit)', function () {
             });
         });
 
+        it('should acknowledge nothing a share fetch acquired when no batch in it is complete', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            var raw = smallBatch(0).slice(0, 40); // its only batch, cut by maxBytes
+            var batches = protocol.read(raw).RecordBatch(null, raw.length).result;
+            batches.should.have.length(0);
+            return c._decompressShareFetchResults([{
+                topic: 't', partition: 0, messageSet: batches, acquiredRecords: [{ firstOffset: 0, lastOffset: 0, deliveryCount: 1 }]
+            }]).then(function (r) {
+                r[0].acquiredRecords.should.eql([]); // not gaps: unseen records, redelivered
+            });
+        });
+
         it('should leave a truncated trailing share batch out of acquiredRecords', function () {
             var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
             var raw = Buffer.concat([smallBatch(0), smallBatch(1).slice(0, 40)]); // cut by maxBytes

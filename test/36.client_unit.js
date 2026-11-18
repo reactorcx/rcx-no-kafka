@@ -409,6 +409,21 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should open no coordinator connection for a lookup answered just as it ends', function () {
+            var c = makeClient(), lookup;
+            c.initialBrokers = [];
+            sinon.stub(c, '_sendToAnyBroker').returns(Promise.resolve({ coordinatorHost: 'h', coordinatorPort: 1 }));
+            sinon.stub(c, '_createConnection');
+
+            lookup = c._findGroupCoordinator('g').then(function () { return 'resolved'; }, function (err) { return err; });
+            return c.end().then(function () {
+                return lookup;
+            }).then(function (r) {
+                r.should.be.instanceOf(errors.NoKafkaConnectionError);
+                c._createConnection.callCount.should.equal(0);
+            });
+        });
+
         it('should not wait for a coordinator lookup still in progress when it ends', function () {
             var c = makeClient();
             c.initialBrokers = [];

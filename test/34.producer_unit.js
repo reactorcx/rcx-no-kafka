@@ -171,6 +171,21 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should keep a partition\'s sequence when its topic first gets an ID (broker upgrade)', function () {
+            var p = makeIdempotentProducer(), seqs = [];
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                seqs.push(requests[0]._baseSequence);
+                return Promise.resolve([{ topic: 't', partition: 0, offset: 0 }]);
+            });
+
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function () { // no topic IDs yet
+                p.client.topicIds.t = 'id-assigned';
+                return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
+            }).then(function () {
+                seqs.should.eql([0, 1]); // the same log: restarting at 0 would be taken as a duplicate
+            });
+        });
+
         it('should start a recreated topic\'s partition at sequence 0', function () {
             var p = makeIdempotentProducer(), seqs = [];
             p.client.topicIds.t = 'id-old';

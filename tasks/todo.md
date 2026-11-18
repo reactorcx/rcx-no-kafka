@@ -659,7 +659,12 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
         the records; acks remember their broker now.
   - [x] P2 Acquired offsets with no record were never acknowledged; GAP-acked now, as in Java.
   - [x] P3 Partitioner typings take the producer message type.
-- Verification: unit tests 31-39: 246 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 12 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 Round 11's sequence reset also fired when a topic first got an ID (broker upgrade),
+        risking a new batch taken as a duplicate; only a change between known IDs resets now.
+  - [x] P2 A share fetch with only a truncated batch GAP-acked every acquired offset; none now.
+  - [x] P2 A coordinator lookup answered as `end()` ran opened a connection afterwards.
+- Verification: unit tests 31-39: 249 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
