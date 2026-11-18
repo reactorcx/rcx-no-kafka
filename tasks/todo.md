@@ -904,7 +904,7 @@ Acceptance bar: a finding is fixed only if it passes all five rules, else it is 
     (02, 03, 27, 28) 48 pass and the baseline clean-shutdown failure. Live: a revoked partition's
     acks are still applied; a consumer at offset 50 of a topic recreated with 100 records now
     skips the first 50 (as Java does, documented) instead of restarting at `recoveryOffset`.
-- [ ] Codex round 51 (whole branch), each finding triaged against the bar in one line.
-- [ ] Round 52 on the fixes only, if round 51 led to any; a fix that draws an accepted finding is
-  reverted and documented. No third round.
+- [x] Codex round 51 (gpt-6.1-sol, xhigh, Fast; whole branch, no AGENTS.md): no findings ("No
+  actionable regressions were found"; 697 broker-free tests passed in its sandbox).
+- [x] Round 52: not needed (round 51 led to no fix). The loop is over.
 - [ ] Final: full suite on a fresh broker, live checks, review subagents, review section.
