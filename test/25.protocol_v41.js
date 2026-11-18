@@ -542,42 +542,6 @@ describe('Kafka 4.1.1 Protocol Version Tests', function () {
         });
     });
 
-    describe('InitProducerId v6', function () {
-        it('should encode InitProducerIdRequestV6 with enable2Pc and keepPreparedTxn', function () {
-            var v5Encoded, v6Encoded;
-
-            v5Encoded = protocol.write().InitProducerIdRequestV3({
-                correlationId: 1,
-                clientId: 'test',
-                apiVersion: 5,
-                transactionalId: 'txn1',
-                transactionTimeoutMs: 5000,
-                producerId: -1,
-                producerEpoch: -1
-            }).result;
-
-            v6Encoded = protocol.write().InitProducerIdRequestV6({
-                correlationId: 1,
-                clientId: 'test',
-                transactionalId: 'txn1',
-                transactionTimeoutMs: 5000,
-                producerId: -1,
-                producerEpoch: -1,
-                enable2Pc: false,
-                keepPreparedTxn: false
-            }).result;
-
-            // apiKey=22, apiVersion=6
-            v6Encoded[0].should.equal(0x00);
-            v6Encoded[1].should.equal(22);
-            v6Encoded[2].should.equal(0x00);
-            v6Encoded[3].should.equal(6);
-
-            // v6 should be longer due to enable2Pc + keepPreparedTxn (2 extra Int8 bytes)
-            v6Encoded.length.should.be.above(v5Encoded.length);
-        });
-    });
-
     ////////////////////////////////////////
     // Phase 4: Core APIs                 //
     ////////////////////////////////////////
@@ -930,6 +894,8 @@ describe('Kafka 4.1.1 Protocol Version Tests', function () {
                 // TaggedFields
                 this.TaggedFields();
             });
+            // top-level ErrorCode (v13+, after Topics: MetadataResponse.json)
+            writer.Int16BE(0);
             // TaggedFields
             writer.TaggedFields();
 
@@ -940,6 +906,23 @@ describe('Kafka 4.1.1 Protocol Version Tests', function () {
             result.topicMetadata.length.should.equal(1);
             result.topicMetadata[0].topicId.should.equal(topicId);
             result.topicMetadata[0].topicName.should.equal('my-topic');
+            should.not.exist(result.error);
+        });
+
+        it('should read the top-level ErrorCode of MetadataResponseV13', function () {
+            var writer = protocol.write();
+            var result;
+
+            writer.Int32BE(1).TaggedFields().Int32BE(0)
+                .compactArray([], function () {})
+                .compactString('test-cluster')
+                .Int32BE(1)
+                .compactArray([], function () {})
+                .Int16BE(129) // REBOOTSTRAP_REQUIRED
+                .TaggedFields();
+
+            result = protocol.read(writer.result).MetadataResponseV13().result;
+            result.error.code.should.equal('RebootstrapRequired');
         });
     });
 

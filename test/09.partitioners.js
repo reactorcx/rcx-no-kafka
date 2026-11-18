@@ -54,6 +54,15 @@ describe('Default Partitioner', function () {
         });
     });
 
+    it('should hash a non-string key as the string it is sent as', function () {
+        var partitioner = new Kafka.DefaultPartitioner();
+
+        [5, -1, true, 1.7e12, 314572800].forEach(function (key) {
+            partitioner.partition('topic', new Array(numPartitions), { key: key })
+                .should.equal(partitioner.partition('topic', new Array(numPartitions), { key: String(key) }));
+        });
+    });
+
     it('should be able to inherit from Kafka.DefaultPartitioner', function () {
         var partitioner;
 
@@ -92,5 +101,14 @@ describe('Hash CRC32 Partitioner', function () {
         partitioner.partition('topic', new Array(7), {
             key: 'test-key'
         }).should.equal(5);
+    });
+
+    it('should hash Buffer and non-string keys as the bytes they are sent as', function () {
+        var partitioner = new Kafka.HashCRC32Partitioner();
+
+        partitioner.partition('topic', new Array(10), { key: Buffer.from('test-key') }).should.equal(1);
+        partitioner.partition('topic', new Array(7), { key: 12345 })
+            .should.equal(partitioner.partition('topic', new Array(7), { key: '12345' }))
+            .and.not.equal(0);
     });
 });

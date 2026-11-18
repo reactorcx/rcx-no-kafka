@@ -4,6 +4,7 @@
 
 var Protocol = require('../lib/protocol');
 var errors   = require('../lib/errors');
+var Kafka    = require('../lib/index');
 
 describe('v1.0 Protocol Upgrade', function () {
     var protocol;
@@ -140,6 +141,28 @@ describe('v1.0 Protocol Upgrade', function () {
 
             buf.should.be.an.instanceOf(Buffer);
             buf.length.should.be.above(0);
+        });
+
+        it('should serialize v5 the same, with apiVersion=5 (the wire format did not change)', function () {
+            var v5 = protocol.write().FetchRequestV6({
+                apiVersion: 5, correlationId: 1, clientId: 'test', maxWaitTime: 100, minBytes: 1, maxBytes: 1048576, isolationLevel: 1, topics: []
+            }).result;
+            v5 = Buffer.from(v5);
+            v5.readInt16BE(2).should.equal(5);
+        });
+
+        it('should send v5 to a broker whose Fetch max is v5', function () {
+            var c = new Kafka.Producer({ connectionString: '127.0.0.1:1', logger: { logLevel: 0 } }).client;
+            var sent;
+            c.brokerConnections = { 0: {
+                apiVersions: { 1: { min: 0, max: 5 } },
+                send: function (id, buffer) {
+                    sent = Buffer.from(buffer);
+                    return Promise.reject(new Error('stop'));
+                }
+            } };
+            function check() { sent.readInt16BE(2).should.equal(5); }
+            return c.fetchRequest({ 0: [{ topicName: 't', partitions: [{ partition: 0, offset: 0, maxBytes: 1024 }] }] }).then(check, check);
         });
     });
 

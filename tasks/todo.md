@@ -248,6 +248,7 @@ PR #6 review of 586a588 (2026-11-17):
   - [x] P2 A transaction starting with `sendOffsets()` registered the offsets before the owed
         re-init, so its sends reused the gapped sequences. With a re-init owed, `sendOffsets()`
         queues it on `_sendChain` and registers only after it ran.
+- Codex round 2 and the PR #6 re-review of 9711afd (2026-11-17): no new findings.
 - Verification: each new test fails on 586a588 (4); removing any of the 10 new pieces fails a
   test; the CRC check moved after the drop fails the new decode test; live on 3.9.2 and 4.2.0
   with the commit response dropped: 586a588's abort resolves after the commit went through, the
@@ -264,53 +265,133 @@ PR #6 review of 586a588 (2026-11-17):
 
 ## Phase 2 — New security and robustness findings
 
-- [ ] 2.1 **[R]** One lookup of a topic named `constructor` throws inside `updateMetadata` after
-      the pending latch is set (`lib/client.js:295-296`); every later refresh sends nothing.
-      A topic named `hasOwnProperty` breaks `getTopicPartitions` for all topics (`:528`).
-      Fix: exception-safe latch plus null-prototype maps (wider than June's `__proto__` item).
-- [ ] 2.2 **[R]** `ssl: {cert: <path>, key: <PEM text>}` puts the private key in the `init()`
-      error message and `err.path` (`lib/client.js:127-137`). Fix: test cert and key separately.
-- [ ] 2.3 **[R, partly]** Numeric message keys: `Buffer(key)` allocates N zero bytes, so the
-      partition is computed from the wrong bytes, memory scales with the key's value, and negative
-      keys throw (`lib/assignment/partitioners/default.js:34`). Fix: `Buffer.from(String(key))`.
-      Changes key-to-partition mapping for anyone already sending numeric keys.
-- [ ] 2.4 Sync throws inside the linger timer crash the process: a null element passed to
-      `send()`, or >120k queued sends (`lib/producer.js:164, 320-323`).
-- [ ] 2.5 **[read]** A failed metadata refresh rejects unrelated in-flight requests
-      (`lib/client.js:375-383`). Fix: `.catch(noop)` in `_waitMetadata`.
-- [ ] 2.6 Topic errors in metadata are cached as "zero partitions": partitioner returns NaN and is
-      never recomputed; `subscribe()` resolves with nothing (`lib/client.js:334-342`).
-- [ ] 2.7 A deleted and recreated topic stays broken until restart: the stale topic ID is re-sent
-      and re-cached (`lib/client.js:436-447`). Broker half read from source.
-- [ ] 2.8 Group-coordinator cache never invalidated for `sendOffsets` and GroupAdmin; transaction
-      coordinator sockets dropped without `close()` (`lib/client.js:2340, 2398, 2462, 2471`).
-- [ ] 2.9 ShareConsumer: **[read]** top-level ShareFetch error discarded (`lib/client.js:2754`);
-      delivers records outside `acquiredRecords` (`lib/share_consumer.js:261`); drops queued acks
-      on `end()` and for partitions absent from the next fetch; never fetches an assigned
-      partition missing from cached metadata.
-- [ ] 2.10 `GroupConsumer.end()` skips `client.end()` when LeaveGroup fails
-      (`lib/group_consumer.js:583-586`); `onPartitionsAssigned` is called unguarded (`:715, 803,
-      816`); `revokeTimeout` above 2^31-1 becomes a 1 ms drain.
-- [ ] 2.11 Minor protocol: MetadataResponse v13 omits the top-level ErrorCode (**[R]** against the
-      4.2 spec); InitProducerId v6 request paired with the v2 response reader; negotiated Fetch v5
-      sends v6; LogAppendTime ignored; async lz4/zstd/snappy decode can throw synchronously;
-      legacy MessageSet path hands a shared writer buffer to async compression.
-- [ ] 2.12 Types and docs: `Result` has no `error` field although failures resolve as `{error}`;
-      `SendOptions` lists options `send()` ignores; `asyncCompression` documented false, default
-      true; `sendOffsets` signature and next-offset semantics; GroupAdmin and partitioner typings.
-- [ ] 2.13 **[read]** June S3 is incomplete: lz4 and zstd decode the whole batch before `checkOutput`
-      (`lib/protocol/misc/compression.js:110-134`). Reviewer measured a 32 KB zstd frame taking RSS
-      48 MB -> 1,073 MB before rejection. Needs a declared-size pre-check or streaming decode.
-- [ ] 2.14 The 128 MB cap is per batch with no per-fetch total (`lib/client.js:2102`): 8 gzip batches
-      in one 1 MB partition fetch held ~1 GB (reviewer measurement). Design choice: per-response budget.
-- [ ] 2.15 Group leader `topicMap = {}` (`lib/group_consumer.js:147`): a member subscribing to
-      `__proto__` makes `_syncGroup` throw on every rejoin, so the group never stabilises. Also on
-      master. One-line fix: `Object.create(null)`.
+Branch `fix-audit-phase2`, off `fix-audit-phase1` (PR #6) at aa086b0. Re-checked against this
+branch on 2026-11-17 and reviewed by a Fable 5.2 agent (xhigh); its corrections are folded in and
+the main ones spot-checked. Line numbers are this branch's.
 
-Design question for CORE-4239, not a plain bug: the drain budget opens before JoinGroup
-(`lib/group_consumer.js:326-328`), so a slow JoinGroup or the 1 s retry backoffs can spend it and
-the revoke callback is then not awaited. The comment at `:349` records this as deliberate
-(commit 6590f49). Alternative: charge only time spent inside drains.
+Already fixed by Phase 0/1: the top-level ShareFetch error (`lib/client.js:2957`), the
+`getTopicPartitions` own-property check, null-prototype client maps, `utils.groupBy`, producer
+`newTopics`, and both 2.4 crashes (`send()` rejects a null element; `.flat()` replaced the
+overflowing `apply`). Not on this branch: `revokeTimeout` (2.10) and the CORE-4239 drain-budget
+question. Dropped: 2.11e (async snappy is already wrapped in `attempt()`, `compression.js:193`) and
+2.8's ApiVersions leak (`apiVersionsRequest` never rejects).
+
+Each item: a broker-free test written first and seen failing, then the fix, one commit per item.
+Order: 2.1, 2.15, 2.2, 2.4, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.13, 2.12.
+
+- [x] 2.1 **[R]** `updateMetadata` sets its pending latch, then calls `metadataRequest` synchronously
+      (`lib/client.js:313-314`). A non-array `topicNames` throws there (`ShareConsumer.init({topics:
+      'name'})` reaches it, `share_consumer.js:75` only checks `.length`); the latch stays set, later
+      refreshes send nothing and `updateMetadata(['x'])` re-enters itself in microtasks, starving
+      timers. Fix: start the chain with `Promise.resolve().then(_try)`. Test asserts a second
+      `metadataRequest` call (the stuck path would hang mocha).
+- [x] 2.15 Plain `{}` maps keyed by topic name (`__proto__`, `constructor` and `toString` are legal
+      topic names) become `Object.create(null)`: `lib/base_consumer.js:54-55` (one subscription to
+      `constructor` makes every fetch throw, so the consumer fetches nothing),
+      `lib/group_consumer.js:147` (the group never stabilises), and `lib/share_consumer.js` fetch
+      `retry`, `_buildFetchRequests` and `_drainPendingAcks` (writes `Object.prototype[partition]`).
+- [x] 2.2 **[R]** If `ssl.cert` isn't PEM text, cert and key are both read as files
+      (`lib/client.js:126-137`), so a PEM key lands in the ENOENT message and `err.path`.
+      Fix: decide per value, with an unanchored PEM test (a template-literal PEM starts with `\n`).
+- [x] 2.3 **[R]** `Buffer(key)` on a numeric key allocates that many zero bytes
+      (`lib/assignment/partitioners/default.js:34`): key 5 and "5" go to different partitions though
+      both are sent as "5"; negative, boolean and timestamp keys throw and reject the whole linger
+      batch; key 314,572,800 took 327 ms and 360 MB. `HashCRC32Partitioner`
+      (`hash_crc32.js:20`): numeric keys always give partition 0, Buffer keys throw.
+      Fix: hash the bytes sent, `Buffer.isBuffer(key) ? key : Buffer.from(String(key))`, in both.
+      **Decision (2026-11-17): fix it.** Numeric keys move partition (during a rolling deploy old
+      and new producers split a key across two partitions; compacted topics keep stale values in
+      the old one). README and release note: overriding `hashKey` restores the old mapping.
+- [x] 2.4 Tests only: a null element and more than 120k queued sends (neither has one).
+- [x] 2.5 **[read]** `_waitMetadata` returns the in-flight refresh (`lib/client.js:393-399`) and 11
+      request paths start with it, so one failed refresh rejects unrelated requests.
+      Fix: `.catch(function () { return null; })` there. Before 2.11a.
+- [x] 2.6 Topic-level metadata errors are cached as zero partitions (`lib/client.js:352-364`): the
+      partitioner returns NaN, which is never recomputed (`typeof NaN === 'number'`,
+      `producer.js:179`; this also breaks the first send to an auto-created topic), and
+      `subscribe()` resolves with nothing. Fix: don't cache an errored topic, log its error (it
+      surfaces as UnknownTopicOrPartition, hiding e.g. TopicAuthorizationFailed).
+- [x] 2.7 A deleted and recreated topic stays broken until restart:
+  - [x] a. Metadata v12+ sends cached topic IDs (`lib/client.js:463-480`); any non-zero ID makes the
+        broker ignore names (`KafkaApis.scala:889-903`), so the stale ID gets UNKNOWN_TOPIC_ID and
+        named-only topics in the same request are dropped (a group leader refreshing `[cached A,
+        new B]` never sees B). Fix: ask by name only, as Java does for explicit topics; remove the
+        then-dead `:354-356`.
+  - [x] b. The producer treats `UnknownTopicId` as fatal (`RETRIABLE_ERROR_CODES`,
+        `producer.js:13`), so it never refreshes. Fix: add it and `InconsistentTopicId`, and check
+        the retry refreshes metadata. (Consumers already refresh on both via
+        `base_consumer.js:164`.)
+  - [x] c. `ShareConsumer._partitionError` (`share_consumer.js:425`) doesn't refresh on either.
+  Live check on 4.2.0: delete and recreate a topic under a running producer and consumer.
+- [x] 2.8 Coordinators:
+  - [x] a. Never invalidated: `txnOffsetCommitRequest` (`client.js:2658`), GroupAdmin, InitProducerId
+        on the transaction coordinator (`:2391`), and `describeGroupRequest`, whose NotCoordinator
+        is inside `groups[0].error` (`:2155`). Fix: one helper for "coordinator error or lost
+        connection -> invalidate", used by these and the existing catch blocks.
+  - [x] b. Transaction-coordinator errors `delete` the entry without closing its socket
+        (`:2524, 2582, 2649`). Fix: the helper calls `updateTransactionCoordinator` (no callers yet).
+  - [x] c. `_find*Coordinator`'s failure path deletes the cache entry unconditionally
+        (`:1599, 2470, 2867`), possibly a newer one. Fix: delete only if it is still its own promise.
+- [x] 2.9 ShareConsumer:
+  - [x] a. Records outside `acquiredRecords` are delivered (`client.js:3039` trims the ranges to
+        the decoded batches, not the records to the ranges; noted, not fixed, at the PR #5 review).
+        Fix: filter each record to the acquired ranges, as Java's `ShareCompletedFetch` does.
+  - [x] b. `end()` drops queued acks (`share_consumer.js:532`). Fix: send them with ShareAcknowledge
+        at epoch -1 to each leader with an open session (the broker accepts it and closes the
+        session; Java does the same on close), catch and warn so `client.end()` always runs.
+        `shareAcknowledgeRequest` takes one epoch for all leaders today; give it a per-leader map
+        like `shareFetchRequest`.
+  - [x] c. Acks for a partition not in the next fetch are drained and never sent
+        (`share_consumer.js:288`, `client.js:2937`). Fix: drain only acks the fetch will carry;
+        acks for partitions no longer assigned go out with ShareAcknowledge (the 2.9b path).
+  - [x] d. An assigned partition missing from cached metadata is never fetched
+        (`share_consumer.js:383`). Fix: refresh metadata (by name, so after 2.7a) for assigned
+        topics it lacks.
+  Live check: acks queued before `end()` are applied.
+- [x] 2.10 GroupConsumer:
+  - [x] a. `end()` skips `BaseConsumer.end()` when LeaveGroup rejects
+        (`group_consumer.js:403-406`), leaving sockets and timers. Fix: catch and warn as
+        `ShareConsumer.end()` does; skip LeaveGroup when `memberId` is null (as `:320` does).
+  - [x] b. `onPartitionsAssigned` / `onPartitionsRevoked` are called unguarded (`:475, 513, 561,
+        571, 603`): a throw fails the rebalance and the consumer rejoins over and over (at `:561` it
+        also skips `_needsRejoin` and `ownedPartitions`); a rejecting async callback is an unhandled
+        rejection. Fix: one helper that logs both.
+- [x] 2.11 Protocol:
+  - [x] a. MetadataResponse v13's top-level ErrorCode (last field, after Topics) isn't read
+        (`lib/protocol/metadata.js:506`; the comment at `:489` has its position wrong). Read it and
+        fail the refresh before the broker list is replaced (`client.js:333`). Java acts only on
+        REBOOTSTRAP_REQUIRED and only with rebootstrap enabled, so this is stricter (accepted
+        2026-11-17); with 2.5 a
+        failed refresh no longer breaks other requests. Update the `test/25` fixture.
+  - [x] b. An InitProducerId v6 request is read with the v2 reader (`client.js:2379`) and fails
+        ("Malformed varint"). v6 is unstable (brokers advertise it only with
+        `unstable.api.versions.enable`). Fix: cap at v5, delete the v6 writer and its test.
+  - [x] c. A negotiated Fetch v5 is sent as v6 (`client.js:1088-1089`); the wire format is the same
+        but the version isn't (0.11.0 brokers). Fix: send v5.
+  - [x] d. LogAppendTime batches (attributes bit 3) should give every record the batch
+        `maxTimestamp`; ignored today. Fix at `client.js:2194`, where record timestamps are set.
+  - [x] f. Legacy MessageSet compression hands a slice of the shared protocol writer to async
+        compression (`client.js:2266`); the next request overwrites it first (reproduced).
+        Fix: `Buffer.from(...)`, as `:718` does.
+- [x] 2.12 Types and docs: `Result` has no `error` (`types/producer.d.ts:218`); `asyncCompression`
+      is documented as defaulting to false (`README.md:274, 388, 510`; `types/producer.d.ts:186,
+      339`; `group_consumer.d.ts:107`; `simple_consumer.d.ts:84`), the code says true; `SendOptions`
+      fields `send()` ignores get a doc note (removing them breaks callers' compiles); `sendOffsets`
+      typing; GroupAdmin methods typed as returning non-Promises (`group_admin.d.ts:9, 13, 17`);
+      `Message.key` is `string` only (`kafka.d.ts:25`).
+- [x] 2.13 **[read]** lz4 and zstd decode the whole batch before `checkOutput`
+      (`lib/protocol/misc/compression.js:110-134`): a 32 KB zstd frame declaring 1 GiB took RSS
+      48 MB -> 1,073 MB. Also a truncated lz4 frame crashes the process: the decoder emits `error`
+      on the next tick with no listener.
+      Fix: zstd streams through `zstd-napi/binding`'s `DCtx.decompressStream` with a context per
+      call (one abandoned mid-frame corrupts the next decode), stops past `maxOutputSize`, and
+      rejects a frame that doesn't end (`ret !== 0`; today a truncated one returns 0 bytes); lz4
+      uses `lz4.createDecoderStream()` with a byte-counting listener and an `error` listener.
+      Live check: RSS with the bomb, and the truncated frame.
+- [x] 2.14 Moved to Phase 3 as 3.11 (decision 2026-11-17); documented in the README for now.
+Verification: per item as above; then eslint, `tsc`, unit tests 31-39, full suite on a fresh 4.2.0
+broker (same 10 failures as `master`), the live checks for 2.7, 2.9 and 2.13, review subagents
+(security, maintainability, style), then Codex (gpt-6.1-sol, xhigh) until clean.
 
 ## Phase 3 — Performance (never audited before)
 
@@ -338,6 +419,16 @@ Produce:
       batches. Reviewer measured 2.3x less CPU at 256 KB with 12 partitions.
 - [ ] 3.9 11-19 promises per message in leader lookup (`lib/producer.js:120-157`).
 - [ ] 3.10 Every protocol read/write goes through lodash-bound wrappers (bin-protocol `define`).
+
+- [ ] 3.11 (from 2.14) The decompression cap is per batch with no total: 8 gzip batches in one
+      1 MB partition fetch held ~1 GB. Budget `maxOutputSize` per partition response; needs
+      sequential decode in `_decompressRecordBatches` (today `Promise.all` spends the memory before
+      the truncation runs); later batches wait for the next fetch. Not a process bound (partitions x
+      cap). Share fetch and the legacy MessageSet path stay out. Measure throughput before/after.
+      Security review 2026-11-18, at 3fac5da: 12 valid 4 KB zstd batches inflating to 127 MB each
+      held 1.8 GB RSS; 230 over-cap zstd bombs (~1 MB) blocked the event loop 3.7 s per round;
+      14,000 truncated 12-byte zstd frames declaring the cap took 6.5 s per round (phase 1: 0.23 s,
+      because zstd's output buffer is now sized from the declared length before data is checked).
 
 Not recommended now: one fetch loop per leader (structural, touches the drain invariants);
 producer in-flight backpressure (behaviour change); fetch sessions (negligible below ~1,000
@@ -432,3 +523,444 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   is being committed or aborted"); the outside-a-transaction check no longer repeats it, and
   "should reject a send made while the transaction is being committed" expects the new message.
   `task.data.flat()` was already here.
+
+### Phase 2 (2026-11-17), branch `fix-audit-phase2` (stacked on PR #6)
+
+- One commit per item (2.1-2.13, 2.15), each with a broker-free test written first and seen
+  failing; 2.14 moved to Phase 3 (3.11) and documented in the README. Decisions: numeric keys
+  move partition (CHANGELOG, README `hashKey` override that keeps the old mapping, checked to
+  give the old partitions); a Metadata v13 top-level error fails the refresh.
+- Plan reviewed first by a Fable 5.2 agent (xhigh): one "already fixed" claim was wrong (share
+  records outside `acquiredRecords`, now 2.9a), two problems were not real here (2.11e, 2.8's
+  ApiVersions leak), and several missed sites were added (2.15 base_consumer, CRC32 partitioner,
+  four coordinator paths, async rebalance callbacks, the lz4 truncated-frame crash).
+- Found while fixing: the 150k-send test first ran out of heap because its stub returned one
+  result per message (real produce returns one per partition); 40k sends take 96 ms, linear.
+  zstd-napi's shared decoder, left mid-frame by a truncated batch, failed every later zstd decode
+  in the process (now reset after each call). lz4 can't decode concatenated frames, before or
+  after (Kafka writes one per batch).
+- Review (security, maintainability, style subagents):
+  - High: ShareGroupHeartbeat never dropped a moved coordinator (a 2.8 sibling). Fixed.
+  - Medium: a late failure on an old coordinator dropped and closed its replacement; invalidation
+    now names the connection the request used. `ShareConsumer.end()` didn't wait for running
+    handlers, losing their acks. Rebalance callbacks lost `this`. All fixed with tests.
+  - Low, fixed: an extra zstd allocation per sized frame (+37% on 1 KB batches); `_fetch`
+    starting outside its promise chain; LogAppendTime on legacy compressed wrappers; CRC32
+    partitioner docs; CHANGELOG notes for `subscribe()` now rejecting on an errored topic and
+    by-name metadata re-creating a deleted topic when auto-creation is on.
+  - Low, accepted: a topic's real metadata error (e.g. TopicAuthorizationFailed) still surfaces
+    as UnknownTopicOrPartition, as before 2.6, and is logged on each refresh. Acks for a partition
+    revoked before a fetch can carry them are only sent on `end()` (by then their locks have
+    usually expired and the records are redelivered: at-least-once, as before but no longer
+    silent). Sending them earlier needs a ShareAcknowledge racing the fetch's session epoch.
+  - Style: two doc fixes (stacked JSDoc, CHANGELOG format).
+  - Security, three high (all reachable from a fetched batch; reproduced here first):
+    - lz4: the lz4 module's stream decoder loops forever on a 9-byte skippable frame, and
+      zero-fills a block-size buffer (up to 4 MB) per block, so 64 KB of 1-byte blocks took
+      5.8 s and 4.4 GB. Both pre-date Phase 2. lz4 frames are now parsed here and blocks decoded
+      with the module's native `decodeBlock` (skippable frames rejected; checksums checked as
+      before): 1 ms and 12 ms / 53 MB, and lz4 decode got 2-16x faster.
+    - zstd: 9dc7708 kept a 128 KB buffer per frame (each frame ends a decode call), so 1 MB of
+      10-byte frames took 2.8 s and 1.7 GB; one buffer at an offset now: 57 ms / 56 MB.
+  - Security, low: `ShareConsumer.end()` could wait forever on a fetch stuck refreshing metadata
+    (now 30 s at most, Java's default close timeout); a non-PEM SSL key (base64, DER) still landed
+    in the read error (now replaced by one that names only `ssl.key` and the error code).
+- Codex review (gpt-6.1-sol, xhigh), round 1:
+  - [x] P2 The 30 s bound covered only the fetch wait: the final acks then waited on the same
+        stuck metadata refresh, so `client.end()` was never reached. One deadline now covers the
+        fetch wait, final acks and leave heartbeat.
+  - [x] P2 Structured TLS values (`key: [{ pem, passphrase }]`, arrays of CAs) were read as file
+        paths; worked before 2.2. Only a string or Buffer without PEM text is read as a file now.
+- Codex review round 2 (switched to gpt-6.2-sol, xhigh, at the user's request):
+  - [x] P1 A queued share ack was matched to a topic by name, so after a delete and recreate it
+        could be applied to the new topic's records at the same offset. Acks now carry the ID of
+        the topic their records came from; ShareFetch and ShareAcknowledge drop those for an ID
+        that is no longer the topic's.
+  - [x] P2 A handler calling `end()` waited the full 30 s for its own fetch, and the deadline cut
+        off the final acks. `end()` no longer waits for running handlers (as Java's close): acks
+        made so far are sent, a later `acknowledge()` is logged and not queued, and the epoch -1
+        request releases the rest for redelivery.
+  - [x] P2 File URLs (`ssl.ca: new URL(...)`) were passed to tls as is since round 1; read again.
+  - [x] P3 `Result.error` is `null` on success: typed.
+- Codex review round 3 (gpt-6.2-sol, xhigh):
+  - [x] P2 `end()` drained the final acks while a ShareFetch carrying acks was still in flight;
+        if it failed, the acks it requeued were neither sent nor reported. `end()` now settles
+        the request (not its handlers) first.
+  - [x] P2 `client.end()` waited for a coordinator lookup to resolve before closing its socket:
+        one waiting on a silent broker's ApiVersions reply held `end()` for `requestTimeout`
+        (pre-existing). A lookup records its connection as soon as it is created.
+  - [x] P1 An ack made after the next delivery for its partition was tagged with that delivery's
+        topic ID, so across a topic recreation it could accept a new record. Decision (2026-11-17):
+        Java's rule, `acknowledge()` takes only records from the partition's latest delivery;
+        others are logged and redelivered.
+  - [x] P2 Acks kept for a revoked partition could overlap fresh acks if it was reacquired (the
+        broker rejects overlapping batches). A delivery now drops queued acks for the offsets it
+        delivers again; the rest are kept.
+- Codex review round 4 (gpt-6.2-sol, xhigh, Fast mode from here on, at the user's request):
+  - [x] P2 An idempotent batch with stamped sequences was retried into a recreated topic
+        (UnknownTopicId, retriable since 2.7b), where it fails OutOfOrderSequenceNumber. Such a
+        batch now fails, metadata is refreshed, and the next send starts a fresh sequence space.
+  - [x] P2 `shareAcknowledgeRequest` rejected as a whole on one broker's failure, so `end()` moved
+        on while other brokers' final acks were still in flight. Failures are per broker now.
+  - [x] P2 Concurrent `end()` calls share one shutdown.
+  - [x] P2 A redelivery dropped whole queued range acks; only the redelivered offsets are now.
+  - [x] P2 A delivery's acquired ranges are copied (a handler may change its array), merged once,
+        and binary-searched (5,000 ranges: ~280 ms per call before) (also P3).
+  - [x] P2 A fetch waiting on a metadata refresh when `end()` ran still sent its request and
+        handed out records; nothing is fetched or delivered after `end()` now.
+  - [x] P2 `end()` closes every open share session (epoch -1), acks or not, so records a handler
+        is still working on are released at once, not when their locks expire.
+  - [x] P1 A deferred ack still couldn't be told from one for records delivered since from a
+        recreated topic at the same offset (acks are `{topic, partition, offset}`). Decision
+        (2026-11-17): a delivery's records can be acknowledged only while its handler runs (Java:
+        until the next `poll()`); later acks are logged and the records redelivered.
+- Codex review round 5 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A stamped idempotent batch could be retried into a recreated topic after a plain
+        timeout (the refresh learned the new ID). Checked against its stamped topic ID before
+        every retry now; replaces round 4's response-code check.
+  - [x] P2 Share fetch sent the old assignment's partitions under a recreated topic's ID. It keeps
+        the assigned ID and skips the topic until the heartbeat updates the assignment.
+  - [x] P2 A session reset by an assignment change was invisible to `end()`, dropping its acks.
+  - [x] P2 A fetch waiting on a metadata refresh still went out after `end()`.
+  - [x] P1 An ack scheduled by a handler that already returned can be accepted while a later
+        delivery of the same offset is running. Decision (2026-11-17): app contract, documented
+        in README and the typings (acks carry no identity); accepted, not a defect.
+- Codex review round 6 (gpt-6.2-sol, xhigh, Fast; a first attempt with custom instructions was
+  stopped by OpenAI's content filter, rerun as a plain `--base` review):
+  - [x] P2 Produce v13 read the topic ID after async compression, so a refresh in between could
+        retarget a stamped retry to a recreated topic. Fixed when requests are grouped.
+  - [x] P2 InvalidShareSessionEpoch (session still on the broker) and a fetch completing after an
+        assignment reset dropped the session from `end()`'s view, losing its acks.
+  - [x] P3 Rejecting a large recreated-topic batch was quadratic (150,000 records ~6 s, now 0.3 s).
+- Codex review round 7 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 ShareSessionNotFound for a partition without metadata reset every broker's session;
+        results now carry the answering broker and only its session is forgotten.
+  - [x] P2 Round 6 pinned unstamped Produce v13 topic IDs too; only stamped requests are now.
+  - [x] P2 `_fetchRequest` kept the last fetch's records alive; it holds nothing now.
+  - [x] P3 Exhausted retries gave one result per message; one per partition again.
+  - [x] P3 `send()` typing accepts number keys (`SendMessage`).
+- Codex review round 8 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 One silent broker's ShareFetch held up every broker's final acks past the deadline;
+        fetches and final acks are per broker now.
+  - [x] P2 A failed partition recovery ended the round under running handlers; logged instead.
+  - [x] P2 A ShareAcknowledge decode failure rejected the whole call; per broker now.
+- Codex review round 9 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A broker's session and acks were settled only after every broker answered, so
+        `end()` (per broker since round 8) missed newly opened sessions; per broker now.
+  - [x] P2 A silent broker's final acks used the whole deadline, leaving no time to leave the
+        group; the acks get 25 s of the 30.
+  - [x] P2 A failed close-only ShareAcknowledge came back as an empty success; reported now.
+- Codex review round 10 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A fetch that failed in transit dropped its still-open session from `end()`'s view.
+  - [x] P2 Final acks waited on a metadata refresh stuck on another broker; they don't now.
+  - [x] P3 `SendMessage` keeps `Message`'s optional `offset`.
+- Codex review round 11 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A recreated topic's partition inherited the deleted log's sequence counter; the
+        counter now records its topic ID and starts at 0 for a new one.
+  - [x] P2 `client.end()` waited for a coordinator lookup still in progress; it doesn't now.
+  - [x] P2 An unreadable epoch-0 fetch reply may have opened a session; `end()` tries to close it.
+  - [x] P2 Final acks went to the partition's current leader, not the broker that delivered
+        the records; acks remember their broker now.
+  - [x] P2 Acquired offsets with no record were never acknowledged; GAP-acked now, as in Java.
+  - [x] P3 Partitioner typings take the producer message type.
+- Codex review round 12 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 Round 11's sequence reset also fired when a topic first got an ID (broker upgrade),
+        risking a new batch taken as a duplicate; only a change between known IDs resets now.
+  - [x] P2 A share fetch with only a truncated batch GAP-acked every acquired offset; none now.
+  - [x] P2 A coordinator lookup answered as `end()` ran opened a connection afterwards.
+- Codex review round 13 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A stamped batch whose topic was recreated during compression was still sent by name.
+  - [x] P2 Topic-ID errors kept retrying a stamped batch when the refresh learned no new ID.
+  - [x] P2 After UnknownMemberId the old member's sessions and acks were sent as the new member.
+- Codex review round 14 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A broker that answered before a member change had its records delivered to the new one.
+  - [x] P2 ShareFetch waited for metadata again before sending, opening a gap for `end()`.
+  - [x] P3 A broker answering after the acks' deadline still started final acks during the leave.
+- Codex review round 15 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A topic ID flipping back (A -> B -> A) reused sequence 0 for A; per-ID sequences now.
+  - [x] P2 Round 12 left legacy MessageSet share records unacknowledgeable; fixed.
+  - [x] P2 ShareFetch went out a microtask after the `end()` check; same turn now.
+- Codex review round 16 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 Per-ID counters (round 15) could still reuse a sequence by name on Produce < v13; a
+        topic-ID change now fails the send and starts a fresh epoch instead.
+  - [x] P1 Compressed legacy share records were delivered as their wrapper and the rest GAP-acked;
+        expanded now. Also resolved magic-1 relative inner offsets (regular consumer too).
+- Codex review round 17 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A truncated inner legacy message set was rebased to wrong offsets; rejected now.
+  - [x] P2 Metadata for the old topic ID stalled an assigned share partition; refreshed now.
+  - [x] P3 `FetchOptions` fields required.
+- Codex review round 18 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A batch stamped before its topic had an ID escaped the recreated check; bound now.
+  - [x] P2 A replaced share member kept fetching the old assignment; cleared now.
+  - [x] P2 zstd's 128 MB window limit rejected valid frames under a raised cap; follows the cap.
+- Codex review round 19 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A stamped request sent with an ID learned during compression wasn't tied to it.
+  - [x] P2 A metadata refresh blocked share fetches of healthy partitions; it runs alongside now.
+- Codex review round 20 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A topic ID tied at dispatch was lost with the stamps; it becomes the partition's now.
+  - [x] P2 Rebootstrap and late metadata responses reopened connections after `end()`.
+  - [x] P2 A partition's metadata recovery held up the share fetch round; background now.
+- Codex review round 21 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 Background metadata refreshes piled up per poll; one at a time now, topics merged.
+  - [x] P2 A rejoin landing during `end()`'s ack phase sent its leave ahead of the acks.
+- Re-verified after round 20: full suite on a fresh 4.2.0 broker, 787 pass, same 10 failures as
+  `master`; live topic recreate 10/10; live share acks on `end()` applied (the check script now
+  waits 3 s before producing: the broker initializes the share partition at the latest offset on
+  the first fetch, and records produced before that were skipped, which first looked like a
+  regression).
+- Codex review round 22 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A size-less zstd frame decoded up to its input's size before the cap check; bounded now.
+  - [x] P2 An empty compressed legacy set was GAP-acked; rejected now.
+  - [x] P2 A fast broker's decoded records waited for the slowest broker; handed out per broker.
+  - [x] P3 Send key type accepts boolean and object keys.
+- Codex review round 23 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 Incompressible lz4 and zstd batches were allocated twice (8 MB batch: 16 MB -> 8 MB).
+- Codex review round 24 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 Produce v13 without a topic ID sent the zero UUID and the unmatched reply let a
+        transaction commit without the partition; by name now, and unanswered partitions fail.
+  - [x] P2 Stale and fresh acks for one partition went in one fetch; one delivery's per fetch now.
+- Codex review round 25 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A mixed-ID Produce went wholly by name, dropping v13's ID check; split now.
+  - [x] P2 `end()` put a partition's acks from different deliveries in one close; separate now.
+- Codex review round 26 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 Variadic apply on a 150,000-ack queue overflowed the stack; reduce/flat now.
+  - [x] P2 Final ack rounds went on after the leave started; each checks the cutoff now.
+- Codex review round 27 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A ShareFetch the broker never took still advanced the session epoch; not now.
+  - [x] P2 Final acks went under a lagging cache's topic ID; under the delivery's now.
+  - [x] P2 Empty stored LZ4 blocks were kept, unbounded by the cap; skipped now.
+- Codex review round 28 (gpt-6.2-sol, xhigh, Fast): one finding.
+  - [x] P2 A failed handler's RELEASE overrode the gap acks (and overlapped its own acks); it
+        releases only its unacknowledged records now.
+- Codex review round 29 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A failed handler's release used its (mutable) messageSet; snapshotted before now.
+  - [x] P2 That release re-merged acks per run (5,000 records ~470 ms); one sweep now.
+- Codex review round 30 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A failed legacy share wrapper hid the records after it; runs of decoded entries now.
+  - [x] P2 A close-time round the broker didn't take advanced the epoch; later rounds stop now.
+  - [x] P2 A handler's RELEASE replaced gap acks; RELEASE yields to gaps now.
+  - [x] P3 Ack pruning was quadratic in ranges; one sweep now.
+- Codex review round 31 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 Legacy message CRCs were never checked; a corrupt wrapper led to wrong GAP acks.
+  - [x] P3 Ack draining scanned requested partitions per ack; indexed once now.
+- Codex review round 32 (gpt-6.2-sol, xhigh, Fast): one finding.
+  - [x] P2 An Error per corrupt legacy message; marked while parsing, one per message set now.
+- Codex review round 33 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A failed legacy wrapper's (unchecked) offset started the next run; its first record now.
+  - [x] P3 `end()`'s deadline used the wall clock; monotonic now.
+- Codex review round 34 (gpt-6.2-sol, xhigh, Fast):
+  - [ ] P2 GAP-acking offsets outside "verified" batch spans: **declined**. A batch's baseOffset is
+    outside its CRC by design (the broker assigns it), so no span is verifiable; Java's
+    ShareCompletedFetch trusts it and GAPs every acquired offset without a record; and the broker
+    acquires from a cached batch's start (compaction after acquisition), so not GAP-acking offsets
+    before/between batches would leave each compaction hole locked until its lock times out. Our
+    client already goes further than Java's (a failed batch's offsets are never acked). Reasoning
+    added to the code comment.
+  - [x] P2 GroupConsumer `end()` closed the client under a join awaiting its member ID (KIP-394),
+    so the broker held the member until its session timed out; `end()` now waits for it (up to
+    `sessionTimeout`) and leaves with it, no second join is sent after `end()`, and no join starts
+    after it. The late leave in `_fullRejoin` (sent on a closed client) is gone.
+  - [x] P3 Final ack requests looked topics up by scan; a map now (30,000 topics: ~1 s before).
+- Codex review round 35 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A moved partition stayed in the old broker's share session; forgotten now, and a reply
+    for a partition not asked of a broker is ignored.
+  - [x] P2 A top-level ShareFetch error after the session advanced kept the old epoch; only errors
+    Kafka returns before the session moves keep it now, others reopen.
+  - [x] P2 A GroupConsumer join retried after `end()` (GroupCoordinatorNotAvailable backoff); no
+    join is sent once `end()` has run.
+  - [x] P3 Share handler queue used `shift()`; an index now.
+  - [x] P3 Mixed-ID produce split scanned `withId` per topic; the ID predicate now (no timing test:
+    60,000 topics run 0.5 s vs 1.2 s end to end, too close to the fixture's own cost to assert).
+- Full suite after round 34 on a fresh 4.2.0 broker: 819 pass, same 10 failures as `master`.
+- Codex review round 36 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A revoked share partition's queued acks were never sent (an assignment change reset every
+    session, and acks ride only on fetches for their partition). Sessions stay across assignment
+    changes now; such acks go acknowledge-only on the delivering broker's next fetch, forgotten in
+    the same request, as Java's ShareSessionHandler does. Acks no session can carry are dropped.
+  - [x] P2 `end()` during the share join's coordinator lookup still sent the join heartbeat.
+  - [x] P3 A TLS path holding "-----BEGIN " was taken for PEM; the header must start a line now.
+- Live check after round 36: a revoked share partition's acks reach the broker (member B gets none
+  of A's acked records past the 30 s locks; on the round 35 commit B gets them all). Share group
+  integration tests (27, 28): 19 pass, twice.
+- Codex review round 37 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A moved partition's acks rode on both its old broker's (ack-only) and new broker's
+    request; each request now carries only the acks its broker delivered.
+  - [x] P2 A lost session on an ack-only fetch was never handled (filtered before
+    `_partitionError`); request-level failures on ack-only partitions are handled now.
+- Codex review round 38 (gpt-6.2-sol, xhigh, Fast): one finding.
+  - [x] P1 A failed request's acks were requeued onto a moved partition's new leader (an old
+    ACCEPT over the new delivery's RELEASE); dropped now, as `_delivered` drops them.
+- Codex review round 39 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A new delivery's acks could join a requeued entry of its partition's former broker;
+    `_queueAck` and `_requeueAcks` keep a partition's queued acks to one broker now.
+  - [x] P3 A relative TLS path starting "-----BEGIN x-----/" was taken for PEM; whole header line now.
+- Codex review round 40 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A running consumer fetched a recreated topic (seen by name) at the deleted log's offset,
+    skipping the new log's first records; subscriptions keep their offset's topic ID and resume at
+    `recoveryOffset` when it changes. Live: 100 of 100 records (round 39 code: the last 50).
+  - [x] P2 An idle broker's reopening session kept its queued acks until `end()`; closed with them
+    (epoch -1) on the next fetch round now.
+- Codex review round 41 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A fetch built before a metadata wait could go out with the new topic ID and the old
+    log's offset; fetches carry the subscriptions' topic ID now.
+  - [x] P1 An offset looked up during a recreation was tagged with the new ID; repeated now.
+  - [x] P2 Idle-session close tried without a connection (acks lost); only with one now.
+  - [x] P2 A JoinGroup could go out after `end()` (coordinator lookup in flight); checked at the
+    send, and `end()` waits only for a join sent.
+  - [x] P2 Subscriptions from before topic IDs never got one; bound to the first seen.
+  - Integration (02, 03, 05, 06): 29 pass, 1 baseline failure (clean shutdown, init timeout); live
+    recreation check: 100 of 100.
+- Codex review round 42 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A former broker's ack-only fetch or idle close gated every round; not waited for now
+    (one per broker at a time, `end()` still waits).
+  - [x] P2 Fetch < v13 could read a recreated topic by name at the old offsets; not sent now.
+  - [ ] P2 Don't close a coordinator socket on a request timeout: **declined**. Java's
+    NetworkClient disconnects a node on a request timeout, and Kafka answers a connection's
+    requests in order, so a later request on it can't be answered before the timed-out one.
+  - Share integration (27, 28): 19 pass; live revoked-ack check still applies the acks.
+- Codex review round 43 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A committed offset (OffsetFetch v10, by topic ID) was subscribed under the current ID;
+    it keeps the ID it was committed for now.
+  - [x] P2 A subscription without an ID wasn't bound to the ID its fetch went by; it is now.
+  - [x] P2 Share join checked shutdown before the heartbeat's coordinator lookup; after it now.
+  - Integration (02, 03, 27, 28): 48 pass, 1 baseline failure (clean shutdown).
+- Codex review round 44 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A known-recreated topic was still fetched by its old ID on v13+ (a lagging broker serves
+    the deleted log); never sent now, on any version.
+  - [x] P2 An idle close the broker didn't take lost its acks and session marker; both kept now.
+  - [x] P2 `_newMember()` kept the old member's `_busy` blockers; cleared now.
+  - Integration (02, 03, 27, 28): 48 pass, 1 baseline failure; live recreation: 100 of 100.
+- Codex review round 45 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A recovery offset looked up while metadata flipped back to the deleted topic was stored
+    under the new ID; the lookup is repeated until the ID holds.
+  - [x] P2 An idle close answered ShareSessionNotFound was retried every poll; not retried now.
+- Codex review round 46 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A repeated recovery lookup went to the old leader; the leader is found again now.
+  - [x] P2 A recreated topic's fetch of the same partition swallowed the old delivery's acks;
+    matched by topic ID now, the old acks go under their own ID.
+  - [x] P2 Acks for a broker gone from metadata were retried every poll; not sent, kept 60 s.
+  - Integration (02, 03, 27, 28): 48 pass, 1 baseline failure; live: revoked acks applied,
+    recreation 100 of 100.
+- Codex review round 47 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A subscription with no offset yet was bound to a topic ID, so a recreation started it at
+    `recoveryOffset` instead of its own options; left to the normal retry now.
+  - [x] P2 Acks for an absent broker that metadata still names as leader were drained and requeued
+    with a fresh time (outliving the bound); not drained, expired in place now.
+  - [ ] P2 Verify with the responding broker that a recovery ListOffsets answered for the new topic:
+    **declined**. ListOffsets has no topic ID in any version (1-11); a check would need a separate
+    Metadata request to that broker, for a race needing the leader's metadata to lag the cluster's.
+  - Integration (02, 03, 27, 28): 48 pass, 1 baseline failure; live revoked acks applied.
+- Codex review round 48 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 The JoinGroup marker was cleared before the member ID was stored; now after the reply is
+    processed (not reproducible by microtask ordering on the old code; guarded at every depth).
+  - [x] P2 Absent-broker acks expired by queue-entry age; per delivery now.
+  - Integration (03, 28): 17 pass and the baseline failure, 4 runs; one run also failed the
+    piggybacked-acks share test (`pollUntil` timeout), which passed in 3 solo runs and the other
+    combined runs: the same intermittent failure seen once before Phase 2 round 1.
+- Codex review round 49 (gpt-6.2-sol, xhigh, Fast): one finding.
+  - [x] P1 A lagging broker's metadata could take a recreated topic back to its old ID (two offset
+    resets); replaced IDs are ignored now (UUIDs are never reused).
+  - Live recreation: 100 of 100; integration (02, 03): 29 pass, 1 baseline failure.
+- Codex review round 50 (gpt-6.2-sol, xhigh, Fast): one finding.
+  - [x] P1 Round 49's ID retirement could leave a client stuck on a deleted topic (new ID learned
+    first, then a lagging broker's old one): reverted; the client follows the latest reply, as
+    Java's does. Round 49's double recovery while brokers disagree is documented, not fixed:
+    metadata carries nothing that orders two topic IDs.
+- Verification: unit tests 31-39: 345 pass; eslint 0 errors (7 pre-existing warnings); tsc
+  passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
+  suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
+  delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
+  consumed; now 10/10 sent and consumed); share acks queued at `end()` (Phase 1: all 3 records
+  redelivered to the next member; now none). 1 GiB bombs, peak RSS: zstd 1.1-2.2 GB -> 49-188 MB,
+  lz4 2.2 GB -> 194 MB; zstd and lz4 decode speed unchanged.
+
+### Phase 2 convergence plan (2026-11-18)
+
+The Codex loop ran 50 rounds without converging. A Fable 5.2 review (xhigh) of rounds 30-50 found 11
+real findings, 31 edge cases and 11 wrong or overreach; 120 of 145 findings flagged lines an earlier
+round's fix wrote. Plan approved 2026-11-18. Codex reviews now use gpt-6.1-sol, xhigh, Fast.
+
+Acceptance bar: a finding is fixed only if it passes all five rules, else it is documented or declined.
+1. In scope: a defect in a Phase 2 item (2.1-2.15) or a regression against `fix-audit-phase1`.
+2. One event: at most one failure or operator action, brokers otherwise agreeing on metadata.
+3. Impact: records lost or skipped silently, a wrong acknowledgement, a crash or unhandled
+   rejection, a call that never settles, a request or warning repeated every poll without end,
+   unbounded memory, key material in a log. Not: redelivery of share records, a delay bounded by a
+   timeout or lock, one wasted request, log noise, cost above 1,000 partitions per consumer.
+4. Not stricter than Java: if the Java client behaves the same, it is a limitation.
+5. Small fix: about 15 lines in `lib/`, no new consumer/client field, timer or constant; larger
+   needs sign-off. Performance findings go to Phase 3.
+
+- [x] Remove the topic-recreation recovery (rounds 40-47): `BaseConsumer._recreated`, subscription
+  topic IDs, fetches by the caller's topic ID, the stale-ID skip, OffsetFetch topic IDs. Java keeps
+  the position across a recreation (`Metadata.updateLatestMetadata` resets only the leader epoch).
+  `lib/base_consumer.js` and `lib/client.js` back to round 39; `_topicId` out of `group_consumer.js`.
+- [x] Delete three share-ack mechanisms: `_busy`/`_setBusy`/`_ackOnly` (rounds 42, 44),
+  `_closeIdleSessions` (40, 41, 44, 45), `ACK_RETAIN_MS` per-delivery retention (46-48): an absent
+  broker's acks are dropped at once.
+- [x] Remove the tests of both, and restore the README `recoveryOffset` text.
+- [x] README "Known limitations" section; qualify the revoked-ack sentence; code comments for the
+  limits of rounds 34 (gap acks), 42 (request timeout), 47 (ListOffsets), 49/50 (ID order).
+- [x] Unit tests, eslint, tsc; share and consumer integration tests; live revoked-ack and
+  recreation checks.
+  - Done: `lib/` -176 lines against round 50 (`share_consumer.js` 1,344 -> 1,251); 22 tests of the
+    removed code deleted; unit tests 323 pass (3 runs), eslint 0 errors, tsc passes; integration
+    (02, 03, 27, 28) 48 pass and the baseline clean-shutdown failure. Live: a revoked partition's
+    acks are still applied; a consumer at offset 50 of a topic recreated with 100 records now
+    skips the first 50 (as Java does, documented) instead of restarting at `recoveryOffset`.
+- [x] Codex round 51 (gpt-6.1-sol, xhigh, Fast; whole branch, no AGENTS.md): no findings ("No
+  actionable regressions were found"; 697 broker-free tests passed in its sandbox).
+- [x] Round 52: not needed (round 51 led to no fix). The loop is over.
+- [x] Full suite on a fresh 4.2.0 broker: 839 pass, the same 10 failures as `master`. Live: topic
+  recreated under a running producer and consumer, 10/10 sent and consumed; acks queued at `end()`
+  applied; a revoked partition's acks applied.
+- [x] Style review: CHANGELOG gaps filled (recreation position, revoked acks, legacy CRC, TLS,
+  decompression caps, Metadata v13 error, typings); README TLS sentence matched to the code (a PEM
+  header line). Declined: the `Unreleased` heading (the version is chosen at release), `new Set`
+  in the producer (it holds request objects), `{}` for `topic:partition` maps (a colon key can't
+  hit `__proto__`), comment and README length (churn without a defect).
+- [x] Maintainability review, fixed: a test that could never fail (`_fetchRequest`, renamed in
+  round 8); acks for a reopening broker no fetch goes to were held silently until `end()`, now
+  dropped with a warning as the docstring and README say; dead session-reset machinery
+  (`epochsAtSend`, `_resetShareSessions`, the no-leader fallback in `_partitionError`) and its
+  stale comments; a false comment in `shareFetchRequest`; `r.notFetched` instead of an implicit
+  check; `_within` moved to `promise-utils.within`; a timing test with under 2x margin and a test
+  that passed on the old code removed; a coverage test for the ack-only result filter added.
+  Fixtures now match the client's results (`leader`, `notFetched`). Declined: `_ackLeader`'s
+  current-leader fallback (only tests reach it; changing it rewrites 17 fixtures for no defect).
+- [x] Security review: no memory-safety, unbounded-loop or key-leak defect in the decompression,
+  CRC or TLS code (LZ4 and zstd fuzzed with 120,000 mutated frames each). Two findings, neither
+  passing the bar, open for a decision. The user chose to fix both (2026-11-18):
+  - [x] A topic writer can make a ShareConsumer GAP-ack (archive undelivered) other producers'
+    records with a valid-CRC batch whose record `offsetDelta` lies past the batch
+    (`_recordsInRanges` then drops the partition's later records). A Phase 2 regression (phase 1
+    delivered them), but Java's `ShareCompletedFetch` does the same (rule 4). `_outsideBatch` in
+    `_decompressShareFetchResults` now fails such a batch (one Error per partition). The regular
+    consumer still delivers the record at the offset it claims, so a handler committing it can
+    commit past the log end and restart at `recoveryOffset`: declined (phase 1, `master` and Java's
+    `CompletedFetch` take the offset as given; failing the batch there would stall the partition).
+  - [x] A legacy message with a corrupt key or value length, or legacy messages followed by a v2
+    batch in one response (a segment written across a format upgrade), throws out of the response
+    parser: the whole fetch fails for every partition, every poll. Phase 1 and `master` have it
+    (rule 1: backlog). `MessageSetItem.read` now checks that the key and value lengths fill
+    `messageSize` exactly and that magic is 0 or 1, else skips the entry marked `crcError` (a
+    negative size skips nothing; the entries read after it fail the same checks). The fetch stops
+    at it for that partition; after a format upgrade the next fetch starts at the RecordBatch and
+    reads it as one, while a ShareConsumer gets the batch's records again once their lock expires.
+
+#### Outcome
+
+- Phase 2 items 2.1-2.13 and 2.15 done; 2.14 moved to Phase 3 (3.11). 51 Codex rounds (gpt-6.2-sol
+  for 2-50, gpt-6.1-sol for 1 and 51); the last was clean once the loop's high-churn mechanisms
+  were removed and the bar adopted. `lib/` against `fix-audit-phase1`: +1,492 / -320 lines.
+- Behaviour changes are in CHANGELOG (Unreleased) and the README, with a Known limitations section
+  for what was declined: topic recreation under a running client (Java's behaviour), best-effort
+  share acks, a silent broker holding a round until `requestTimeout`, `end()` during a join, old
+  message formats in share groups.
+- The two security findings, fixed after the user's decision: unit tests 326 pass; eslint 0 errors;
+  tsc passes; full suite on a fresh 4.2.0 broker 842 pass with `master`'s 10 failures. Security,
+  maintainability and style reviews: no defect; their test, wording and style points applied.
+- Verification at 3fac5da: unit tests 322 pass; eslint 0 errors; tsc passes; full suite on a fresh
+  4.2.0 broker 839 pass with `master`'s 10 failures (at bd42a2b; 3fac5da re-ran the consumer and
+  share integration tests, 48 pass and the baseline failure); live recreation 10/10, acks at
+  `end()` applied, revoked-partition acks applied.

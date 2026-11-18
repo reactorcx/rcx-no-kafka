@@ -1,20 +1,22 @@
 import { Client } from "./client";
 
 export class GroupAdmin {
-    constructor();
+    constructor(options?: any);
 
+    init(): Promise<void>;
     /**
       * list existing consumer groups
       */
-    listGroups(): Group[];
+    listGroups(): Promise<Group[]>;
     /**
       * describeGroup - describe existing group by its id
       */
-    describeGroup(groupId: string): GroupDescription;
+    describeGroup(groupId: string): Promise<GroupDescription>;
     /**
       * fetchConsumerLag - fetches consumer lag for topics/partitions
       */
-    fetchConsumerLag(groupId: string, options: FetchOptions): ConsumerLag[];
+    fetchConsumerLag(groupId: string, options: FetchOptions[]): Promise<ConsumerLag[]>;
+    end(): Promise<void>;
 
 }
 
@@ -52,8 +54,8 @@ export interface PartitionAssignment {
 }
 
 export interface FetchOptions {
-    topicName?: string;
-    partitions?: number[];
+    topicName: string;
+    partitions: number[];
 }
 
 /**

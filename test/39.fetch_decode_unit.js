@@ -24,6 +24,7 @@ function batch(o) {
     }).result);
     if (o.attrs !== undefined) { b.writeInt16BE(o.attrs, 21); }
     if (o.lastDelta !== undefined) { b.writeInt32BE(o.lastDelta, 23); }
+    if (o.maxTs !== undefined) { b.writeUInt32BE(Math.floor(o.maxTs / 0x100000000), 35); b.writeUInt32BE(o.maxTs % 0x100000000, 39); } // maxTimestamp
     if (o.raw) { b = Buffer.concat([b.slice(0, 61), o.raw]); b.writeInt32BE(b.length - 12, 8); }
     b.writeUInt32BE(crc32c(b.slice(21)), 17);
     return b;
@@ -150,7 +151,8 @@ describe('Fetch RecordBatch decoding (unit)', function () {
         var bad = { header: { baseOffset: 5, lastOffsetDelta: 0, attributes: 1, codec: 1, recordCount: 1 }, recordsRaw: Buffer.from('not gzip') };
         var raw = batch({ base: 6, recs: records(2) });
         var good = protocol.read(raw).RecordBatch(null, raw.length).result[0];
-        return c._decompressShareFetchResults([{ topic: 't', partition: 0, messageSet: [bad, good], acquiredRecords: [] }]).then(function (r) {
+        var acquired = [{ firstOffset: 5, lastOffset: 7, deliveryCount: 1 }];
+        return c._decompressShareFetchResults([{ topic: 't', partition: 0, messageSet: [bad, good], acquiredRecords: acquired }]).then(function (r) {
             offsets(r[0]).should.eql([6, 7]);
             should.not.exist(r[0].error);
         });
@@ -188,6 +190,16 @@ describe('Fetch RecordBatch decoding (unit)', function () {
         }
         return c._decompressRecordBatches(batches, 0).then(function (r) {
             r.nextOffset.should.equal(200000);
+        });
+    });
+
+    it('should give each record of a LogAppendTime batch the batch maxTimestamp', function () {
+        var recs = [{ value: 'a', timestamp: 1e12 }, { value: 'b', timestamp: 1e12 + 5 }];
+        return fetch(response([
+            batch({ base: 0, recs: recs, attrs: 0x08, maxTs: 2e12 }), // timestamp type bit: the broker's append time
+            batch({ base: 2, recs: recs })
+        ]), 0).then(function (p) {
+            p.messageSet.map(function (m) { return m.message.timestamp; }).should.eql([2e12, 2e12, 1e12, 1e12 + 5]);
         });
     });
 });

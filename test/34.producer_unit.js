@@ -1,6 +1,6 @@
 'use strict';
 
-/* global describe, it, sinon */
+/* global describe, it, sinon, should */
 
 var Kafka  = require('../lib/index');
 var errors = require('../lib/errors');
@@ -148,6 +148,200 @@ describe('Producer (unit)', function () {
                 result[0].should.have.property('topic', 't');
                 result[0].should.have.property('partition', 0);
                 result[0].should.have.property('error');
+            });
+        });
+
+        ['UnknownTopicId', 'InconsistentTopicId'].forEach(function (code) {
+            it('should refresh metadata and retry on ' + code + ' (topic recreated under a new ID)', function () {
+                var p = new Kafka.Producer({ clientId: 'producer-unit' });
+                var calls = 0;
+
+                sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+                sinon.stub(p.client, 'updateMetadata').returns(Promise.resolve());
+                sinon.stub(p.client, 'produceRequest').callsFake(function () {
+                    return Promise.resolve([++calls === 1
+                        ? { topic: 't', partition: 0, error: errors.byName(code) }
+                        : { topic: 't', partition: 0, offset: 7 }]);
+                });
+
+                return p.send({ topic: 't', partition: 0, message: { value: 'a' } }, { retries: FAST_RETRIES }).then(function (result) {
+                    p.client.updateMetadata.args[0][0].should.eql(['t']);
+                    result.should.eql([{ topic: 't', partition: 0, offset: 7 }]);
+                });
+            });
+        });
+
+        it('should not retry a stamped batch after UnknownTopicId even when the refresh learns no new ID', function () {
+            var p = makeIdempotentProducer();
+            p.client.topicIds.t = 'id-old';
+            sinon.stub(p.client, 'updateMetadata').returns(Promise.resolve()); // still the old ID (or the refresh failed)
+            sinon.stub(p.client, 'produceRequest').callsFake(function () {
+                return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('UnknownTopicId') }]);
+            });
+
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }, { retries: FAST_RETRIES }).then(function (result) {
+                p.client.produceRequest.callCount.should.equal(1);
+                result[0].error.code.should.equal('UnknownTopicId');
+                p.client.updateMetadata.args[0][0].should.eql(['t']);
+            });
+        });
+
+        it('should bind a retry stamped before its topic had an ID to the first ID it was sent with', function () {
+            var p = makeIdempotentProducer(), sentIds = [];
+            sinon.stub(p.client, 'updateMetadata').callsFake(function () {
+                p.client.topicIds.t = sentIds.length === 1 ? 'id-1' : 'id-2'; // learns an ID, then the topic is recreated
+                return Promise.resolve();
+            });
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                sentIds.push(requests[0]._topicId);
+                return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('RequestTimedOut') }]);
+            });
+
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }, { retries: FAST_RETRIES }).then(function (result) {
+                sentIds.should.eql([undefined, 'id-1']); // never sent to id-2's log
+                result[0].error.code.should.equal('UnknownTopicId');
+            });
+        });
+
+        it('should catch a recreation after a send tied to an ID only as it went out', function () {
+            var p = makeIdempotentProducer(), sent = 0;
+            sinon.stub(p.client, '_findTransactionCoordinator');
+            sinon.stub(p.client, 'initProducerIdRequest').returns(Promise.resolve({ producerId: 1, producerEpoch: 1 }));
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                sent++;
+                requests.forEach(function (r) { r._topicId = 'id-A'; }); // as produceRequest ties it at dispatch
+                return Promise.resolve([{ topic: 't', partition: 0, offset: 0 }]);
+            });
+
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function () { // no ID known when stamped
+                p.client.topicIds.t = 'id-B'; // recreated before the next send
+                return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
+            }).then(function (r) {
+                sent.should.equal(1); // A's next sequence never goes to B
+                r[0].error.code.should.equal('UnknownTopicId');
+            });
+        });
+
+        it('should keep a partition\'s sequence when its topic first gets an ID (broker upgrade)', function () {
+            var p = makeIdempotentProducer(), seqs = [];
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                seqs.push(requests[0]._baseSequence);
+                return Promise.resolve([{ topic: 't', partition: 0, offset: 0 }]);
+            });
+
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function () { // no topic IDs yet
+                p.client.topicIds.t = 'id-assigned';
+                return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
+            }).then(function () {
+                seqs.should.eql([0, 1]); // the same log: restarting at 0 would be taken as a duplicate
+            });
+        });
+
+        [
+            ['recreated', ['A', 'A', 'B', 'B'], [[0, 0], [1, 0], null, [0, 1]]],
+            ['flips back to an earlier ID', ['A', 'B', 'A', 'A'], [[0, 0], null, [0, 1], [1, 1]]] // a new epoch: A from 0 is safe
+        ].forEach(function (c) {
+            it('should fail a send whose topic ID changed and start a fresh epoch (' + c[0] + ')', function () {
+                var p = makeIdempotentProducer(), sent = [], results = [], epoch = 0;
+                sinon.stub(p.client, '_findTransactionCoordinator');
+                sinon.stub(p.client, 'initProducerIdRequest').callsFake(function () {
+                    return Promise.resolve({ producerId: 1, producerEpoch: ++epoch });
+                });
+                sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                    sent.push([requests[0]._baseSequence, p.client.producerEpoch]);
+                    return Promise.resolve([{ topic: 't', partition: 0, offset: 0 }]);
+                });
+
+                return c[1].reduce(function (prev, id, i) {
+                    return prev.then(function () {
+                        p.client.topicIds.t = id;
+                        return p.send({ topic: 't', partition: 0, message: { value: 'v' + i } });
+                    }).then(function (r) { results.push(r[0].error ? null : sent[sent.length - 1]); });
+                }, Promise.resolve()).then(function () {
+                    // same epoch, the new log could take a sequence it reuses as a duplicate: the send that
+                    // sees the change fails (UnknownTopicId), the next one goes out under a new epoch from 0
+                    results.should.eql(c[2]);
+                });
+            });
+        });
+
+        it('should fail a transactional send whose partition is missing from the reply', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-unanswered', retries: FAST_RETRIES });
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p._transactionV2 = true;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').returns(Promise.resolve([
+                // e.g. UnknownTopicId for a zero UUID: its topic can't be matched to the request
+                { topic: '00000000-0000-0000-0000-000000000000', partition: 0, error: errors.byName('UnknownTopicId') }
+            ]));
+
+            p.beginTransaction();
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function (result) {
+                result.should.have.length(1);
+                result[0].topic.should.equal('t');
+                should.exist(result[0].error);
+                p._txnFailed.should.equal(true); // the commit is refused, not made without these records
+            });
+        });
+
+        it('should give one result per partition when retries run out', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit' }), msgs;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'updateMetadata').returns(Promise.resolve());
+            sinon.stub(p.client, 'produceRequest').callsFake(function () {
+                return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('UnknownTopicId') }]);
+            });
+
+            msgs = [{ topic: 't', partition: 0, message: { value: 'a' } }, { topic: 't', partition: 0, message: { value: 'b' } }];
+            return p.send(msgs, { retries: FAST_RETRIES }).then(function (result) {
+                result.should.have.length(1);
+                result[0].error.code.should.equal('UnknownTopicId');
+            });
+        });
+
+        it('should reject a large batch for a recreated topic in linear time', function () {
+            var p = new Kafka.Producer({ idempotent: true, clientId: 'producer-unit', batch: { size: 1024 * 1024 * 1024, maxWait: 10 } });
+            var msgs = [], i, t0;
+            p.client.producerId = 1;
+            p.client.producerEpoch = 0;
+            p.client.findLeader = function () { return Promise.resolve(0); };
+            p.client.topicIds.t = 'id-old';
+            p.client.updateMetadata = function () { p.client.topicIds.t = 'id-new'; return Promise.resolve(); };
+            p.client.produceRequest = function () { // plain fakes: sinon recording 150,000 records is slow
+                return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('RequestTimedOut') }]);
+            };
+            for (i = 0; i < 150000; i++) { msgs.push({ topic: 't', partition: 0, message: { value: 'x' } }); }
+
+            this.timeout(10000);
+            t0 = Date.now();
+            return p.send(msgs, { retries: FAST_RETRIES }).then(function (result) {
+                (Date.now() - t0).should.be.below(2000); // quadratic rejection took ~6 s
+                result.should.have.length(1);
+                result[0].error.code.should.equal('UnknownTopicId');
+            });
+        });
+
+        [
+            ['UnknownTopicId', 'the broker no longer knows the topic ID'],
+            ['RequestTimedOut', 'the topic was recreated while the attempt timed out']
+        ].forEach(function (c) {
+            it('should not retry an idempotent batch into a recreated topic (' + c[1] + ')', function () {
+                var p = makeIdempotentProducer();
+                p.client.topicIds.t = 'id-old';
+                sinon.stub(p.client, 'updateMetadata').callsFake(function () {
+                    p.client.topicIds.t = 'id-new'; // the refresh before the retry learns the new topic
+                    return Promise.resolve();
+                });
+                sinon.stub(p.client, 'produceRequest').callsFake(function () {
+                    return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName(c[0]) }]);
+                });
+
+                return p.send({ topic: 't', partition: 0, message: { value: 'a' } }, { retries: FAST_RETRIES }).then(function (result) {
+                    p.client.produceRequest.callCount.should.equal(1); // its sequences continue a log that is gone
+                    result[0].error.code.should.equal('UnknownTopicId');
+                    p._needsReinit.should.equal(true); // the next send starts a fresh sequence space
+                });
             });
         });
     });
@@ -759,6 +953,28 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should find the coordinator again when InitProducerId reaches one that moved', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', transactionalId: 'tx-moved' });
+            var oldConn = { close: sinon.spy(), send: sinon.stub().callsFake(function () { return Promise.reject(errors.byName('NotCoordinatorForGroup')); }) };
+            var newConn = { send: sinon.stub().returns(Promise.resolve(Buffer.alloc(0))) };
+            this.timeout(5000); // one 1 s backoff
+            p.client.transactionCoordinators['tx-moved'] = Promise.resolve(oldConn);
+            p.client.transactionCoordinators['tx-moved'].connection = oldConn; // as a resolved lookup leaves it
+            p.client.initialBrokers = [{ apiVersions: { 10: { min: 0, max: 3 } } }]; // FindCoordinator v3
+            sinon.stub(p.client, '_sendToAnyBroker').returns(Promise.resolve({ coordinatorHost: 'h', coordinatorPort: 2 }));
+            sinon.stub(p.client, '_createConnection').returns(newConn);
+            sinon.stub(p.client, 'apiVersionsRequest').returns(Promise.resolve({}));
+            sinon.stub(p.client.protocol, 'read').returns({
+                InitProducerIdResponse: function () { return { result: { error: null, producerId: 3, producerEpoch: 0 } }; }
+            });
+
+            return p._initProducerId().then(function (r) {
+                r.producerId.should.equal(3);
+                newConn.send.callCount.should.equal(1);
+                oldConn.close.callCount.should.equal(1);
+            });
+        });
+
         [
             ['ran out of retries', function () { return new errors.NoKafkaConnectionError('b:9092', 'down'); }],
             ['was rejected', function () { return errors.byName('MessageSizeTooLarge'); }]
@@ -860,6 +1076,37 @@ describe('Producer (unit)', function () {
             ]).then(function (r) {
                 r[0].map(function (x) { return x.topic; }).should.eql(['a']);
                 r[1].should.match(/topic/);
+            });
+        });
+
+        it('should reject a send with a null element instead of throwing in the linger timer', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 1024 * 1024, maxWait: 5 } });
+            sinon.stub(p.client, 'produceRequest').callsFake(okResponse);
+
+            return p.send([{ topic: 'a', partition: 0, message: { value: 'x' } }, null]).then(function () {
+                throw new Error('expected rejection');
+            }, function (err) {
+                err.message.should.match(/topic/);
+                p.client.produceRequest.callCount.should.equal(0);
+            });
+        });
+
+        it('should send more queued send() calls than fit in a call stack', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 1024 * 1024 * 1024, maxWait: 50 } });
+            var sends = [], produced = [], i;
+            // plain fakes: sinon recording 150,000 calls takes seconds
+            p.client.findLeader = function () { return Promise.resolve(0); };
+            p.client.produceRequest = function (requests) { // one result per partition, as the broker gives
+                produced.push(requests.length);
+                return Promise.resolve([{ topic: 'a', partition: 0, offset: 0 }]);
+            };
+
+            for (i = 0; i < 150000; i++) {
+                sends.push(p.send({ topic: 'a', partition: 0, message: { value: 'x' } }));
+            }
+            return Promise.all(sends).then(function (r) {
+                produced.should.eql([150000]);
+                r[149999].should.have.length(1);
             });
         });
 

@@ -51,6 +51,17 @@ export class ShareConsumer {
     constructor(options?: ShareConsumerOptions);
 
     init(options: ShareConsumerInitOptions): Promise<void>;
+    /**
+      * Queues acknowledgements, sent with the next fetch. A delivery's records can be acknowledged only
+      * while its handler runs (before its promise settles): later ones are logged and not sent, and
+      * the records are redelivered. Don't acknowledge after the handler settles: an ack has no
+      * identity, so one arriving while a later delivery of the same offset is handled is taken for it.
+      */
     acknowledge(records: AcknowledgeRecord | AcknowledgeRecord[], type?: ACKNOWLEDGE_TYPE): Promise<void>;
+    /**
+      * Sends the acknowledgements made so far, leaves the group and closes (30 s at most). Handlers
+      * still running are not waited for: what they acknowledge afterwards is not sent, and their
+      * records are redelivered.
+      */
     end(): Promise<void>;
 }

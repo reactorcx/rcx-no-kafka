@@ -22,7 +22,7 @@ export interface Message {
     partition?: number;
     offset?: number;
     message: {
-        key?: string;
+        key?: Buffer | string;
         value: Buffer | string;
         attributes?: string[];
         timestamp?: number;

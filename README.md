@@ -146,6 +146,14 @@ producer.send({
 });
 ```
 
+The default partitioner hashes the key as the bytes sent: a Buffer as is, anything else as `String(key)` in UTF-8, as the Java client does for string keys. So `key: 5` and `key: '5'` go to the same partition. Before this, a number key was hashed as that many zero bytes, and negative, boolean and object keys threw. To keep the old partitions for non-negative integer keys, override `hashKey`:
+
+```javascript
+MyPartitioner.prototype.hashKey = function (key) {
+    return Kafka.DefaultPartitioner.prototype.hashKey.call(this, typeof key === 'number' ? Buffer.alloc(key) : key);
+};
+```
+
 ### Custom Partitioner
 
 Example: override the default partitioner with a custom partitioner that only uses a portion of the key.
@@ -244,7 +252,7 @@ Transaction methods:
 * `beginTransaction()` - start a new transaction (synchronous). A transactional producer's `send()` rejects outside a transaction.
 * `commitTransaction()` - commit the current transaction (returns Promise). Batches still waiting on their `batch.maxWait` timer are flushed first so they are included in the transaction, and pending `sendOffsets()` calls are waited for. Rejects without committing if any send or `sendOffsets()` call in the transaction failed; call `abortTransaction()` then. If it rejects after sending the commit (for example the connection dropped), the transaction may have committed: retry `commitTransaction()`. `abortTransaction()` then rejects if the commit went through.
 * `abortTransaction()` - abort the current transaction (returns Promise). Also flushes queued batches and waits for pending `sendOffsets()` calls first.
-* `sendOffsets(offsets)` - commit consumer offsets as part of the transaction (returns Promise). Rejects while `commitTransaction()` or `abortTransaction()` is running, as do `send()` and a second commit or abort.
+* `sendOffsets(offsets, groupId)` - commit consumer offsets for `groupId` as part of the transaction (returns Promise). `offsets` is an array of `{topic, partition, offset, metadata}` where `offset` is the next offset to consume (the last processed + 1), as Kafka stores it; `GroupConsumer.commitOffset()` instead takes the last processed offset and adds 1. Rejects while `commitTransaction()` or `abortTransaction()` is running, as do `send()` and a second commit or abort.
 
 Other producer methods:
 * `flush()` - send out all batches currently waiting on their `batch.maxWait` timer and wait for them to settle (returns Promise)
@@ -271,7 +279,7 @@ Other producer methods:
 * `batch` - control batching (grouping) of requests
   * `size` - group messages together into single batch until their total size exceeds this value, defaults to 16384 bytes. Set to 0 to disable batching.
   * `maxWait` - send grouped messages after this amount of milliseconds expire even if their total size doesn't exceed `batch.size` yet, defaults to 10ms. Set to 0 to disable batching.
-* `asyncCompression` - boolean, use asynchronouse compression instead of synchronous, defaults to `false`
+* `asyncCompression` - boolean, use asynchronouse compression instead of synchronous, defaults to `true`
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms
 * `socketTimeout` - timeout for Kafka connection socket in milliseconds, defaults to 0 (disabled)
 
@@ -385,7 +393,7 @@ consumer.fetchOffset([
   * `min` - minimum delay, used as increment value for next attempts, defaults to 1000ms
   * `max` - maximum delay value, defaults to 1000ms
 * `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
-* `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `false`
+* `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `true`
 * `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
 * `handlerConcurrency` - specify concurrency level for the consumer handler function, defaults to 10
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms
@@ -506,8 +514,8 @@ This is a client-side-only feature and works with any Kafka broker version suppo
 * `startingOffset` - starting position (time) when there is no commited offset, defaults to `Kafka.LATEST_OFFSET`
 * `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
 * `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
-* `groupInstanceId` - unique instance identifier for static group membership (KIP-345). When set, the consumer skips LeaveGroup on shutdown so it can rejoin the group without triggering a rebalance. If another consumer registers with the same `groupInstanceId`, the broker returns `FencedInstanceId` and the original consumer shuts down. Requires Kafka 2.4+
-* `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `false`
+* `groupInstanceId` - unique instance identifier for static group membership (KIP-345). When set, the consumer skips LeaveGroup on shutdown so it can rejoin the group without triggering a rebalance (without it, `end()` leaves the group; if a join is still waiting for its member ID, it waits for it, up to `sessionTimeout`, to leave with it). If another consumer registers with the same `groupInstanceId`, the broker returns `FencedInstanceId` and the original consumer shuts down. Requires Kafka 2.4+
+* `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `true`
 * `handlerConcurrency` - specify concurrency level for the consumer handler function, defaults to 10
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms
 * `socketTimeout` - timeout for Kafka connection socket in milliseconds, defaults to 0 (disabled)
@@ -515,7 +523,7 @@ This is a client-side-only feature and works with any Kafka broker version suppo
 Strategy-level options (passed in the strategy object to `init()`):
 * `cooperative` - boolean, enable cooperative/incremental rebalancing (KIP-429). Defaults to `false` (eager mode)
 * `onPartitionsRevoked` - function, optional callback invoked with an array of `{topic, partition}` when partitions are revoked during a cooperative rebalance
-* `onPartitionsAssigned` - function, optional callback invoked with an array of `{topic, partition}` when new partitions are assigned during a cooperative rebalance
+* `onPartitionsAssigned` - function, optional callback invoked with an array of `{topic, partition}` when new partitions are assigned during a cooperative rebalance. Neither callback is awaited; a throw or rejection from either is logged and the rebalance carries on.
 
 ## GroupAdmin (consumer groups API)
 
@@ -598,9 +606,11 @@ Note that group consumer has to commit offsets first, in order for consumerLag t
 
 __no-kafka__ supports Snappy, Gzip, LZ4, and Zstd compression. To use Snappy you must install the `snappy` NPM module (`npm install snappy`). To use LZ4 you must install the `lz4` NPM module (`npm install lz4`). To use Zstd you must install the `zstd-napi` NPM module (`npm install zstd-napi`).
 
-Decompressed batch output is capped at 128MB by default to protect consumers against decompression bombs. The limit can be tuned via `require('no-kafka/lib/protocol/misc/compression').maxOutputSize`.
+Decompressed batch output is capped at 128MB by default to protect consumers against decompression bombs. The limit can be tuned via `require('no-kafka/lib/protocol/misc/compression').maxOutputSize`. Every codec stops once its output passes the cap (lz4 within one block of it, 4MB at most), so a small batch that inflates to gigabytes is rejected without allocating them. LZ4 batches must be standard LZ4 frames, as Kafka writes them; skippable frames are rejected. The cap applies to each batch: a fetch holding several large batches can decompress up to the cap for each, so memory per fetch can reach a multiple of it.
 
 A Simple or Group consumer never skips a batch it cannot decompress or decode (over the cap, a codec module that isn't installed, corrupt data): it delivers the records before it and then stops at that offset, retrying every `idleTimeout` and logging a warning, so no record is lost. To get past it, raise `maxOutputSize` or install the missing codec. A ShareConsumer skips such a batch instead and leaves its offsets out of `acquiredRecords`; the broker redelivers those records and archives them once they reach the delivery limit.
+
+`ShareConsumer.acknowledge()` takes a delivery's records only while its handler runs: acknowledge them before the promise the handler returns settles, the equivalent of the Java client's rule that records are acknowledged before the next `poll()`. A later acknowledgement is logged and not sent, and those records are redelivered; this keeps it from being applied to records delivered again since, or to a topic recreated under the same name. An acknowledgement carries only topic, partition and offset, so one made after its handler settled (from a timer, say) cannot be told apart if it happens to arrive while a later delivery of the same partition and offset is being handled: it is then taken for those records. Don't acknowledge after the handler's promise settles. Acquired offsets that hold no record (compacted away, or control records) are acknowledged as gaps automatically; a partition delivered with nothing but gaps doesn't call the handler. Acknowledgements for a partition a rebalance revoked are still sent, on the next fetch to the broker that delivered its records, while that broker's share session is open. `end()` sends the acknowledgements made so far, closes every open share session (releasing records still being handled) and leaves within 30 seconds; it doesn't wait for handlers still running, and nothing is fetched or delivered after it.
 
 Enable compression in Producer:
 
@@ -670,7 +680,7 @@ Additional connection options:
 * `requestTimeout` - per-request cap in ms so a silent broker can't hang callers forever, set to 0 to disable. Defaults to 300000 (5 minutes).
 * `maxFrameSize` - maximum accepted response frame size in bytes; a frame larger than this (or with a malformed negative length) force-disconnects the connection. Defaults to 100MB (matches the broker's `socket.request.max.bytes` default).
 
-Fetched record batches are verified against their CRC-32C checksum; a corrupted batch fails the fetch (and is retried) rather than delivering corrupt data to the handler.
+Fetched record batches are verified against their CRC-32C checksum, and legacy (pre-0.11) messages against their CRC-32 and their key and value lengths; a corrupted batch or message fails that partition's fetch (and is retried) rather than delivering corrupt data to the handler. A ShareConsumer also skips a batch holding a record outside the batch's offsets, which would otherwise make the partition's later records look already delivered.
 
 ### SSL
 To connect to Kafka with [SSL endpoint enabled](http://kafka.apache.org/090/documentation.html#security_ssl) specify SSL certificate and key options to load cert/key from files or provide certificate/key directly as strings:
@@ -698,6 +708,8 @@ var producer = new Kafka.Producer({
   }
 });
 ```
+
+Each of `cert`, `key` and `ca` is used as is when it contains a PEM header line (`-----BEGIN ...-----`), and read as a file path otherwise, so a file cert can be combined with an inline key.
 
 To use TLS with a broker certificate signed by a publicly-trusted CA (no client certificate, no custom CA), explicitly enable TLS — it never silently falls back to plaintext:
 
@@ -825,6 +837,18 @@ var consumer = new Kafka.GroupConsumer({
     }
 });
 ```
+
+## Known limitations
+
+**A topic deleted and recreated under a running client.** Producers and consumers carry on without a restart once the brokers report the new topic. An idempotent send in flight fails with `UnknownTopicId`, and the next one starts a fresh producer epoch. A SimpleConsumer or GroupConsumer keeps its position, as the Java client does: if the new topic holds fewer records than that position, the fetch fails with OffsetOutOfRange and the consumer restarts at `recoveryOffset`; if it holds more, the records before the position are skipped. While brokers still disagree about the topic, the client follows the latest metadata reply, since Kafka's metadata doesn't say which of two topic IDs is newer. Stop consumers before recreating a topic they depend on.
+
+**ShareConsumer acknowledgements are best effort.** An acknowledgement is sent with the next fetch to the broker that delivered the record. It is dropped with a warning, and the record is delivered again once its lock expires, when the partition's leader changed or the broker left the cluster before it was sent, when the share session was lost and no fetch goes to that broker any more, when the member was replaced, or when `end()` reached its deadline. Handlers must tolerate redelivery.
+
+**A broker that stops answering.** A consumer's fetch round waits for every broker it asked. A broker that goes silent without closing its connection holds up the next round until `requestTimeout` (5 minutes by default). Lower `requestTimeout` if that matters.
+
+**`end()` during a group join.** `GroupConsumer.end()` waits up to `sessionTimeout` for a join that is in flight, so that it can leave. If the join is never answered, the member stays in the group until its session times out.
+
+**Old message formats in share groups.** A record in the pre-0.11 format that cannot be decoded is skipped. The broker delivers it again and archives it at the delivery limit.
 
 ## Topic Creation
 

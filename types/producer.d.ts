@@ -1,5 +1,6 @@
 import * as tls from "tls";
 import * as Kafka from "./kafka";
+import { KafkaError, NoKafkaConnectionError } from "./errors";
 
 export class Producer {
     constructor(options?: ProducerOptions);
@@ -14,7 +15,7 @@ export class Producer {
       * It can have options
       * @memberOf Producer
       */
-    send(data: Kafka.Message | Kafka.Message[], options?: SendOptions): Promise<Result[]>;
+    send(data: SendMessage | SendMessage[], options?: SendOptions): Promise<Result[]>;
     /**
       * Send out all batches currently waiting on their batch.maxWait timer
       * and wait for them to settle.
@@ -33,7 +34,9 @@ export class Producer {
       */
     abortTransaction(): Promise<void>;
     /**
-      * Send consumer offsets within the current transaction.
+      * Send consumer offsets for groupId within the current transaction. Each offset is the next one
+      * to consume (the last processed + 1), as stored: unlike GroupConsumer.commitOffset(), which
+      * takes the last processed offset and adds 1.
       */
     sendOffsets(offsets: Array<{topic: string, partition: number, offset: number, metadata?: string}>, groupId: string): Promise<void>;
     /**
@@ -183,7 +186,7 @@ export interface ProducerOptions {
       * asyncCompression - boolean, use asynchronouse 
       * compression instead of synchronous.
       * 
-      * defaults to false
+      * defaults to true
       */
     asyncCompression?: boolean;
 
@@ -215,12 +218,29 @@ export interface ProducerOptions {
 }
 
 
+/**
+  * A message to send. Its key may also be a number (or anything with a String form): it is sent,
+  * and hashed by the partitioners, as String(key).
+  */
+export interface SendMessage extends Omit<Kafka.Message, "message"> {
+    message: Omit<Kafka.Message["message"], "key"> & { key?: Buffer | string | number | boolean | object }; // sent as String(key)
+}
+
+/**
+  * One per partition the send() went to. A failed partition (retries exhausted, or a
+  * non-retriable error) has `error` and no `offset`.
+  */
 export interface Result {
     topic: string;
     partition: number;
-    offset: number;
+    offset?: number;
+    error?: KafkaError | NoKafkaConnectionError | Error | null; // null on success, as the broker reports it
 }
 
+/**
+  * Only codec, compressionLevel, retries and batch.size / batch.maxWait apply per send().
+  * The other fields are producer options: send() ignores them (they stay so existing code compiles).
+  */
 export interface SendOptions {
     /**
       * requiredAcks - require acknoledgments for produce request. 
@@ -334,9 +354,7 @@ export interface SendOptions {
           */
         maxWait?: number;
         /**
-          * asyncCompression - boolean, 
-          * use asynchronouse compression instead of synchronous.
-          * default: false
+          * asyncCompression - ignored here: set it in the producer options.
           */
         asyncCompression?: boolean;
     }

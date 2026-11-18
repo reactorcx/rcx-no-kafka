@@ -1,3 +1,29 @@
+## Unreleased
+
+### Changed
+- Partitioners hash a key that is neither a Buffer nor a string as `String(key)`, the bytes sent — a number key moves partition (README shows how to keep the old mapping)
+- During a rolling upgrade old and new producers split a number key across two partitions; on compacted topics the old partition keeps its last value
+- A topic whose metadata comes back with an error is no longer cached as having no partitions — `subscribe(topic)` without partitions now rejects with `UnknownTopicOrPartition` instead of resolving with nothing (the real error is logged)
+- Metadata is requested by topic name only (as Java does), never by a cached topic ID — on a broker with `auto.create.topics.enable=true` a consumer still subscribed to a deleted topic can re-create it
+- `ShareConsumer.acknowledge()` takes a delivery's records only while its handler runs (as Java takes them only until the next `poll()`); later acks are logged and the records redelivered
+- `ShareConsumer.end()` sends the acknowledgements made so far, closes every open share session and leaves within 30 s, without waiting for running handlers; nothing is fetched or delivered after it
+- `ShareConsumer` acknowledges acquired offsets that hold no record as gaps (as Java does), and sends acks to the broker that delivered the records
+- An idempotent send that finds its topic recreated (a new topic ID) fails with `UnknownTopicId` instead of reusing the old log's sequence numbers; the next send starts a fresh producer epoch
+- A running SimpleConsumer or GroupConsumer finds a recreated topic and keeps its position, as Java's does; a shorter new topic restarts it at `recoveryOffset` (README, Known limitations)
+- `ShareConsumer` sends a revoked partition's queued acks on the next fetch to the broker that delivered them; acks for a broker that left the cluster are dropped with a warning
+- Legacy (pre-0.11) messages are verified against their CRC-32; a corrupt one fails the fetch
+- `ShareConsumer` skips a batch holding a record outside the batch's offsets, as undecodable (the broker redelivers it, then archives it at the delivery limit)
+- TLS `cert`, `key` and `ca` are each read as a file path unless they hold a PEM header line, so a file cert can go with an inline key
+
+### Fixed
+- Compressed legacy (magic 1) messages are delivered at their absolute offsets; their inner offsets were relative
+- `DefaultPartitioner` hashed a number key as that many zero bytes, and threw on negative, boolean and object keys
+- `HashCRC32Partitioner` sent every number key to partition 0 and threw on Buffer keys
+- Decompression stays within `compression.maxOutputSize` for every codec: LZ4 skippable frames and tiny blocks, and multi-frame zstd data, could hang the decoder or allocate far past the cap
+- A top-level Metadata v13 error (e.g. `RebootstrapRequired`) was ignored; the refresh now fails and keeps the known brokers
+- A legacy message with a corrupt key or value length, or a RecordBatch after legacy messages in one response (a segment written across a format upgrade), failed the whole fetch for every partition on every poll; it now counts as a corrupt message, and a consumer's next fetch starts at the batch (a ShareConsumer gets the batch's records again once their lock expires)
+- Typings: `GroupAdmin` methods return Promises, `SendMessage` keys may be numbers, booleans or objects, and `Result.error` may be null
+
 ## 4.10
 
 ### Added (KIP-899 Re-bootstrap, KIP-390 Compression Level)
