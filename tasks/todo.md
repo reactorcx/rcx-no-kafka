@@ -628,7 +628,14 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 InvalidShareSessionEpoch (session still on the broker) and a fetch completing after an
         assignment reset dropped the session from `end()`'s view, losing its acks.
   - [x] P3 Rejecting a large recreated-topic batch was quadratic (150,000 records ~6 s, now 0.3 s).
-- Verification: unit tests 31-39: 225 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 7 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 ShareSessionNotFound for a partition without metadata reset every broker's session;
+        results now carry the answering broker and only its session is forgotten.
+  - [x] P2 Round 6 pinned unstamped Produce v13 topic IDs too; only stamped requests are now.
+  - [x] P2 `_fetchRequest` kept the last fetch's records alive; it holds nothing now.
+  - [x] P3 Exhausted retries gave one result per message; one per partition again.
+  - [x] P3 `send()` typing accepts number keys (`SendMessage`).
+- Verification: unit tests 31-39: 229 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
