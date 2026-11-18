@@ -640,7 +640,13 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
         fetches and final acks are per broker now.
   - [x] P2 A failed partition recovery ended the round under running handlers; logged instead.
   - [x] P2 A ShareAcknowledge decode failure rejected the whole call; per broker now.
-- Verification: unit tests 31-39: 232 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 9 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A broker's session and acks were settled only after every broker answered, so
+        `end()` (per broker since round 8) missed newly opened sessions; per broker now.
+  - [x] P2 A silent broker's final acks used the whole deadline, leaving no time to leave the
+        group; the acks get 25 s of the 30.
+  - [x] P2 A failed close-only ShareAcknowledge came back as an empty success; reported now.
+- Verification: unit tests 31-39: 236 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

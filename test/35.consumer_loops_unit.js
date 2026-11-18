@@ -424,6 +424,68 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should close a session a broker opened while another broker\'s fetch hangs', function () {
+            var sc = makeShareConsumer(), clock, ended;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = {}; // both sessions open with this fetch (epoch 0)
+            sinon.stub(sc, '_buildFetchRequests').returns({
+                0: [{ topicName: 't', partitions: [{ partition: 0 }] }],
+                1: [{ topicName: 't', partitions: [{ partition: 1 }] }]
+            });
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, requests) {
+                return requests[1] ? new Promise(function () {}) : Promise.resolve([]); // broker 1 never answers
+            });
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+
+            sc._fetch();
+            return promiseUtils.delay(5).then(function () {
+                var i, p = Promise.resolve();
+                clock = sinon.useFakeTimers();
+                ended = sc.end();
+                for (i = 0; i < 20; i++) { p = p.then(function () { return null; }); } // let broker 0's path run
+                return p;
+            }).then(function () {
+                // broker 0's session opened with that fetch (epoch 0 -> 1): it is closed, not skipped
+                sc.client.shareAcknowledgeRequest.args.map(function (a) { return Object.keys(a[3]); }).should.eql([['0']]);
+                clock.tick(30000);
+                clock.restore();
+                return ended;
+            });
+        });
+
+        it('should leave the group even when a broker never answers the final acks', function () {
+            var sc = makeShareConsumer(), clock, ended;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 3 };
+            sc.memberEpoch = 5;
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(new Promise(function () {}));
+            sinon.stub(sc.client, 'shareGroupHeartbeatRequest').returns(Promise.resolve({}));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+
+            clock = sinon.useFakeTimers();
+            ended = sc.end();
+            clock.tick(25000); // the acks' share of the deadline
+            clock.restore();
+            return ended.then(function () {
+                sc.client.shareGroupHeartbeatRequest.args[0][2].should.equal(-1); // the leave went out
+                sc.client.end.callCount.should.equal(1);
+            });
+        });
+
+        it('should say when closing a share session failed', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 3 };
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([{ topic: undefined, partition: undefined, error: errors.byName('LeaderNotAvailable') }]));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+            sinon.spy(sc.client, 'warn');
+
+            return sc.end().then(function () {
+                sc.client.warn.args.some(function (a) { return /Closing the share session on broker 0 failed/.test(a[0]); }).should.equal(true);
+            });
+        });
+
         it('should keep running handlers\' deliveries when another partition\'s recovery fails', function () {
             var sc = makeShareConsumer(), finish, p, acked;
             twoLeaders(sc);

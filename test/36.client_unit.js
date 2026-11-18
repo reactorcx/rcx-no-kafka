@@ -475,6 +475,15 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should report a close-only ShareAcknowledge failure, and a broker it has no connection to', function () {
+            var c = makeClient();
+            c.brokerConnections = { 0: fakeConn('b0:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b0:1', 'down')); }) };
+
+            return c.shareAcknowledgeRequest('g', 'm', -1, { 0: [], 7: [] }).then(function (r) {
+                r.map(function (x) { return [x.topic, x.error && x.error.name]; }).should.eql([[undefined, 'NoKafkaConnectionError'], [undefined, 'KafkaError']]);
+            });
+        });
+
         it('should drop the group coordinator when a share group heartbeat answers NotCoordinatorForGroup', function () {
             var c = makeClient(), conn = lostConn();
             conn.apiVersions = { 76: { min: 1, max: 1 } };
