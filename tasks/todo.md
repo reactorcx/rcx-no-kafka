@@ -672,7 +672,11 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 A broker that answered before a member change had its records delivered to the new one.
   - [x] P2 ShareFetch waited for metadata again before sending, opening a gap for `end()`.
   - [x] P3 A broker answering after the acks' deadline still started final acks during the leave.
-- Verification: unit tests 31-39: 255 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 15 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A topic ID flipping back (A -> B -> A) reused sequence 0 for A; per-ID sequences now.
+  - [x] P2 Round 12 left legacy MessageSet share records unacknowledgeable; fixed.
+  - [x] P2 ShareFetch went out a microtask after the `end()` check; same turn now.
+- Verification: unit tests 31-39: 258 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

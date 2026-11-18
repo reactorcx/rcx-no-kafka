@@ -366,6 +366,18 @@ describe('Compression limits (unit)', function () {
             });
         });
 
+        it('should keep a legacy share MessageSet acknowledgeable up to its last complete message', function () {
+            var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
+            return c._decompressShareFetchResults([{
+                topic: 't', partition: 0,
+                messageSet: [{ offset: 5, message: { value: Buffer.from('a') } }, { offset: 6, _partial: true }],
+                acquiredRecords: [{ firstOffset: 5, lastOffset: 6, deliveryCount: 1 }]
+            }]).then(function (r) {
+                r[0].messageSet.map(function (m) { return m.offset; }).should.eql([5]);
+                r[0].acquiredRecords.should.eql([{ firstOffset: 5, lastOffset: 5, deliveryCount: 1 }]);
+            });
+        });
+
         it('should acknowledge nothing a share fetch acquired when no batch in it is complete', function () {
             var c = new Kafka.Producer({ logger: { logLevel: 0 } }).client;
             var raw = smallBatch(0).slice(0, 40); // its only batch, cut by maxBytes

@@ -201,6 +201,25 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should keep each topic ID\'s sequence when metadata flips back to an earlier ID', function () {
+            var p = makeIdempotentProducer(), seqs = [];
+            function send(id, v) {
+                p.client.topicIds.t = id;
+                return p.send({ topic: 't', partition: 0, message: { value: v } });
+            }
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                seqs.push(requests[0]._baseSequence);
+                return Promise.resolve([{ topic: 't', partition: 0, offset: 0 }]);
+            });
+
+            return send('A', 'a').then(function () { return send('A', 'b'); })
+            .then(function () { return send('B', 'c'); }) // brokers briefly disagree during a recreation
+            .then(function () { return send('A', 'd'); })
+            .then(function () {
+                seqs.should.eql([0, 1, 0, 2]); // A's log goes on at 2: a reused 0 would be taken as a duplicate
+            });
+        });
+
         it('should start a recreated topic\'s partition at sequence 0', function () {
             var p = makeIdempotentProducer(), seqs = [];
             p.client.topicIds.t = 'id-old';

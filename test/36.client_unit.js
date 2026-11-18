@@ -498,6 +498,15 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should dispatch ShareFetch in the same turn it is called', function () {
+            var c = makeClient(), sent = false, p;
+            c.brokerConnections = { 0: fakeConn('b0:1', function () { sent = true; return Promise.reject(new errors.NoKafkaConnectionError('b0:1', 'down')); }) };
+
+            p = c.shareFetchRequest('g', 'm', { 0: 1 }, { 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] }, null, null);
+            sent.should.equal(true); // no microtask in which end() could run first
+            return p;
+        });
+
         it('should send ShareFetch without waiting for a metadata refresh in flight', function () {
             var c = makeClient(), sent = false;
             c._updateMetadata_pending = true;
