@@ -452,6 +452,41 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should not rebootstrap, or reconnect from a late response, after end()', function () {
+            var c = new Kafka.Producer({ clientId: 'client-unit', rebootstrap: true }).client, fail, refresh;
+            sinon.stub(c, 'metadataRequest').returns(new Promise(function (resolve, reject) { fail = reject; }));
+            sinon.stub(c, '_rebootstrap').returns(Promise.resolve());
+            sinon.stub(c, '_createConnection');
+
+            refresh = c.updateMetadata(['t']).catch(function () { return null; });
+            return promiseUtils.delay(0).then(function () {
+                c.metadataRequest.callCount.should.equal(1); // in flight
+                return c.end();
+            }).then(function () {
+                fail(new errors.NoKafkaConnectionError('all', 'closed')); // the shutdown closed its connections
+                return refresh;
+            }).then(function () {
+                c._rebootstrap.callCount.should.equal(0);
+                c._createConnection.callCount.should.equal(0);
+            });
+        });
+
+        it('should open no broker connections from a metadata response that lands after end()', function () {
+            var c = makeClient(), answer, refresh;
+            sinon.stub(c, 'metadataRequest').returns(new Promise(function (resolve) { answer = resolve; }));
+            sinon.stub(c, '_createConnection');
+
+            refresh = c.updateMetadata(['t']);
+            return promiseUtils.delay(0).then(function () {
+                return c.end();
+            }).then(function () {
+                answer({ broker: [{ nodeId: 0, host: 'h', port: 1 }], topicMetadata: [] });
+                return refresh;
+            }).then(function () {
+                c._createConnection.callCount.should.equal(0);
+            });
+        });
+
         it('should not wait for a coordinator lookup still in progress when it ends', function () {
             var c = makeClient();
             c.initialBrokers = [];

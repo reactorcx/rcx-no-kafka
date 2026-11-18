@@ -692,7 +692,11 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
 - Codex review round 19 (gpt-6.2-sol, xhigh, Fast):
   - [x] P2 A stamped request sent with an ID learned during compression wasn't tied to it.
   - [x] P2 A metadata refresh blocked share fetches of healthy partitions; it runs alongside now.
-- Verification: unit tests 31-39: 267 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 20 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A topic ID tied at dispatch was lost with the stamps; it becomes the partition's now.
+  - [x] P2 Rebootstrap and late metadata responses reopened connections after `end()`.
+  - [x] P2 A partition's metadata recovery held up the share fetch round; background now.
+- Verification: unit tests 31-39: 271 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

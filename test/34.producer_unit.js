@@ -203,6 +203,25 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should catch a recreation after a send tied to an ID only as it went out', function () {
+            var p = makeIdempotentProducer(), sent = 0;
+            sinon.stub(p.client, '_findTransactionCoordinator');
+            sinon.stub(p.client, 'initProducerIdRequest').returns(Promise.resolve({ producerId: 1, producerEpoch: 1 }));
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                sent++;
+                requests.forEach(function (r) { r._topicId = 'id-A'; }); // as produceRequest ties it at dispatch
+                return Promise.resolve([{ topic: 't', partition: 0, offset: 0 }]);
+            });
+
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }).then(function () { // no ID known when stamped
+                p.client.topicIds.t = 'id-B'; // recreated before the next send
+                return p.send({ topic: 't', partition: 0, message: { value: 'b' } });
+            }).then(function (r) {
+                sent.should.equal(1); // A's next sequence never goes to B
+                r[0].error.code.should.equal('UnknownTopicId');
+            });
+        });
+
         it('should keep a partition\'s sequence when its topic first gets an ID (broker upgrade)', function () {
             var p = makeIdempotentProducer(), seqs = [];
             sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {

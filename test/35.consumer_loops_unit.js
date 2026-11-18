@@ -630,6 +630,26 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should not hold up a fetch round for a partition\'s slow recovery', function () {
+            var sc = makeShareConsumer(), handled = false;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }, { partition: 1 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([
+                { topic: 't', partition: 1, error: errors.byName('UnknownTopicId'), messageSet: [] },
+                { topic: 't', topicId: 'id-1', partition: 0, messageSet: [{ offset: 1, message: { value: Buffer.from('x') } }],
+                    acquiredRecords: [{ firstOffset: 1, lastOffset: 1, deliveryCount: 1 }] }
+            ]));
+            sinon.stub(sc.client, 'updateMetadata').returns(new Promise(function () {})); // never finishes
+            sc.options.handlerConcurrency = 1;
+            sc._handler = function () { handled = true; return Promise.resolve(); };
+
+            sc._closed = true;
+            return sc._fetch().then(function () {
+                handled.should.equal(true); // partition 0 wasn't kept waiting behind partition 1's refresh
+            });
+        });
+
         it('should keep running handlers\' deliveries when another partition\'s recovery fails', function () {
             var sc = makeShareConsumer(), finish, p, acked;
             twoLeaders(sc);
