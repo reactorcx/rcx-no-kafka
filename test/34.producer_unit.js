@@ -171,6 +171,21 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should not retry a stamped batch after UnknownTopicId even when the refresh learns no new ID', function () {
+            var p = makeIdempotentProducer();
+            p.client.topicIds.t = 'id-old';
+            sinon.stub(p.client, 'updateMetadata').returns(Promise.resolve()); // still the old ID (or the refresh failed)
+            sinon.stub(p.client, 'produceRequest').callsFake(function () {
+                return Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('UnknownTopicId') }]);
+            });
+
+            return p.send({ topic: 't', partition: 0, message: { value: 'a' } }, { retries: FAST_RETRIES }).then(function (result) {
+                p.client.produceRequest.callCount.should.equal(1);
+                result[0].error.code.should.equal('UnknownTopicId');
+                p.client.updateMetadata.args[0][0].should.eql(['t']);
+            });
+        });
+
         it('should keep a partition\'s sequence when its topic first gets an ID (broker upgrade)', function () {
             var p = makeIdempotentProducer(), seqs = [];
             sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {

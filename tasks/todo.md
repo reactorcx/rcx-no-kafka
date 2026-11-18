@@ -664,7 +664,11 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
         risking a new batch taken as a duplicate; only a change between known IDs resets now.
   - [x] P2 A share fetch with only a truncated batch GAP-acked every acquired offset; none now.
   - [x] P2 A coordinator lookup answered as `end()` ran opened a connection afterwards.
-- Verification: unit tests 31-39: 249 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 13 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A stamped batch whose topic was recreated during compression was still sent by name.
+  - [x] P2 Topic-ID errors kept retrying a stamped batch when the refresh learned no new ID.
+  - [x] P2 After UnknownMemberId the old member's sessions and acks were sent as the new member.
+- Verification: unit tests 31-39: 252 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

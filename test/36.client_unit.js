@@ -573,32 +573,48 @@ describe('Client (unit)', function () {
             });
         });
 
-        [
-            ['an unstamped', undefined, 'NEW'],
-            ['a stamped', 'OLD', 'OLD']
-        ].forEach(function (c) {
-            it('should send ' + c[0] + ' Produce v13 to the right topic ID when metadata changes during compression', function () {
-                var cl = new Kafka.Producer({ clientId: 'client-unit', asyncCompression: true }).client, sent;
-                var ids = { OLD: '00000000-0000-0000-0000-0000000000aa', NEW: '00000000-0000-0000-0000-0000000000bb' };
+        it('should send an unstamped Produce v13 to the topic ID known after compression', function () {
+            var cl = new Kafka.Producer({ clientId: 'client-unit', asyncCompression: true }).client;
+            var NEW = '00000000-0000-0000-0000-0000000000bb';
+            var compression = require('../lib/protocol/misc/compression'), compress = compression.compressAsync;
+            var writer = cl.protocol.write();
+            cl.topicIds.t = '00000000-0000-0000-0000-0000000000aa';
+            cl.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
+            cl.brokerConnections[0].apiVersions = { 0: { min: 0, max: 13 } };
+            sinon.stub(compression, 'compressAsync').callsFake(function () {
+                cl.topicIds.t = NEW; // a refresh lands while the batch compresses
+                return compress.apply(this, arguments);
+            });
+            sinon.spy(writer, 'ProduceRequestV13');
+
+            return cl.produceRequest([{ topic: 't', partition: 0, leader: 0, message: { value: 'x' } }], 1).finally(function () {
+                compression.compressAsync.restore();
+            }).then(function () {
+                var topics = writer.ProduceRequestV13.args[0][0].topics;
+                writer.ProduceRequestV13.restore();
+                topics[0].topicId.should.equal(NEW);
+            });
+        });
+
+        [12, 13].forEach(function (v) {
+            it('should not send a stamped Produce v' + v + ' batch whose topic was recreated while it compressed', function () {
+                var cl = new Kafka.Producer({ clientId: 'client-unit', asyncCompression: true }).client, sent = 0, request;
                 var compression = require('../lib/protocol/misc/compression'), compress = compression.compressAsync;
-                var writer = cl.protocol.write();
-                cl.topicIds.t = ids.OLD;
-                cl.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
-                cl.brokerConnections[0].apiVersions = { 0: { min: 0, max: 13 } };
+                cl.topicIds.t = '00000000-0000-0000-0000-0000000000aa';
+                cl.brokerConnections = { 0: fakeConn('b:1', function () { sent++; return Promise.resolve(Buffer.alloc(0)); }) };
+                cl.brokerConnections[0].apiVersions = { 0: { min: 0, max: v } };
                 sinon.stub(compression, 'compressAsync').callsFake(function () {
-                    cl.topicIds.t = ids.NEW; // a refresh lands while the batch compresses
+                    cl.topicIds.t = '00000000-0000-0000-0000-0000000000bb';
                     return compress.apply(this, arguments);
                 });
-                sinon.spy(writer, 'ProduceRequestV13');
 
-                sent = cl.produceRequest([{ topic: 't', partition: 0, leader: 0, _baseSequence: c[1] ? 0 : undefined,
-                    _topicId: c[1] && ids[c[1]], message: { value: 'x' } }], 1);
-                return sent.finally(function () {
+                request = { topic: 't', partition: 0, leader: 0, _baseSequence: 0, _topicId: '00000000-0000-0000-0000-0000000000aa', message: { value: 'x' } };
+                return cl.produceRequest([request], 1).finally(function () {
                     compression.compressAsync.restore();
-                }).then(function () {
-                    var topics = writer.ProduceRequestV13.args[0][0].topics;
-                    writer.ProduceRequestV13.restore();
-                    topics[0].topicId.should.equal(ids[c[2]]);
+                }).then(function (r) {
+                    sent.should.equal(0); // by name (v12) it would have landed in the new log
+                    r.should.have.length(1);
+                    r[0].error.code.should.equal('UnknownTopicId');
                 });
             });
         });

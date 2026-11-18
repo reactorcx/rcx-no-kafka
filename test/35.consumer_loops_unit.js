@@ -1026,6 +1026,31 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should leave the old member\'s sessions, acks and fetch behind when it rejoins as a new one', function () {
+            var sc = makeShareConsumer(), oldMember = sc.memberId, finish, p;
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 3 };
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(new Promise(function (resolve) { finish = resolve; }));
+            sc._handler = function () { throw new Error('no records of the old member are delivered'); };
+
+            p = sc._fetch(); // in flight as the old member
+            return promiseUtils.delay(0).then(function () {
+                sc._newMember(); // the heartbeat said UnknownMemberId
+                finish([{ topic: 't', topicId: 'id-1', partition: 0, leader: '0', messageSet: [{ offset: 2, message: { value: Buffer.from('x') } }],
+                    acquiredRecords: [{ firstOffset: 2, lastOffset: 2, deliveryCount: 1 }] }]);
+                sc._closed = true;
+                return p;
+            }).then(function () {
+                sc.memberId.should.not.equal(oldMember);
+                Object.keys(sc._pendingAcks).should.eql([]);
+                sc.shareSessionEpochs.should.eql({});
+                sc._reopening.should.eql({}); // nothing for end() to close under the new member
+            });
+        });
+
         it('should rejoin on FencedMemberEpoch', function () {
             var sc = makeShareConsumer();
             var epochsSent = [];
