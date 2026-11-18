@@ -644,6 +644,24 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should tie a stamped request to the topic ID it is sent with, when it had none', function () {
+            var cl = new Kafka.Producer({ clientId: 'client-unit', asyncCompression: true }).client, request;
+            var compression = require('../lib/protocol/misc/compression'), compress = compression.compressAsync;
+            cl.brokerConnections = { 0: fakeConn('b:1', function () { return Promise.reject(new errors.NoKafkaConnectionError('b:1', 'down')); }) };
+            cl.brokerConnections[0].apiVersions = { 0: { min: 0, max: 13 } };
+            sinon.stub(compression, 'compressAsync').callsFake(function () {
+                cl.topicIds.t = '00000000-0000-0000-0000-0000000000aa'; // metadata first learns the ID now
+                return compress.apply(this, arguments);
+            });
+
+            request = { topic: 't', partition: 0, leader: 0, _baseSequence: 0, message: { value: 'x' } }; // stamped with no ID
+            return cl.produceRequest([request], 1).finally(function () {
+                compression.compressAsync.restore();
+            }).then(function () {
+                request._topicId.should.equal('00000000-0000-0000-0000-0000000000aa'); // a retry to a recreated topic is caught
+            });
+        });
+
         [12, 13].forEach(function (v) {
             it('should not send a stamped Produce v' + v + ' batch whose topic was recreated while it compressed', function () {
                 var cl = new Kafka.Producer({ clientId: 'client-unit', asyncCompression: true }).client, sent = 0, request;

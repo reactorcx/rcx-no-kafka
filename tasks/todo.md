@@ -689,7 +689,10 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 A batch stamped before its topic had an ID escaped the recreated check; bound now.
   - [x] P2 A replaced share member kept fetching the old assignment; cleared now.
   - [x] P2 zstd's 128 MB window limit rejected valid frames under a raised cap; follows the cap.
-- Verification: unit tests 31-39: 266 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 19 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A stamped request sent with an ID learned during compression wasn't tied to it.
+  - [x] P2 A metadata refresh blocked share fetches of healthy partitions; it runs alongside now.
+- Verification: unit tests 31-39: 267 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

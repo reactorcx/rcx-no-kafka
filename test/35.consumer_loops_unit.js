@@ -311,24 +311,28 @@ describe('Consumer loops (unit)', function () {
             sc.client.topicMetadata.t = { 0: { partitionId: 0, leader: 0 }, 1: { partitionId: 1, leader: 1 } };
         }
 
-        it('should refresh metadata for an assigned partition it has none for, then fetch it', function () {
-            var sc = makeShareConsumer(), p;
+        it('should fetch the partitions it has metadata for while refreshing the rest', function () {
+            var sc = makeShareConsumer(), refreshed;
             sc.assignedPartitions = { id1: [0, 1] };
             sc.client.topicNames = { id1: 't' };
             sc.client.topicIds.t = 'id1';
             sc.client.topicMetadata = Object.create(null);
             sc.client.topicMetadata.t = { 0: { partitionId: 0, leader: 0 } }; // partition 1 added since the last refresh
-            sinon.stub(sc.client, 'updateMetadata').callsFake(function () {
-                sc.client.topicMetadata.t[1] = { partitionId: 1, leader: 0 };
-                return Promise.resolve();
-            });
+            sinon.stub(sc.client, 'updateMetadata').returns(new Promise(function (resolve) { refreshed = resolve; })); // slow
             sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([]));
 
-            p = sc._fetch();
-            sc._closed = true;
-            return p.then(function () {
+            return sc._fetch().then(function () {
                 sc.client.updateMetadata.args[0][0].should.eql(['t']);
-                sc.client.shareFetchRequest.args[0][3].should.eql({ 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }, { partition: 1 }] }] });
+                // not held up by the refresh: partition 0 goes out now
+                sc.client.shareFetchRequest.args[0][3].should.eql({ 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }] }] });
+                sc.client.topicMetadata.t[1] = { partitionId: 1, leader: 0 };
+                refreshed();
+                return promiseUtils.delay(0);
+            }).then(function () {
+                sc._closed = true;
+                return sc._fetch(); // the next round has partition 1's metadata
+            }).then(function () {
+                sc.client.shareFetchRequest.args[1][3][0][0].partitions.should.eql([{ partition: 0 }, { partition: 1 }]);
             });
         });
 
@@ -675,25 +679,18 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
-        it('should not send a fetch that was waiting on a metadata refresh when end() ran', function () {
-            var sc = makeShareConsumer(), refreshed, p;
+        it('should not wait for a metadata refresh in flight before fetching', function () {
+            var sc = makeShareConsumer();
             twoLeaders(sc);
             sc.shareSessionEpochs = { 0: 2 };
-            sc.client._updateMetadata_pending = true; // someone else's refresh in flight
-            sc.client._updateMetadata_running = new Promise(function (resolve) { refreshed = resolve; });
+            sc.client._updateMetadata_pending = true; // someone else's refresh, stuck on a slow broker
+            sc.client._updateMetadata_running = new Promise(function () {});
             sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
             sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([]));
-            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
-            sinon.stub(sc.client, 'end').returns(Promise.resolve());
 
-            p = sc._fetch();
-            return promiseUtils.delay(0).then(function () {
-                var ended = sc.end();
-                sc.client._updateMetadata_pending = false;
-                refreshed();
-                return Promise.all([p, ended]);
-            }).then(function () {
-                sc.client.shareFetchRequest.callCount.should.equal(0);
+            sc._closed = true;
+            return sc._fetch().then(function () {
+                sc.client.shareFetchRequest.callCount.should.equal(1);
             });
         });
 
