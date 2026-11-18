@@ -117,6 +117,28 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should look the recovery offset up again if metadata changed while it was looked up', function () {
+            var c = makeConsumer(noop);
+            c.subscriptions['t:0'].topicId = 'id-old';
+            c.client.topicIds.t = 'id-new';
+            sinon.stub(c.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(c.client, 'getPartitionOffset').callsFake(function () {
+                if (c.client.getPartitionOffset.callCount === 1) {
+                    c.client.topicIds.t = 'id-old'; // a lagging broker's metadata: the deleted topic again
+                    return Promise.resolve(50);
+                }
+                c.client.topicIds.t = 'id-new';
+                return Promise.resolve(0);
+            });
+            c._closed = true;
+
+            return c._fetch().then(function () { return promiseUtils.delay(10); }).then(function () {
+                c.client.getPartitionOffset.callCount.should.equal(3); // the 2nd was asked while metadata named the old topic
+                c.subscriptions['t:0'].offset.should.equal(0); // not the old log's 50 under the new ID
+                c.subscriptions['t:0'].topicId.should.equal('id-new');
+            });
+        });
+
         it('should keep a re-subscribed offset\'s topic ID across a metadata refresh', function () {
             var c = makeConsumer(noop);
             c.subscriptions['t:0'].topicId = 'id-old';
@@ -1144,6 +1166,27 @@ describe('Consumer loops (unit)', function () {
                 sc.client.shareAcknowledgeRequest.callCount.should.equal(1);
                 sc._pendingAcks['t:0'].batches[0].firstOffset.should.equal(1); // sent again next round, or by end()
                 sc._reopening[0].should.equal(true);
+            });
+        });
+
+        it('should not close an idle session again once the broker says it is gone', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc._reopening = { 0: true };
+            sc.client.brokerConnections = { 0: {} };
+            sinon.stub(sc, '_buildFetchRequests').returns({});
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([
+                { topic: 't', partition: 0, error: errors.byName('ShareSessionNotFound'), notAcked: true }
+            ]));
+            sc._closed = true;
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            return sc._fetch().then(function () {
+                return sc._fetchRequests['0'];
+            }).then(function () {
+                Object.keys(sc._pendingAcks).should.eql([]);
+                should.not.exist(sc._reopening[0]); // not tried every poll
             });
         });
 
