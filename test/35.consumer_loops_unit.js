@@ -953,6 +953,18 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should not requeue a failed request\'s acks onto a partition\'s new leader', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            // the old leader's request (an ACCEPT) is out when the new leader delivers the record again
+            sc._delivered({ topic: 't', topicId: 'id1', partition: 0, leader: '1', acquiredRecords: [{ firstOffset: 1, lastOffset: 1 }] });
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 }, Kafka.ShareConsumer.ACKNOWLEDGE_TYPE.RELEASE);
+            sc._requeueAcks({ t: { 0: [{ firstOffset: 1, lastOffset: 1, acknowledgeTypes: [1], topicId: 'id1', _gen: 0 }] } }, '0'); // then fails
+
+            sc._pendingAcks['t:0'].batches.map(function (b) { return b.acknowledgeTypes[0]; }).should.eql([2]); // this delivery's RELEASE only
+            String(sc._pendingAcks['t:0'].leader).should.equal('1');
+        });
+
         it('should handle a lost session on a fetch carrying only acknowledgements', function () {
             var sc = makeShareConsumer();
             twoLeaders(sc);

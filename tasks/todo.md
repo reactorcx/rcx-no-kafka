@@ -783,7 +783,10 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
     request; each request now carries only the acks its broker delivered.
   - [x] P2 A lost session on an ack-only fetch was never handled (filtered before
     `_partitionError`); request-level failures on ack-only partitions are handled now.
-- Verification: unit tests 31-39: 314 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 38 (gpt-6.2-sol, xhigh, Fast): one finding.
+  - [x] P1 A failed request's acks were requeued onto a moved partition's new leader (an old
+    ACCEPT over the new delivery's RELEASE); dropped now, as `_delivered` drops them.
+- Verification: unit tests 31-39: 315 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
