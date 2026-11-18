@@ -768,7 +768,14 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P3 Mixed-ID produce split scanned `withId` per topic; the ID predicate now (no timing test:
     60,000 topics run 0.5 s vs 1.2 s end to end, too close to the fixture's own cost to assert).
 - Full suite after round 34 on a fresh 4.2.0 broker: 819 pass, same 10 failures as `master`.
-- Verification: unit tests 31-39: 308 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 36 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A revoked share partition's queued acks were never sent (an assignment change reset every
+    session, and acks ride only on fetches for their partition). Sessions stay across assignment
+    changes now; such acks go acknowledge-only on the delivering broker's next fetch, forgotten in
+    the same request, as Java's ShareSessionHandler does. Acks no session can carry are dropped.
+  - [x] P2 `end()` during the share join's coordinator lookup still sent the join heartbeat.
+  - [x] P3 A TLS path holding "-----BEGIN " was taken for PEM; the header must start a line now.
+- Verification: unit tests 31-39: 312 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

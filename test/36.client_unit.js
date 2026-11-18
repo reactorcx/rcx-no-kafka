@@ -2,6 +2,7 @@
 
 /* global describe, it, sinon, should */
 
+var fs           = require('fs');
 var path         = require('path');
 var Kafka        = require('../lib/index');
 var errors       = require('../lib/errors');
@@ -39,7 +40,6 @@ describe('Client (unit)', function () {
         });
 
         it('should hand structured TLS values (arrays, { pem, passphrase }) to tls unchanged', function () {
-            var fs = require('fs');
             var cert = fs.readFileSync(path.join(__dirname, './ssl/client.crt'), 'utf8');
             var key = [{ pem: fs.readFileSync(path.join(__dirname, './ssl/client.key'), 'utf8'), passphrase: 'secret' }];
             var ca = [cert, Buffer.from(cert)];
@@ -85,6 +85,20 @@ describe('Client (unit)', function () {
                 err.message.should.match(/ssl\.key/);
                 err.message.should.not.contain(key);
                 should.not.exist(err.path);
+            });
+        });
+
+        it('should read a file whose path holds "-----BEGIN " mid-line', function () {
+            var dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'nk-pem-')), file = path.join(dir, 'kafka -----BEGIN ca.crt');
+            var c = new Kafka.Producer({ connectionString: 'kafka://127.0.0.1:9093', ssl: { ca: file } }).client;
+            fs.copyFileSync(path.join(__dirname, './ssl/client.crt'), file);
+            sinon.stub(c, 'apiVersionsRequest').returns(Promise.resolve({}));
+            sinon.stub(c, 'updateMetadata').returns(Promise.resolve());
+
+            return c.init().then(function () {
+                c.options.ssl.ca.toString().should.match(/^-----BEGIN CERTIFICATE-----/); // read, not passed on as PEM
+            }).finally(function () {
+                fs.rmSync(dir, { recursive: true, force: true });
             });
         });
 

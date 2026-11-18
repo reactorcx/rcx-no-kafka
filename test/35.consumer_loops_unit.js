@@ -380,7 +380,7 @@ describe('Consumer loops (unit)', function () {
             sc._buildFetchRequests().should.eql({});
         });
 
-        it('should still close, with its acks, a session an assignment change reset', function () {
+        it('should still close, with its acks, a session after an assignment change', function () {
             var sc = makeShareConsumer();
             twoLeaders(sc);
             sc.shareSessionEpochs = { 0: 4 };
@@ -908,22 +908,55 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
-        it('should keep acks for a partition the next fetch does not carry', function () {
-            var sc = makeShareConsumer(), p;
+        it('should send acks for a revoked partition acknowledge-only on its broker\'s session, forgetting it', function () {
+            var sc = makeShareConsumer(), calls = {};
             twoLeaders(sc);
             sc.shareSessionEpochs = { 0: 2, 1: 2 };
-            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+            sc._sessionParts = { 1: [{ topicId: 'id1', partitions: [1] }] };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }] }] }); // t:1 revoked
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, only, forgotten, acks) {
+                calls[Object.keys(only)[0]] = { topics: only[Object.keys(only)[0]], forgotten: forgotten, acks: acks };
+                return Promise.resolve([]);
+            });
+            sc._closed = true;
+            markDelivered(sc, 't', 0, [1]);
+            markDelivered(sc, 't', 1, [1]);
+            sc._deliveries['t:1'].topicId = 'id1';
+            sc.acknowledge([{ topic: 't', partition: 0, offset: 1 }, { topic: 't', partition: 1, offset: 1 }]);
+
+            return sc._fetch().then(function () {
+                Object.keys(calls['0'].acks.t).should.eql(['0']);
+                Object.keys(calls['1'].acks.t).should.eql(['1']); // not left queued: its records' locks would expire
+                calls['1'].topics[0].partitions.should.eql([{ partition: 1, ackOnly: true }]);
+                calls['1'].forgotten.should.eql([{ topicId: 'id1', partitions: [1] }]); // not fetched again
+                Object.keys(sc._pendingAcks).should.eql([]);
+                sc._sessionParts['1'].should.eql([]);
+            });
+        });
+
+        it('should drop acks no share session can carry, and keep those a fetch will', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = {}; // broker 0's opens on this fetch; broker 1 has none, and no fetch
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 2 }] }] });
             sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([]));
+            sinon.spy(sc.client, 'warn');
+            sc._closed = true;
             markDelivered(sc, 't', 0, [1]);
             markDelivered(sc, 't', 1, [1]);
             sc.acknowledge([{ topic: 't', partition: 0, offset: 1 }, { topic: 't', partition: 1, offset: 1 }]);
 
-            p = sc._fetch();
-            sc._closed = true;
-            return p.then(function () {
-                Object.keys(sc.client.shareFetchRequest.args[0][5].t).should.eql(['0']);
-                Object.keys(sc._pendingAcks).should.eql(['t:1']); // not lost: sent when 1 is fetched again, or on end()
+            return sc._fetch().then(function () {
+                Object.keys(sc._pendingAcks).should.eql(['t:0']); // broker 0's session is open next round
+                sc.client.warn.args.some(function (a) { return /t:1/.test(a.join(' ')); }).should.equal(true);
             });
+        });
+
+        it('should keep the share sessions across an assignment change', function () {
+            var sc = makeShareConsumer();
+            sc.shareSessionEpochs = { 0: 4 };
+            sc._applyAssignment({ _present: 1, topicPartitions: [{ topicId: 'id1', partitions: [0] }] });
+            sc.shareSessionEpochs.should.eql({ 0: 4 }); // revoked partitions are forgotten by the next fetch instead
         });
 
         it('should settle a fetch in flight before draining the final acks', function () {
@@ -1566,6 +1599,22 @@ describe('Consumer loops (unit)', function () {
                 order.should.eql(['join', 'leave', 'end']); // no second join with the new ID
                 gc.client.leaveGroupRequest.lastCall.args.should.eql(['gc-unit-race', 'me']);
                 gc._runHeartbeat.callCount.should.equal(0);
+            });
+        });
+
+        it('ShareConsumer: end() during the coordinator lookup should not join', function () {
+            var sc = new Kafka.ShareConsumer({ clientId: 'unit-sc', groupId: 'sc-unit-race' });
+            var lookedUp, joined;
+            sinon.stub(sc.client, 'updateGroupCoordinator').returns(new Promise(function (resolve) { lookedUp = resolve; }));
+            sinon.stub(sc.client, 'shareGroupHeartbeatRequest').returns(Promise.resolve({ memberId: sc.memberId, memberEpoch: 1 }));
+            sinon.stub(sc.client, 'end').returns(Promise.resolve());
+
+            joined = sc._join();
+            return sc.end().then(function () {
+                lookedUp();
+                return joined;
+            }).then(function () {
+                sc.client.shareGroupHeartbeatRequest.args.filter(function (a) { return a[2] === 0; }).length.should.equal(0);
             });
         });
 
