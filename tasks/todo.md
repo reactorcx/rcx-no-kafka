@@ -820,7 +820,13 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 A subscription without an ID wasn't bound to the ID its fetch went by; it is now.
   - [x] P2 Share join checked shutdown before the heartbeat's coordinator lookup; after it now.
   - Integration (02, 03, 27, 28): 48 pass, 1 baseline failure (clean shutdown).
-- Verification: unit tests 31-39: 333 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 44 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A known-recreated topic was still fetched by its old ID on v13+ (a lagging broker serves
+    the deleted log); never sent now, on any version.
+  - [x] P2 An idle close the broker didn't take lost its acks and session marker; both kept now.
+  - [x] P2 `_newMember()` kept the old member's `_busy` blockers; cleared now.
+  - Integration (02, 03, 27, 28): 48 pass, 1 baseline failure; live recreation: 100 of 100.
+- Verification: unit tests 31-39: 335 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

@@ -1125,6 +1125,35 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should keep an idle broker\'s acks, and its session to close, when the broker didn\'t take the close', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc._reopening = { 0: true };
+            sc.client.brokerConnections = { 0: {} };
+            sinon.stub(sc, '_buildFetchRequests').returns({});
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([
+                { topic: 't', partition: 0, error: new errors.NoKafkaConnectionError('b:1', 'down'), notAcked: true }
+            ]));
+            sc._closed = true;
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            return sc._fetch().then(function () {
+                return sc._fetchRequests['0'];
+            }).then(function () {
+                sc.client.shareAcknowledgeRequest.callCount.should.equal(1);
+                sc._pendingAcks['t:0'].batches[0].firstOffset.should.equal(1); // sent again next round, or by end()
+                sc._reopening[0].should.equal(true);
+            });
+        });
+
+        it('should not let the old member\'s stalled requests hold up the new member\'s fetches', function () {
+            var sc = makeShareConsumer();
+            sc._busy = { 0: new Promise(function () {}) }; // an ack-only fetch that never answers
+            sc._newMember();
+            sc._addAckOnly({ 0: [{ topicName: 't', topicId: 'id1', partitions: [{ partition: 0 }] }] }).should.have.property('0');
+        });
+
         it('should keep an idle broker\'s acks while there is no connection to close its session on', function () {
             var sc = makeShareConsumer();
             twoLeaders(sc);
