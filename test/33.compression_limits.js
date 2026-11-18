@@ -159,6 +159,16 @@ describe('Compression limits (unit)', function () {
         });
     }
 
+    it('should not decode a size-less zstd frame past the cap, however large its input', function () {
+        var frame;
+        if (!zstd) { return this.skip(); }
+        frame = zstdStreamed(require('crypto').randomBytes(2 * 1024 * 1024)); // incompressible: input as large as output
+        compression.maxOutputSize = 64 * 1024;
+        return largestAllocation(function () { return compression.decompress(frame, 4); }).then(function (max) {
+            max.should.be.at.most(64 * 1024 + 1); // was the 2 MB input's size
+        });
+    });
+
     it('should decode a zstd frame whose window fits a raised maxOutputSize', function () {
         var binding, cctx, out = Buffer.alloc(1 << 16), parts = [], r, src = Buffer.from('hello'), frame;
         if (!zstd) { return this.skip(); }

@@ -223,7 +223,7 @@ export interface ProducerOptions {
   * and hashed by the partitioners, as String(key).
   */
 export interface SendMessage extends Omit<Kafka.Message, "message"> {
-    message: Omit<Kafka.Message["message"], "key"> & { key?: Buffer | string | number };
+    message: Omit<Kafka.Message["message"], "key"> & { key?: Buffer | string | number | boolean | object }; // sent as String(key)
 }
 
 /**

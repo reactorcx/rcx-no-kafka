@@ -704,7 +704,12 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   waits 3 s before producing: the broker initializes the share partition at the latest offset on
   the first fetch, and records produced before that were skipped, which first looked like a
   regression).
-- Verification: unit tests 31-39: 273 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 22 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A size-less zstd frame decoded up to its input's size before the cap check; bounded now.
+  - [x] P2 An empty compressed legacy set was GAP-acked; rejected now.
+  - [x] P2 A fast broker's decoded records waited for the slowest broker; handed out per broker.
+  - [x] P3 Send key type accepts boolean and object keys.
+- Verification: unit tests 31-39: 276 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

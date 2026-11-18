@@ -1108,8 +1108,36 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
-        it('should deliver nothing from a broker that answered before the member was replaced', function () {
-            var sc = makeShareConsumer(), finish, p, called = false;
+        it('should deliver nothing still waiting for a handler slot once the member is replaced', function () {
+            var sc = makeShareConsumer(), release, p, handled = [];
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sc.options.handlerConcurrency = 1;
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }, { partition: 1 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([0, 1].map(function (partition) {
+                return { topic: 't', topicId: 'id-1', partition: partition, leader: '0', messageSet: [{ offset: 1, message: { value: Buffer.from('x') } }],
+                    acquiredRecords: [{ firstOffset: 0, lastOffset: 1 }] };
+            })));
+            sc._handler = function (messageSet, topic, partition) {
+                handled.push(partition);
+                return new Promise(function (resolve) { release = resolve; });
+            };
+
+            p = sc._fetch();
+            return promiseUtils.delay(5).then(function () {
+                handled.should.eql([0]); // partition 1 waits for the only slot
+                sc._newMember();
+                release();
+                sc._closed = true;
+                return p;
+            }).then(function () {
+                handled.should.eql([0]); // partition 1 is the old member's: not delivered
+                Object.keys(sc._pendingAcks).should.eql([]); // nor GAP-acked under the new member
+            });
+        });
+
+        it('should hand out one broker\'s records without waiting for a slower broker', function () {
+            var sc = makeShareConsumer(), handled = [];
             twoLeaders(sc);
             sc.shareSessionEpochs = { 0: 2, 1: 2 };
             sinon.stub(sc, '_buildFetchRequests').returns({
@@ -1117,21 +1145,16 @@ describe('Consumer loops (unit)', function () {
                 1: [{ topicName: 't', partitions: [{ partition: 1 }] }]
             });
             sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, requests) {
-                if (requests[1]) { return new Promise(function (resolve) { finish = resolve; }); }
+                if (requests[1]) { return new Promise(function () {}); } // broker 1 is slow
                 return Promise.resolve([{ topic: 't', topicId: 'id-1', partition: 0, leader: '0',
-                    messageSet: [{ offset: 1, message: { value: Buffer.from('x') } }], acquiredRecords: [{ firstOffset: 0, lastOffset: 1 }] }]);
+                    messageSet: [{ offset: 1, message: { value: Buffer.from('x') } }], acquiredRecords: [{ firstOffset: 1, lastOffset: 1 }] }]);
             });
-            sc._handler = function () { called = true; return Promise.resolve(); };
+            sc._handler = function (messageSet, topic, partition) { handled.push(partition); return Promise.resolve(); };
 
-            p = sc._fetch();
-            return promiseUtils.delay(5).then(function () { // broker 0 has answered; broker 1 hasn't
-                sc._newMember();
-                finish([]);
+            sc._fetch();
+            return promiseUtils.delay(5).then(function () {
+                handled.should.eql([0]); // its decoded records aren't held until broker 1 answers
                 sc._closed = true;
-                return p;
-            }).then(function () {
-                called.should.equal(false);
-                Object.keys(sc._pendingAcks).should.eql([]); // no gap acks under the new member either
             });
         });
 

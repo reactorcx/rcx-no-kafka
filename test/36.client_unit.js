@@ -120,6 +120,17 @@ describe('Client (unit)', function () {
             });
         });
 
+        it('should reject a compressed wrapper holding no messages', function () {
+            var c = makeClient();
+            var wrapper = { magicByte: 1, attributes: { _raw: 0x01, codec: 1 }, value: require('zlib').gzipSync(Buffer.alloc(0)) };
+
+            return c._decompressMessageSet(wrapper, 41).then(function () {
+                throw new Error('expected rejection');
+            }, function (err) {
+                err.message.should.match(/Empty/); // its offsets aren't gaps to acknowledge
+            });
+        });
+
         it('should reject a compressed wrapper whose inner message set is cut short', function () {
             var c = makeClient();
             var inner = Buffer.from(c.protocol.write().MessageSet([
