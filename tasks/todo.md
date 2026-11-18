@@ -650,7 +650,7 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 A fetch that failed in transit dropped its still-open session from `end()`'s view.
   - [x] P2 Final acks waited on a metadata refresh stuck on another broker; they don't now.
   - [x] P3 `SendMessage` keeps `Message`'s optional `offset`.
-- Verification: unit tests 31-39: 239 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Verification: unit tests 31-39: 238 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing
