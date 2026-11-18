@@ -790,7 +790,13 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P2 A new delivery's acks could join a requeued entry of its partition's former broker;
     `_queueAck` and `_requeueAcks` keep a partition's queued acks to one broker now.
   - [x] P3 A relative TLS path starting "-----BEGIN x-----/" was taken for PEM; whole header line now.
-- Verification: unit tests 31-39: 317 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 40 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P1 A running consumer fetched a recreated topic (seen by name) at the deleted log's offset,
+    skipping the new log's first records; subscriptions keep their offset's topic ID and resume at
+    `recoveryOffset` when it changes. Live: 100 of 100 records (round 39 code: the last 50).
+  - [x] P2 An idle broker's reopening session kept its queued acks until `end()`; closed with them
+    (epoch -1) on the next fetch round now.
+- Verification: unit tests 31-39: 320 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

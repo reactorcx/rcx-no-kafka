@@ -392,7 +392,7 @@ consumer.fetchOffset([
 * `reconnectionDelay` - controls optionally progressive delay between reconnection attempts in case of network error:
   * `min` - minimum delay, used as increment value for next attempts, defaults to 1000ms
   * `max` - maximum delay value, defaults to 1000ms
-* `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
+* `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, or when the topic was deleted and recreated (a new topic ID) since its offset was taken, defaults to Kafka.LATEST_OFFSET
 * `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `true`
 * `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
 * `handlerConcurrency` - specify concurrency level for the consumer handler function, defaults to 10
@@ -512,7 +512,7 @@ This is a client-side-only feature and works with any Kafka broker version suppo
 * `heartbeatTimeout` - delay between heartbeat requests in ms, defaults to `1000`
 * `retentionTime` - offset retention time in ms, defaults to 1 day (24 * 3600 * 1000)
 * `startingOffset` - starting position (time) when there is no commited offset, defaults to `Kafka.LATEST_OFFSET`
-* `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, defaults to Kafka.LATEST_OFFSET
+* `recoveryOffset` - recovery position (time) which will used to recover subscription in case of OffsetOutOfRange error, or when the topic was deleted and recreated (a new topic ID) since its offset was taken, defaults to Kafka.LATEST_OFFSET
 * `rackId` - rack identifier for this consumer, enables rack-aware fetching from the closest replica (KIP-392). Requires Kafka 2.4+
 * `groupInstanceId` - unique instance identifier for static group membership (KIP-345). When set, the consumer skips LeaveGroup on shutdown so it can rejoin the group without triggering a rebalance (without it, `end()` leaves the group; if a join is still waiting for its member ID, it waits for it, up to `sessionTimeout`, to leave with it). If another consumer registers with the same `groupInstanceId`, the broker returns `FencedInstanceId` and the original consumer shuts down. Requires Kafka 2.4+
 * `asyncCompression` - boolean, use asynchronouse decompression instead of synchronous, defaults to `true`

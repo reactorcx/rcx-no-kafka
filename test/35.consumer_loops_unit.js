@@ -29,6 +29,38 @@ describe('Consumer loops (unit)', function () {
             return c;
         }
 
+        it('should resume a recreated topic at recoveryOffset, not at the deleted log\'s offset', function () {
+            var c = makeConsumer(noop);
+            c.subscriptions['t:0'].offset = 50;
+            c.subscriptions['t:0'].topicId = 'id-old';
+            c.client.topicIds.t = 'id-new'; // a by-name refresh found the topic recreated
+            sinon.stub(c.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(c.client, 'getPartitionOffset').returns(Promise.resolve(0));
+            c._closed = true;
+
+            return c._fetch().then(function () {
+                c.client.fetchRequest.callCount.should.equal(0); // not at 50 in the new log
+                return promiseUtils.delay(5);
+            }).then(function () {
+                c.client.getPartitionOffset.args[0][3].should.equal(c.options.recoveryOffset);
+                c.subscriptions['t:0'].offset.should.equal(0);
+                c.subscriptions['t:0'].topicId.should.equal('id-new');
+                c.subscriptions['t:0'].paused.should.equal(false);
+            });
+        });
+
+        it('should keep a re-subscribed offset\'s topic ID across a metadata refresh', function () {
+            var c = makeConsumer(noop);
+            c.subscriptions['t:0'].topicId = 'id-old';
+            sinon.stub(c.client, 'updateMetadata').callsFake(function () { c.client.topicIds.t = 'id-new'; return Promise.resolve(); });
+            sinon.stub(c.client, 'findLeader').returns(Promise.resolve(0));
+
+            return c._updateSubscription('t', 0).then(function () {
+                c.subscriptions['t:0'].offset.should.equal(5);
+                c.subscriptions['t:0'].topicId.should.equal('id-old'); // so the next fetch sees the recreation
+            });
+        });
+
         it('should not advance the offset when the handler rejects (batch is redelivered)', function () {
             var c = makeConsumer(function () { return Promise.reject(new Error('db down')); });
             var p = c._fetch();
@@ -976,6 +1008,26 @@ describe('Consumer loops (unit)', function () {
             sc.acknowledge({ topic: 't', partition: 0, offset: 1 }, Kafka.ShareConsumer.ACKNOWLEDGE_TYPE.RELEASE);
             String(sc._pendingAcks['t:0'].leader).should.equal('1'); // not appended to broker 0's entry
             sc._pendingAcks['t:0'].batches.map(function (b) { return b.acknowledgeTypes[0]; }).should.eql([2]);
+        });
+
+        it('should close an idle broker\'s reopening session with its queued acks', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            sc.shareSessionEpochs = {};
+            sc._reopening = { 0: true }; // its ack-only fetch failed; no partitions left on it
+            sinon.stub(sc, '_buildFetchRequests').returns({});
+            sinon.stub(sc.client, 'shareAcknowledgeRequest').returns(Promise.resolve([]));
+            sc._closed = true;
+            markDelivered(sc, 't', 0, [1]);
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            return sc._fetch().then(function () {
+                var args = sc.client.shareAcknowledgeRequest.args[0];
+                args[2].should.equal(-1);
+                args[3]['0'][0].partitions[0].acknowledgementBatches[0].firstOffset.should.equal(1);
+                Object.keys(sc._pendingAcks).should.eql([]);
+                should.not.exist(sc._reopening[0]);
+            });
         });
 
         it('should handle a lost session on a fetch carrying only acknowledgements', function () {
