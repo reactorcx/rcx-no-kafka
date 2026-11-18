@@ -830,7 +830,14 @@ Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests 
   - [x] P1 A recovery offset looked up while metadata flipped back to the deleted topic was stored
     under the new ID; the lookup is repeated until the ID holds.
   - [x] P2 An idle close answered ShareSessionNotFound was retried every poll; not retried now.
-- Verification: unit tests 31-39: 337 pass; eslint 0 errors (7 pre-existing warnings); tsc
+- Codex review round 46 (gpt-6.2-sol, xhigh, Fast):
+  - [x] P2 A repeated recovery lookup went to the old leader; the leader is found again now.
+  - [x] P2 A recreated topic's fetch of the same partition swallowed the old delivery's acks;
+    matched by topic ID now, the old acks go under their own ID.
+  - [x] P2 Acks for a broker gone from metadata were retried every poll; not sent, kept 60 s.
+  - Integration (02, 03, 27, 28): 48 pass, 1 baseline failure; live: revoked acks applied,
+    recreation 100 of 100.
+- Verification: unit tests 31-39: 340 pass; eslint 0 errors (7 pre-existing warnings); tsc
   passes, and a TypeScript usage sample has 9 errors against the old typings, none now. Full
   suite on a fresh 4.2.0 broker: 701 pass, the same 10 failures as `master`. Live on 4.2.0:
   delete and recreate a topic under a running producer and consumer (Phase 1: 0/10 sends, nothing

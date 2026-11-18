@@ -139,6 +139,28 @@ describe('Consumer loops (unit)', function () {
             });
         });
 
+        it('should find the leader again when it repeats a recovery lookup', function () {
+            var c = makeConsumer(noop);
+            c.subscriptions['t:0'].topicId = 'id-old';
+            c.client.topicIds.t = 'id-new';
+            sinon.stub(c.client, 'findLeader').callsFake(function () {
+                return Promise.resolve(c.client.findLeader.callCount === 1 ? 0 : 1);
+            });
+            sinon.stub(c.client, 'getPartitionOffset').callsFake(function () {
+                if (c.client.getPartitionOffset.callCount === 1) {
+                    c.client.topicIds.t = 'id-newer'; // metadata moved on, the partition's leader too
+                }
+                return Promise.resolve(0);
+            });
+            c._closed = true;
+
+            return c._fetch().then(function () { return promiseUtils.delay(10); }).then(function () {
+                c.client.getPartitionOffset.args[1][0].should.equal(1); // asked of the new leader, not broker 0
+                c.subscriptions['t:0'].leader.should.equal(1);
+                c.subscriptions['t:0'].topicId.should.equal('id-newer');
+            });
+        });
+
         it('should keep a re-subscribed offset\'s topic ID across a metadata refresh', function () {
             var c = makeConsumer(noop);
             c.subscriptions['t:0'].topicId = 'id-old';
@@ -433,6 +455,7 @@ describe('Consumer loops (unit)', function () {
         function twoLeaders(sc) {
             sc.client.topicMetadata = Object.create(null);
             sc.client.topicMetadata.t = { 0: { partitionId: 0, leader: 0 }, 1: { partitionId: 1, leader: 1 } };
+            sc.client.brokerConnections = { 0: {}, 1: {} }; // both brokers in metadata
         }
 
         it('should fetch the partitions it has metadata for while refreshing the rest', function () {
@@ -1187,6 +1210,54 @@ describe('Consumer loops (unit)', function () {
             }).then(function () {
                 Object.keys(sc._pendingAcks).should.eql([]);
                 should.not.exist(sc._reopening[0]); // not tried every poll
+            });
+        });
+
+        it('should send a recreated topic\'s old acks under its old ID, beside the new topic\'s fetch', function () {
+            var sc = makeShareConsumer(), call, handled = [];
+            twoLeaders(sc);
+            sc.shareSessionEpochs = { 0: 2 };
+            sc._handler = function (messageSet) { handled.push(messageSet[0].offset); };
+            sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', topicId: 'id-new', partitions: [{ partition: 0 }] }] });
+            sinon.stub(sc.client, 'shareFetchRequest').callsFake(function (g, m, e, only, forgotten, acks) {
+                call = { topics: only['0'], forgotten: forgotten, acks: acks };
+                return Promise.resolve([{ topic: 't', topicId: 'id-new', partition: 0, leader: '0',
+                    messageSet: [record(3)], acquiredRecords: [{ firstOffset: 3, lastOffset: 3, deliveryCount: 1 }] }]);
+            });
+            sc._closed = true;
+            markDelivered(sc, 't', 0, [1]);
+            sc._deliveries['t:0'].topicId = 'id-old'; // delivered before the topic was recreated
+            sc.acknowledge({ topic: 't', partition: 0, offset: 1 });
+
+            return sc._fetch().then(function () {
+                call.topics.map(function (t) { return [t.topicId, t.partitions]; }).should.eql([
+                    ['id-new', [{ partition: 0 }]],
+                    ['id-old', [{ partition: 0, ackOnly: true }]]
+                ]);
+                call.acks.t[0][0].topicId.should.equal('id-old');
+                call.forgotten.should.eql([{ topicId: 'id-old', partitions: [0] }]);
+                handled.should.eql([3]); // the new topic's records are still delivered
+            });
+        });
+
+        it('should not send acks to a broker gone from metadata, and drop them after a while', function () {
+            var sc = makeShareConsumer();
+            twoLeaders(sc);
+            delete sc.client.brokerConnections[1]; // decommissioned
+            sc.shareSessionEpochs = { 1: 2 };
+            sinon.stub(sc, '_buildFetchRequests').returns({});
+            sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([]));
+            sc._closed = true;
+            markDelivered(sc, 't', 1, [1]);
+            sc.acknowledge({ topic: 't', partition: 1, offset: 1 });
+
+            return sc._fetch().then(function () {
+                sc.client.shareFetchRequest.callCount.should.equal(0); // not every poll
+                Object.keys(sc._pendingAcks).should.eql(['t:1']); // in case it comes back
+                sc._pendingAcks['t:1'].queuedAt -= 61000;
+                return sc._fetch();
+            }).then(function () {
+                Object.keys(sc._pendingAcks).should.eql([]);
             });
         });
 
