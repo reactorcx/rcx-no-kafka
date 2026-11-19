@@ -1129,6 +1129,30 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should count batch.size per partition, as Java does, not across all of them', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 100, maxWait: 50 } });
+            var sent = [], v = Buffer.alloc(40), i, sends = [];
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'getTopicPartitions').returns(Promise.resolve([{ partitionId: 0, error: { code: 'NoError' } }]));
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                sent.push(requests.length);
+                return Promise.resolve(requests.map(function (r) { return { topic: r.topic, partition: r.partition, offset: 0 }; }));
+            });
+            for (i = 0; i < 12; i++) { // 480 bytes over 12 partitions: no partition's batch is full
+                sends.push(p.send({ topic: 't', partition: i, message: { value: v } }));
+            }
+            sends.push(p.send({ topic: 'u', message: { value: v } }), p.send({ topic: 'u', message: { value: v } })); // a topic's unassigned ones count together
+            return promiseUtils.delay(20).then(function () {
+                sent.should.eql([]); // was sent once 100 bytes were queued
+                sends.push(p.send({ topic: 't', partition: 3, message: { value: v } }));
+                sends.push(p.send({ topic: 'u', message: { value: Buffer.alloc(20) } })); // u reaches 100: sent now
+                return promiseUtils.delay(20);
+            }).then(function () {
+                sent.should.eql([16]);
+                return Promise.all(sends);
+            });
+        });
+
         it('should keep the result order, and give sends sharing a partition its results', function () {
             var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 1024 * 1024, maxWait: 5 } });
             function keys(r) { return r.map(function (x) { return x.topic + ':' + x.partition; }); }

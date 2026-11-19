@@ -165,8 +165,8 @@ export interface ProducerOptions {
       */
     batch?: {
         /**
-          * size - group messages together into single batch 
-          * until their total size exceeds this value.
+          * size - group messages together until the values
+          * queued for one partition reach this many bytes.
           * Set to 0 to disable batching.
           * 
           * defaults to 16384 bytes.
@@ -339,8 +339,8 @@ export interface SendOptions {
       */
     batch?: {
         /**
-          * size - group messages together into single 
-          * batch until their total size exceeds this value.
+          * size - group messages together until the values
+          * queued for one partition reach this many bytes.
           * default: 16384 bytes.
           * Set to 0 to disable batching.
           */

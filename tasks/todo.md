@@ -462,11 +462,15 @@ Behaviour changes (all four approved 2026-11-18):
       one further each round (`_fetchRound`); the model's 40 / 0 / 0 / 0 MB is now 10 MB each.
       Topics go in first-seen order, not object key order (a numeric topic name went first).
       Test: four partitions on one broker each go first in turn, with another broker's alongside.
-- [ ] 3.8 `batch.size` counts value bytes over the whole linger task (all topics and partitions,
+- [x] 3.8 `batch.size` counts value bytes over the whole linger task (all topics and partitions,
       `producer.js:549-553`), so multi-partition sends fragment: 186 ms CPU per 10k 1 KB sends at
       12 partitions, 93 ms per partition. Count per topic:partition, as Java's `batch.size` is,
       ~6 lines + README. Users see later flushes and requests up to partitions x `batch.size`
-      (Java caps a request at `max.request.size`; no cap added here).
+      (Java caps a request at `max.request.size`; no cap added here). Done: 12 partitions, 10k
+      sends: 1 KB values 186 -> 44 ms CPU, 1.4 -> 16 records per partition batch; 100 B 67 -> 29
+      ms, 13.7 -> 151 (with 3.6/3.7/3.12). Still value bytes only, as before. Test: 12 partitions
+      under the limit wait for maxWait; one partition, or one topic's unassigned messages, at it
+      send at once.
 - [ ] 3.11b The decompression cap is per batch with no total: 8 gzip batches of 127 MB in one
       partition response hold 2.0 GB RSS (`client.js:2382, 2403` decode them with `Promise.all`).
       Decode one batch at a time and stop once a partition has decoded `maxOutputSize` (the first
