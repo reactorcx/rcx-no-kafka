@@ -150,12 +150,19 @@ describe('Consumer loops (unit)', function () {
             return nextDelay(makeConsumer(noop)).then(function (d) { d.should.equal(0); });
         });
 
-        it('should wait idleTimeout after a round with nothing delivered, a failed handler or an error', function () {
-            var idle = makeConsumer(noop), failed = makeConsumer(function () { return Promise.reject(new Error('db down')); });
-            var errored = makeConsumer(noop);
+        it('should wait idleTimeout after a round with nothing delivered, or a failed handler or an error in it', function () {
+            var idle = makeConsumer(noop), failed = makeConsumer(noop), errored = makeConsumer(noop);
             var delays = [];
+            // t:0 moves forward in the same round as t:1's failure or error: the failure sets the pace
+            function withSecond(c, result, handler) {
+                c.subscriptions['t:1'] = { topic: 't', partition: 1, offset: 5, leader: 0, maxBytes: 1024, handler: handler || noop };
+                c.client.fetchRequest.returns(Promise.resolve([
+                    { topic: 't', partition: 0, messageSet: [{ offset: 5 }], highwaterMarkOffset: 6 }, Object.assign({ topic: 't', partition: 1 }, result)
+                ]));
+            }
             idle.client.fetchRequest.returns(Promise.resolve([{ topic: 't', partition: 0, messageSet: [], highwaterMarkOffset: 5 }]));
-            errored.client.fetchRequest.returns(Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('NotLeaderForPartition') }]));
+            withSecond(failed, { messageSet: [{ offset: 5 }], highwaterMarkOffset: 6 }, function () { return Promise.reject(new Error('db down')); });
+            withSecond(errored, { error: errors.byName('NotLeaderForPartition') });
             sinon.stub(errored, '_updateSubscription').returns(Promise.resolve());
             function record(d) { delays.push(d); }
             return nextDelay(idle).then(record).then(function () { return nextDelay(failed); }).then(record)
@@ -601,11 +608,13 @@ describe('Consumer loops (unit)', function () {
 
         it('should fetch again at once after handled records, and wait idleTimeout otherwise', function () {
             var delivered = { messageSet: [record(5)], acquiredRecords: [{ firstOffset: 5, lastOffset: 5, deliveryCount: 1 }] };
-            var cases = [
-                [delivered, noop, 0],
-                [delivered, function () { return Promise.reject(new Error('db down')); }, 1000], // released: redelivered
-                [{ messageSet: [], acquiredRecords: [] }, noop, 1000],
-                [{ error: errors.byName('NotLeaderForPartition'), messageSet: [] }, noop, 1000]
+            var delivered1 = { partition: 1, messageSet: [record(7)], acquiredRecords: [{ firstOffset: 7, lastOffset: 7, deliveryCount: 1 }] };
+            var failOn1 = function (ms, topic, partition) { return partition === 1 ? Promise.reject(new Error('db down')) : Promise.resolve(); };
+            var cases = [ // t:0 handled alongside a failure on t:1 still waits
+                [[delivered], noop, 0],
+                [[delivered, delivered1], failOn1, 1000], // released: redelivered
+                [[{ messageSet: [], acquiredRecords: [] }], noop, 1000],
+                [[delivered, { partition: 1, error: errors.byName('NotLeaderForPartition'), messageSet: [] }], noop, 1000]
             ];
             return cases.reduce(function (p, c) {
                 return p.then(function () {
@@ -614,8 +623,10 @@ describe('Consumer loops (unit)', function () {
                     sinon.stub(sc, '_partitionError').returns(null);
                     sinon.stub(sc, 'acknowledge').returns(Promise.resolve());
                     timer = sinon.spy(global, 'setTimeout');
-                    sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
-                    sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([Object.assign({ topic: 't', topicId: 'id-1', partition: 0, leader: '0' }, c[0])]));
+                    sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }, { partition: 1 }] }] });
+                    sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve(c[0].map(function (r) {
+                        return Object.assign({ topic: 't', topicId: 'id-1', partition: 0, leader: '0' }, r);
+                    })));
                     sc._handler = c[1];
                     return sc._fetch().finally(function () {
                         timer.restore();

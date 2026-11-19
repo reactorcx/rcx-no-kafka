@@ -24,7 +24,9 @@ export interface SimpleConsumerOptions {
       */
     maxWaitTime?: number;
     /**
-      * `idleTimeout` - delay before the next fetch after a round that delivered nothing, failed or errored; none after one that moved an offset forward.
+      * `idleTimeout` - delay before the next fetch after a
+      * round that delivered nothing, failed or errored;
+      * none after one that moved an offset forward.
       * 
       * default: 1000ms
       */

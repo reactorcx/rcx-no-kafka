@@ -492,6 +492,21 @@ Deferred or dropped:
   cost one level up: re-measure after 3.2/3.4.
 - Two produce buffer copies (~3%): drop.
 
+Review (security, maintainability, style subagents) after the ten items:
+- [x] Maintainability, fixed: a BaseConsumer round where one partition moved forward and another's
+      handler failed fetched again at once (the poison handler ran 171 times in 200 ms); the
+      failure now sets the pace, as in ShareConsumer. No test covered a mixed round: both loops'
+      tests now do, and removing any of the `errored` flags fails one. The copied-not-sliced
+      property had no test (a key/value sliced from the response passed); it does now, and the
+      truncation sweep covers every `timestampDelta` shape. `RecordHeader` had no caller left:
+      deleted, with its round-trip tests (the Record tests cover headers). The `maxWait` docs
+      still said "total size".
+- [x] Maintainability, documented: a ShareConsumer handler that releases records itself and
+      resolves gets them back on the next, immediate fetch, as after Java's next `poll()`; the
+      README says so.
+- [x] Style, fixed: a todo item number in a lib comment, long `idleTimeout` typings lines, the
+      one-letter CRC table name, CHANGELOG entries longer than their neighbours.
+
 Tests: behaviour items (3.1, 3.3, 3.5, 3.8, 3.11a/b, 3.12's own-results) get a broker-free test
 written first and seen failing. Output-identical rewrites (3.2, 3.4, 3.6, 3.7) get equivalence
 tests on fixed vectors and randomised inputs against the old implementation, which pass before and

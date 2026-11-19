@@ -1,9 +1,9 @@
 ## Unreleased
 
 ### Changed
-- `batch.size` counts the bytes queued per partition, as Java's does, not across all partitions: sends over many partitions are batched instead of going out one or two records per partition (a request can now hold `batch.size` per partition)
+- `batch.size` counts the bytes queued per partition, as Java's does, not across all partitions; a request can hold `batch.size` per partition
 - Each fetch starts at the next of a broker's partitions, so one backlogged partition no longer takes every response (as Java rotates them)
-- Consumers fetch again at once after a round whose handlers moved an offset forward, as Java's `poll()` does; `idleTimeout` now applies only after a round that delivered nothing, failed or hit an error (it capped a consumer at one response per second per broker)
+- Consumers fetch again at once after a round whose handlers moved an offset forward, as Java's `poll()` does; `idleTimeout` applies only after an idle, failed or errored round
 - Partitioners hash a key that is neither a Buffer nor a string as `String(key)`, the bytes sent — a number key moves partition (README shows how to keep the old mapping)
 - During a rolling upgrade old and new producers split a number key across two partitions; on compacted topics the old partition keeps its last value
 - A topic whose metadata comes back with an error is no longer cached as having no partitions — `subscribe(topic)` without partitions now rejects with `UnknownTopicOrPartition` instead of resolving with nothing (the real error is logged)
@@ -19,7 +19,7 @@
 - TLS `cert`, `key` and `ca` are each read as a file path unless they hold a PEM header line, so a file cert can go with an inline key
 
 ### Fixed
-- A Simple or Group consumer decodes a partition's batches one at a time and stops once they have inflated to `maxOutputSize` together (the cap was per batch: one partition's fetch of batches each under it could hold gigabytes); a truncated zstd frame no longer allocates the size it declares
+- One partition's fetch decompresses about twice `maxOutputSize` at most, not the cap for every batch; a truncated zstd frame no longer allocates the size it declares
 - Compressed legacy (magic 1) messages are delivered at their absolute offsets; their inner offsets were relative
 - `DefaultPartitioner` hashed a number key as that many zero bytes, and threw on negative, boolean and object keys
 - `HashCRC32Partitioner` sent every number key to partition 0 and threw on Buffer keys

@@ -174,8 +174,8 @@ export interface ProducerOptions {
         size?: number;
         /**
           * maxWait - send grouped messages after this
-          * amount of milliseconds expire even if their
-          * total size doesn't exceed batch.size yet.
+          * amount of milliseconds expire even if no
+          * partition's messages have reached batch.size yet.
           * Set to 0 to disable batching.
           * 
           * defaults to 10ms.
