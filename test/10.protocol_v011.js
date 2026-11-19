@@ -274,6 +274,36 @@ describe('v0.11 Protocol Upgrade', function () {
             result.key.toString('utf8').should.equal('string-key');
             result.value.toString('utf8').should.equal('string-value');
         });
+
+        it('should write the bytes bin-protocol\'s varint primitives give, for every field shape', function () {
+            var keys = [null, undefined, '', 'k', 'ключ', Buffer.alloc(300, 1), 42];
+            var values = [null, Buffer.alloc(0), Buffer.alloc(200, 2), Buffer.alloc(20000, 3), 'v', 12345];
+            var deltas = [0, 1, -1, 63, 64, -65, 8191, 8192, 2147483647, -2147483648, 4294967296, -5e12, 1.5];
+            var headers = [undefined, [], [{ key: 'h1', value: 'x' }, { key: 'h2', value: null }, { value: Buffer.alloc(150, 4) }]];
+            var n, rec, expected;
+            // the body through the primitives, then its length in front
+            function reference(r) {
+                var body = protocol.write().Int8(r.attributes || 0).SVarint64(r.timestampDelta || 0).SVarint(r.offsetDelta || 0);
+                [r.key, r.value].forEach(function (v) {
+                    if (v === undefined || v === null) { body.SVarint(-1); } else {
+                        v = Buffer.isBuffer(v) ? v : Buffer.from(String(v), 'utf8');
+                        body.SVarint(v.length).raw(v);
+                    }
+                });
+                body.SVarint((r.headers || []).length);
+                (r.headers || []).forEach(function (h) { body.RecordHeader(h); });
+                body = Buffer.from(body.result);
+                return Buffer.concat([Buffer.from(protocol.write().SVarint(body.length).result), body]);
+            }
+            for (n = 0; n < 7 * 6 * 13; n++) {
+                rec = {
+                    attributes: 0, timestampDelta: deltas[n % 13], offsetDelta: n * 37,
+                    key: keys[n % 7], value: values[n % 6], headers: headers[n % 3]
+                };
+                expected = reference(rec);
+                Buffer.from(protocol.write().Record(rec).result).equals(expected).should.equal(true);
+            }
+        });
     });
 
     /////////////////////

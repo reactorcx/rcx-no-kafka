@@ -407,10 +407,13 @@ Same output, no behaviour change (order of work):
       ~40% after 3.2). Slicing-by-8 with an `Int32Array` table: ~1,690 MB/s. ~25 lines. Node 18
       has no CRC-32C built in. Done: 296 -> 1,680 MB/s; verifying 10.5 MB 40.0 -> 9.3 ms; a 100k x
       100 B batch write 176 -> 137 ms. Test: every length 0-70 at odd offsets against a bitwise CRC.
-- [ ] 3.7 `Record.write` (`lib/protocol/common.js:541-595`) writes the body, then copies it back
+- [x] 3.7 `Record.write` (`lib/protocol/common.js:541-595`) writes the body, then copies it back
       to fit the varint length: 1.46 us/record at 100 B. Computing the length first: 0.18 us;
       a 10k x 100 B batch 18.2 -> 5.6 ms. ~40 lines for 55; keep the Long path for a
-      `timestampDelta` outside int32.
+      `timestampDelta` outside int32. Done: 1.42 / 1.46 / 1.48 / 1.77 -> 0.16 / 0.19 / 0.20 / 0.52 us
+      per record at 10 B-10 KB; a 10k x 100 B batch 18.2 -> 2.5 ms with 3.6. A delta outside int32
+      is encoded by bin-protocol's SVarint64, so no old path is kept. Test: 546 field shapes against
+      the primitives' bytes (a broken slow path or null length fails it).
 - [ ] 3.2 + 3.4 Decode reads every field through bin-protocol's lodash path lookups (3.10's cost):
       `Record.read` (`common.js:480-541`) 2.5-2.8 us/record, 25-28 ms per 10k (7.6 us with two
       headers); `RecordBatchHeader` 8.2 us per batch inside a response. Direct buffer reads: 4 ms
