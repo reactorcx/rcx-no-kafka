@@ -304,6 +304,41 @@ describe('v0.11 Protocol Upgrade', function () {
                 Buffer.from(protocol.write().Record(rec).result).equals(expected).should.equal(true);
             }
         });
+
+        it('should read what bin-protocol\'s primitives read, and throw where they throw', function () {
+            var deltas = [0, -1, 8191, 2147483647, -2147483648, Math.pow(2, 48) - 1, Math.pow(2, 48), -Math.pow(2, 48), Math.pow(2, 60), -5e12];
+            var headers = [[], [{ key: '', value: '' }, { key: 'h', value: null }, { key: 'ключ', value: Buffer.alloc(150, 4) }]];
+            var n, buf, len;
+            // the old reader: the same fields through SVarint, SVarint64 and raw
+            function reference(b) {
+                var rd = protocol.read(b), r, i;
+                rd.SVarint('length').Int8('attributes').SVarint64('timestampDelta').SVarint('offsetDelta').SVarint('keyLength');
+                r = rd.result;
+                r.key = r.keyLength >= 0 ? rd.raw('key', r.keyLength).result.key : null;
+                r.valueLength = rd.SVarint('valueLength').result.valueLength;
+                r.value = r.valueLength >= 0 ? rd.raw('value', r.valueLength).result.value : null;
+                r.headerCount = rd.SVarint('headerCount').result.headerCount;
+                r.headers = [];
+                for (i = 0; i < r.headerCount; i++) { r.headers.push(rd.RecordHeader('h' + i).result['h' + i]); delete r['h' + i]; }
+                r.timestampDelta = r.timestampDelta.toNumber();
+                return r;
+            }
+            function direct(b) {
+                return protocol.read(b).Record().result;
+            }
+            function outcome(fn, b) {
+                try { return fn(b); } catch (e) { return e.constructor.name; }
+            }
+            for (n = 0; n < 40; n++) {
+                buf = Buffer.from(protocol.write().Record({
+                    attributes: 0, timestampDelta: deltas[n % 10], offsetDelta: n * 1001,
+                    key: [null, '', 'k', Buffer.alloc(200, 1)][n % 4], value: [Buffer.alloc(300, 2), null, ''][n % 3], headers: headers[n % 2]
+                }).result);
+                for (len = n % 10 ? buf.length : 0; len <= buf.length; len++) { // every truncation, for 4 of them
+                    outcome(direct, buf.slice(0, len)).should.deep.equal(outcome(reference, buf.slice(0, len)));
+                }
+            }
+        });
     });
 
     /////////////////////
@@ -311,6 +346,25 @@ describe('v0.11 Protocol Upgrade', function () {
     /////////////////////
 
     describe('RecordBatch', function () {
+        it('should read each header field as bin-protocol\'s primitives do', function () {
+            var shapes = [
+                { baseOffset: 0, timestamp: 0 },
+                { baseOffset: 42, timestamp: 1500000000000, producerId: 7, producerEpoch: 3, baseSequence: 9, transactional: true },
+                { baseOffset: Math.pow(2, 40) + 5, timestamp: Math.pow(2, 45), producerId: Math.pow(2, 50), producerEpoch: 32767, baseSequence: 2147483647, codec: 0 }
+            ];
+            shapes.forEach(function (shape) {
+                var buf = Buffer.from(protocol.write().RecordBatch(Object.assign({ records: [{ value: 'a' }, { value: 'b' }] }, shape)).result);
+                var rd = protocol.read(buf), expected;
+                rd.KafkaOffset('baseOffset').Int32BE('batchLength').Int32BE('partitionLeaderEpoch').Int8('magic').UInt32BE('crc')
+                    .Int16BE('attributes').Int32BE('lastOffsetDelta').Int64BE('firstTimestamp').Int64BE('maxTimestamp')
+                    .Int64BE('producerId').Int16BE('producerEpoch').Int32BE('baseSequence').Int32BE('recordCount');
+                expected = rd.result;
+                ['firstTimestamp', 'maxTimestamp', 'producerId'].forEach(function (f) { expected[f] = expected[f].toNumber(); });
+                expected.codec = expected.attributes & 0x7;
+                protocol.read(buf).RecordBatch(null, buf.length).result[0].header.should.deep.equal(expected);
+            });
+        });
+
         it('should round-trip a batch with multiple records', function () {
             var timestamp = 1500000000000;
             var buf, batches, header, reader, rec0, rec1, rec2;

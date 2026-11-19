@@ -414,12 +414,17 @@ Same output, no behaviour change (order of work):
       per record at 10 B-10 KB; a 10k x 100 B batch 18.2 -> 2.5 ms with 3.6. A delta outside int32
       is encoded by bin-protocol's SVarint64, so no old path is kept. Test: 546 field shapes against
       the primitives' bytes (a broken slow path or null length fails it).
-- [ ] 3.2 + 3.4 Decode reads every field through bin-protocol's lodash path lookups (3.10's cost):
+- [x] 3.2 + 3.4 Decode reads every field through bin-protocol's lodash path lookups (3.10's cost):
       `Record.read` (`common.js:480-541`) 2.5-2.8 us/record, 25-28 ms per 10k (7.6 us with two
       headers); `RecordBatchHeader` 8.2 us per batch inside a response. Direct buffer reads: 4 ms
       per 10k records, 0.46 us per header, identical output. ~35 + ~20 lines in `common.js`. Must
       keep: null vs empty key/value/header value, Long `timestampDelta`, a truncated record
       throwing, copied (not sliced) key/value, the CRC range and the batch truncation rules.
+      Done: `_decompressRecordBatches` on 10k records 25-28 -> 6.4 ms (two headers each: 76 ->
+      15.9 ms); a header 4.3 -> 0.50 us. `Record.read` returns `timestampDelta` as a Number (the
+      protocol isn't exported; client.js converted it). bin-protocol's per-call wrapper is ~2 ms
+      of the 6.4 (3.10). Tests: 40 records at every truncation against the primitives (a broken
+      64-bit path, empty header value or truncation check fails it); three header shapes.
 - [ ] 3.12 (new) Each `send()` filters the whole linger task's result (`lib/producer.js:566-570`,
       Phase 1 item 1.13): 21 us per send at 500 partitions, 26% of CPU. Index it once per task,
       ~6 lines.
