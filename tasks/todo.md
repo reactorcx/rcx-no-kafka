@@ -436,10 +436,11 @@ Same output, no behaviour change (order of work):
       ~5 lines. ShareConsumer already coalesces. Done: 1,000 partitions after a move, 100 -> 1
       request and 600 -> 8 ms a round; the refresh map lives for one `_fetch` round. Test: 25
       partitions of one topic and one of another refresh once each (was 26).
-- [ ] 3.11a zstd sizes its output from the frame's declared length before reading any data
+- [x] 3.11a zstd sizes its output from the frame's declared length before reading any data
       (`compression.js:207`): 14,000 truncated 12-byte frames take 6.56 s per round. Bound it by
       what the input can expand to (`Math.min(declared, 32768 * src.length)`; an RLE block turns
-      4 bytes into 128 KB at most): 0.57 s. One line; also covers share fetches.
+      4 bytes into 128 KB at most): 0.57 s. One line; also covers share fetches. Done: 6.56 ->
+      0.28 s a round. Test: a 12-byte frame declaring 16 MB allocates under 384 KB (was 16 MB).
 
 Behaviour changes (all four approved 2026-11-18):
 - [ ] 3.1 The fetch loop sleeps `idleTimeout` (1 s) after every round, a full one too
