@@ -26,7 +26,9 @@ export interface GroupConsumerOptions {
       */
     maxWaitTime?: number;
     /**
-      * idleTimeout - timeout between fetch calls.
+      * idleTimeout - delay before the next fetch after a
+      * round that delivered nothing, failed or errored;
+      * none after one that moved an offset forward.
       * 
       * defaults to 1000ms
       */

@@ -395,46 +395,158 @@ broker (same 10 failures as `master`), the live checks for 2.7, 2.9 and 2.13, re
 
 ## Phase 3 — Performance (never audited before)
 
-Consume:
-- [ ] 3.1 **[read]** The fetch loop sleeps `idleTimeout` (1000 ms) after every round, including a
-      full one (`lib/base_consumer.js:107-113`). Reviewer measured 1.0 MB/s at defaults against
-      36.5 MB/s without the sleep. Fix: no delay after a round that delivered messages.
-- [ ] 3.2 **[R]** Record decode is ~2 us/record, 74% of it in bin-protocol/lodash: 21 ms per
-      10,000 records, one synchronous stretch. Reviewer's direct reader (~35 lines in
-      `lib/protocol/common.js`) gave ~4 ms with identical output.
-- [ ] 3.3 **[read]** Request-level fetch `maxBytes` equals the per-partition value and partition
-      order never rotates (`lib/client.js:856` + 11 siblings): one backlogged partition can starve
-      the rest on that broker.
-- [ ] 3.4 RecordBatch header parse 8.8 us per batch (`lib/protocol/common.js:567-635`).
-- [ ] 3.5 A leadership change triggers N/10 sequential metadata refreshes per fetch round
-      (100 requests at 1,000 partitions). Fix: memoise per topic per round.
+Branch `fix-audit-phase3`, off `fix-audit-phase2` (PR #7) at 097c870. Re-checked 2026-11-18 by two
+agents with broker-free benchmarks (node 18.20.8, Apple M2 Max, medians of 7-31 runs; scripts in
+the session scratchpad, `p3-consume/` and `p3-produce/`, reused for before/after). All eleven
+audit items are still real; line numbers below are this branch's. The 2026-11-14 text is kept in
+git history (`git show 097c870:tasks/todo.md`).
 
-Produce:
-- [ ] 3.6 **[R]** CRC-32C is a byte-at-a-time loop at ~300 MB/s (`lib/protocol/misc/crc32c.js`):
-      33 of 47 ms for a 10 MB request. Reviewer's slicing-by-8 version was ~5x faster.
-- [ ] 3.7 **[R]** `Record.write` costs ~1.3 us/record regardless of size. Reviewer's direct write
-      reached 0.18 us with byte-identical output.
-- [ ] 3.8 **[read]** `batch.size` (16 KB) counts bytes across the whole producer, not per
-      partition (`lib/producer.js:321-325`), so multi-partition sends fragment into 1-2 record
-      batches. Reviewer measured 2.3x less CPU at 256 KB with 12 partitions.
-- [ ] 3.9 11-19 promises per message in leader lookup (`lib/producer.js:120-157`).
-- [ ] 3.10 Every protocol read/write goes through lodash-bound wrappers (bin-protocol `define`).
+Same output, no behaviour change (order of work):
+- [x] 3.6 CRC-32C is a byte-at-a-time loop (`lib/protocol/misc/crc32c.js`), 296 MB/s. It is 33 of
+      48 ms writing 10k x 1 KB, and 92% of verifying a 10.5 MB fetch (11% of a fetch round now,
+      ~40% after 3.2). Slicing-by-8 with an `Int32Array` table: ~1,690 MB/s. ~25 lines. Node 18
+      has no CRC-32C built in. Done: 296 -> 1,680 MB/s; verifying 10.5 MB 40.0 -> 9.3 ms; a 100k x
+      100 B batch write 176 -> 137 ms. Test: every length 0-70 at odd offsets against a bitwise CRC.
+- [x] 3.7 `Record.write` (`lib/protocol/common.js:541-595`) writes the body, then copies it back
+      to fit the varint length: 1.46 us/record at 100 B. Computing the length first: 0.18 us;
+      a 10k x 100 B batch 18.2 -> 5.6 ms. ~40 lines for 55; keep the Long path for a
+      `timestampDelta` outside int32. Done: 1.42 / 1.46 / 1.48 / 1.77 -> 0.16 / 0.19 / 0.20 / 0.52 us
+      per record at 10 B-10 KB; a 10k x 100 B batch 18.2 -> 2.5 ms with 3.6. A delta outside int32
+      is encoded by bin-protocol's SVarint64, so no old path is kept. Test: 546 field shapes against
+      the primitives' bytes (a broken slow path or null length fails it).
+- [x] 3.2 + 3.4 Decode reads every field through bin-protocol's lodash path lookups (3.10's cost):
+      `Record.read` (`common.js:480-541`) 2.5-2.8 us/record, 25-28 ms per 10k (7.6 us with two
+      headers); `RecordBatchHeader` 8.2 us per batch inside a response. Direct buffer reads: 4 ms
+      per 10k records, 0.46 us per header, identical output. ~35 + ~20 lines in `common.js`. Must
+      keep: null vs empty key/value/header value, Long `timestampDelta`, a truncated record
+      throwing, copied (not sliced) key/value, the CRC range and the batch truncation rules.
+      Done: `_decompressRecordBatches` on 10k records 25-28 -> 6.4 ms (two headers each: 76 ->
+      15.9 ms); a header 4.3 -> 0.50 us. `Record.read` returns `timestampDelta` as a Number (the
+      protocol isn't exported; client.js converted it). bin-protocol's per-call wrapper is ~2 ms
+      of the 6.4 (3.10). Tests: 40 records at every truncation against the primitives (a broken
+      64-bit path, empty header value or truncation check fails it); three header shapes.
+- [x] 3.12 (new) Each `send()` filters the whole linger task's result (`lib/producer.js:566-570`,
+      Phase 1 item 1.13): 21 us per send at 500 partitions, 26% of CPU. Index it once per task,
+      ~6 lines. Done: per-send overhead at 500 partitions 33.8 -> 3.3 us (256 KB batches) and
+      21.0 -> 13.9 us (16 KB, the rest is 3.8's fragmentation); 12 partitions 2.1 -> 1.4 us. Test:
+      result order and sends sharing a partition (passes before and after: same output).
+- [x] 3.5 After a leadership change each wave of `handlerConcurrency` partitions starts its own
+      metadata refresh (`base_consumer.js:149-151`, `_updateSubscription` `:169-186`): 100
+      requests per round at 1,000 partitions (600 ms at 5 ms RTT). One refresh per topic per round,
+      ~5 lines. ShareConsumer already coalesces. Done: 1,000 partitions after a move, 100 -> 1
+      request and 600 -> 8 ms a round; the refresh map lives for one `_fetch` round. Test: 25
+      partitions of one topic and one of another refresh once each (was 26).
+- [x] 3.11a zstd sizes its output from the frame's declared length before reading any data
+      (`compression.js:207`): 14,000 truncated 12-byte frames take 6.56 s per round. Bound it by
+      what the input can expand to (`Math.min(declared, 32768 * src.length)`; an RLE block turns
+      4 bytes into 128 KB at most): 0.57 s. One line; also covers share fetches. Done: 6.56 ->
+      0.28 s a round. Test: a 12-byte frame declaring 16 MB allocates under 384 KB (was 16 MB).
 
-- [ ] 3.11 (from 2.14) The decompression cap is per batch with no total: 8 gzip batches in one
-      1 MB partition fetch held ~1 GB. Budget `maxOutputSize` per partition response; needs
-      sequential decode in `_decompressRecordBatches` (today `Promise.all` spends the memory before
-      the truncation runs); later batches wait for the next fetch. Not a process bound (partitions x
-      cap). Share fetch and the legacy MessageSet path stay out. Measure throughput before/after.
-      Security review 2026-11-18, at 3fac5da: 12 valid 4 KB zstd batches inflating to 127 MB each
-      held 1.8 GB RSS; 230 over-cap zstd bombs (~1 MB) blocked the event loop 3.7 s per round;
-      14,000 truncated 12-byte zstd frames declaring the cap took 6.5 s per round (phase 1: 0.23 s,
-      because zstd's output buffer is now sized from the declared length before data is checked).
+Behaviour changes (all four approved 2026-11-18):
+- [x] 3.1 The fetch loop sleeps `idleTimeout` (1 s) after every round, a full one too
+      (`base_consumer.js:124-130`; ShareConsumer's copy `share_consumer.js:667-674`): 1.0 MB/s per
+      broker at defaults, 28.9 MB/s without it. Skip the sleep after a round that advanced an
+      offset with no partition error (ShareConsumer: delivered records, no error). Java's `poll()`
+      never sleeps; the broker waits (`maxWaitTime`). Users see more throughput and CPU while
+      there's a backlog; idle consumers and failing handlers wait as today. ~8 lines. Done: 1 MB
+      responses, stubbed broker, defaults: 1.0 -> 136 MB/s (with 3.2/3.4/3.6); a failing handler
+      still runs once a second. A round with any partition error waits, so a lasting error on one
+      partition keeps the old pace for all (no metadata refresh per round). README, typings and
+      CHANGELOG updated. Tests: delay 0 after a delivered round; 1000 after an idle, failed or
+      errored one, for both loops.
+- [x] 3.3 Partition order never rotates (`Object.keys(subscriptions)`, `base_consumer.js:49-67`)
+      and the request-level `maxBytes` equals the per-partition one (`client.js:1098` + 10): in a
+      broker-fill model 4 backlogged partitions got 40 MB / 0 / 0 / 0 over 40 rounds. Rotate the
+      starting partition each round, ~3 lines (Java moves a returned partition to the end). A
+      separate request-level limit is deferred (memory, PR #4). Done: each broker's list starts
+      one further each round (`_fetchRound`); the model's 40 / 0 / 0 / 0 MB is now 10 MB each.
+      Topics go in first-seen order, not object key order (a numeric topic name went first).
+      Test: four partitions on one broker each go first in turn, with another broker's alongside.
+- [x] 3.8 `batch.size` counts value bytes over the whole linger task (all topics and partitions,
+      `producer.js:549-553`), so multi-partition sends fragment: 186 ms CPU per 10k 1 KB sends at
+      12 partitions, 93 ms per partition. Count per topic:partition, as Java's `batch.size` is,
+      ~6 lines + README. Users see later flushes and requests up to partitions x `batch.size`
+      (Java caps a request at `max.request.size`; no cap added here). Done: 12 partitions, 10k
+      sends: 1 KB values 186 -> 44 ms CPU, 1.4 -> 16 records per partition batch; 100 B 67 -> 29
+      ms, 13.7 -> 151 (with 3.6/3.7/3.12). Still value bytes only, as before. Test: 12 partitions
+      under the limit wait for maxWait; one partition, or one topic's unassigned messages, at it
+      send at once.
+- [x] 3.11b The decompression cap is per batch with no total: 8 gzip batches of 127 MB in one
+      partition response hold 2.0 GB RSS (`client.js:2382, 2403` decode them with `Promise.all`).
+      Decode one batch at a time and stop once a partition has decoded `maxOutputSize` (the first
+      batch always decodes, so it progresses): 270 MB; valid data 9-14% slower. Later batches wait
+      for the next fetch, so after 3.1. Done: 8 gzip batches of 127 MB: 2.0 GB -> 262 MB RSS;
+      14,000 truncated zstd frames 0.28 s -> 17 ms a round, 230 bombs 3.4 s -> 23 ms (decoding
+      stops at the first failure). Cost, measured: decoding one partition's 8 gzip batches (8 MB)
+      7.9 -> 11.0 ms (+39%, not the 9-14% estimated), as async gzip no longer runs batches in
+      parallel; sync decompression and single-batch partitions are unaffected. Test: four batches
+      over a 2 KB cap deliver three, the fourth on the next fetch.
 
-Not recommended now: one fetch loop per leader (structural, touches the drain invariants);
-producer in-flight backpressure (behaviour change); fetch sessions (negligible below ~1,000
-partitions).
+Deferred or dropped:
+- 3.9 promises per message in leader lookup (now 13-21, `producer.js:176-212`): 0.3-0.7 us per
+  message saved, moderate risk (per-topic errors, promise-returning partitioners). Defer.
+- 3.10 bin-protocol's wrappers (lodash `_.get`/`_.set` on reads, a method name built per write):
+  patchable from `lib/protocol/index.js` but tied to its internals; 3.2/3.4/3.7 cover the hot
+  paths. Defer.
+- The response parse costs ~18 us per partition (17.8 ms for 1,000 partitions), the same lodash
+  cost one level up: re-measure after 3.2/3.4.
+- Two produce buffer copies (~3%): drop.
 
-Reviewer's combined produce prototypes: 2.7x-5.8x faster, 379 broker-free tests passing. Not re-run.
+Review (security, maintainability, style subagents) after the ten items:
+- [x] Maintainability, fixed: a BaseConsumer round where one partition moved forward and another's
+      handler failed fetched again at once (the poison handler ran 171 times in 200 ms); the
+      failure now sets the pace, as in ShareConsumer. No test covered a mixed round: both loops'
+      tests now do, and removing any of the `errored` flags fails one. The copied-not-sliced
+      property had no test (a key/value sliced from the response passed); it does now, and the
+      truncation sweep covers every `timestampDelta` shape. `RecordHeader` had no caller left:
+      deleted, with its round-trip tests (the Record tests cover headers). The `maxWait` docs
+      still said "total size".
+- [x] Maintainability, documented: a ShareConsumer handler that releases records itself and
+      resolves gets them back on the next, immediate fetch, as after Java's next `poll()`; the
+      README says so.
+- [x] Security, fixed: the same mixed-round failure (845 handler runs in 3 s); decoded keys,
+      values and header values under 4 KB were views into Node's shared 8 KB pool (3.2's
+      `allocUnsafe`), so `value.buffer` showed unrelated pooled data and a kept value pinned the
+      slab: `allocUnsafeSlow`, as before 3.2 (10k records 6.4 -> 7.9 ms). Test: each decoded
+      buffer owns its memory. 340,023 mutated records and 240,120 batches decode as on phase 2.
+- [x] Security, backlog (not regressions; the README states the limits): the 3.11b budget is per
+      partition and partitions decode concurrently (a 49 KB response of 40 partitions inflated
+      80 x the cap); share fetches decode each batch on its own, up to the cap each; a hostile
+      broker's compressed control batches decode before the budget (brokers write them
+      uncompressed). A per-response budget would cover the first two.
+- [x] Style, fixed: a todo item number in a lib comment, long `idleTimeout` typings lines, the
+      one-letter CRC table name, CHANGELOG entries longer than their neighbours.
+
+Codex review (gpt-6.2-sol, xhigh, Fast), round 1:
+- [x] P2 3.8 counted a topic's explicit-partition and unassigned messages in separate buckets,
+      but both can join one partition's batch: with `batch.size` 640 KiB, four 270 KiB sends to a
+      one-partition topic made a 1.08 MB batch the broker rejects (phase 2 sent 810 KB + 270 KB).
+      A Phase 3 regression, ~8 lines: unassigned bytes now count against the topic's fullest
+      partition. Test: 60 explicit + 60 unassigned bytes at `batch.size` 100 send at once.
+
+Codex round 2 (the last under the cap):
+- [x] P2 A partition's batch could pass `batch.size` by up to a record: other partitions' bytes no
+      longer flushed it early (`batch.size` 768 KiB: 600 + 600 KiB to one partition with 200 to
+      another made a 1.2 MiB batch the broker rejects).
+- [x] P2 Requests had no cap: 450 sends of 240 KiB over one broker's partitions made one
+      105.5 MiB request, past the broker's 100 MiB `socket.request.max.bytes`.
+      Decision (2026-11-18): add Java's two limits. A send that would take a batch past
+      `batch.size`, or the task past `MAX_REQUEST_BYTES` (1 MiB, Java's `max.request.size`
+      default), sends the queued task first; a lone larger send goes alone. ~25 lines
+      (`_countBytes`). Default 16 KB batching unchanged (151 records per partition batch at
+      100 B); at 256 KB `batch.size` requests stop at 1 MiB. Tests: rollover (two sends of 60
+      bytes to one partition at `batch.size` 100 go in separate requests), the cap (four 300 KB
+      sends: three, then one); round 1's test folded into the first.
+
+Tests: behaviour items (3.1, 3.3, 3.5, 3.8, 3.11a/b, 3.12's own-results) get a broker-free test
+written first and seen failing. Output-identical rewrites (3.2, 3.4, 3.6, 3.7) get equivalence
+tests on fixed vectors and randomised inputs against the old implementation, which pass before and
+after by design; the benchmark is their before/after evidence (approved 2026-11-18). One commit
+per item, in the order listed, 3.1 before 3.11b.
+
+Codex (gpt-6.2-sol, xhigh, Fast): Phase 2's acceptance bar with rule 1 reading "a Phase 3 item or a
+regression against `fix-audit-phase2`", and at most two rounds; further performance ideas go to a
+backlog.
 
 ## Interaction with open PRs
 
@@ -964,3 +1076,24 @@ Acceptance bar: a finding is fixed only if it passes all five rules, else it is 
   4.2.0 broker 839 pass with `master`'s 10 failures (at bd42a2b; 3fac5da re-ran the consumer and
   share integration tests, 48 pass and the baseline failure); live recreation 10/10, acks at
   `end()` applied, revoked-partition acks applied.
+
+### Phase 3 (2026-11-18), branch `fix-audit-phase3` (stacked on PR #7)
+
+- Items 3.1-3.8, 3.11a/b and 3.12 done, one commit each; 3.9, 3.10 and the response-parse cost
+  deferred, two produce buffer copies dropped (see the plan). Plan re-checked first by two agents
+  with baselines; the four behaviour changes approved before work began.
+- Measured broker-free (node 18.20.8): a consumer at defaults 1.0 -> 136 MB/s (stubbed broker);
+  decoding 10k records 26 -> 7.9 ms; `send()` of 10k x 100 B 27-30 -> 11 ms, of 10k x 1 KB 60 ->
+  17 ms; CRC-32C 296 -> 1,680 MB/s; 1,000 moved partitions 100 metadata requests -> 1; one
+  partition's 8 large gzip batches 2.0 GB -> 262 MB RSS. Cost: one partition's 8 gzip batches
+  decode 39% slower (sequential), and keys/values in their own memory add 1.5 ms per 10k records.
+- Reviews: one regression from 3.1 (a failing handler retried at fetch rate beside a progressing
+  partition) and one from 3.2 (small values in Node's shared pool), both fixed; budget gaps
+  across partitions and in share fetches to the backlog. Codex: two rounds, three findings, all
+  in 3.8; fixed by Java's batch rollover and 1 MiB request cap (user's decision).
+- `lib/` against `fix-audit-phase2`: +320 / -204 lines.
+- Verification: unit tests and test/10 384 pass; eslint 0 errors (7 pre-existing warnings); tsc
+  passes; full suite on a fresh 4.2.0 broker 854 pass with `master`'s 10 failures. One earlier
+  full run also timed out `read_committed consumer should skip aborted records` (1 s of waiting
+  in a 2 s test, on a slow broker); it passed 5 of 5 alone, twice on fresh brokers, and in the
+  confirming run.

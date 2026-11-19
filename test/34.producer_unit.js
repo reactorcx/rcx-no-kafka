@@ -1129,6 +1129,90 @@ describe('Producer (unit)', function () {
             });
         });
 
+        // a producer whose produceRequest records each request's value bytes per partition
+        function sizingProducer(size, sent) {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: size, maxWait: 50 } });
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'getTopicPartitions').returns(Promise.resolve([{ partitionId: 0, error: { code: 'NoError' } }]));
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                var bytes = {};
+                requests.forEach(function (r) { bytes[r.topic + ':' + r.partition] = (bytes[r.topic + ':' + r.partition] || 0) + r.message.value.length; });
+                sent.push(bytes);
+                return Promise.resolve(requests.map(function (r) { return { topic: r.topic, partition: r.partition, offset: 0 }; }));
+            });
+            return p;
+        }
+
+        it('should send a partition\'s batch before a record would take it past batch.size, as Java does', function () {
+            var sent = [], p = sizingProducer(100, sent), sends;
+            function send(partition, n) { return p.send({ topic: 't', partition: partition, message: { value: Buffer.alloc(n) } }); }
+            sends = [send(0, 60), send(1, 20), send(0, 60)]; // was one batch of 120 bytes for t:0
+            sends.push(p.send({ topic: 't', message: { value: Buffer.alloc(50) } })); // may join t:0's 60: also rolls over
+            sends.push(send(1, 150)); // larger than batch.size: sent on its own
+            return Promise.all(sends).then(function () {
+                sent.should.have.length(4); // in any order across partitions: a partitioned one waits for its lookup
+                sent.should.have.deep.members([{ 't:0': 60, 't:1': 20 }, { 't:0': 60 }, { 't:0': 50 }, { 't:1': 150 }]);
+            });
+        });
+
+        it('should send a request before it would pass 1 MiB, as Java\'s max.request.size', function () {
+            var sent = [], p = sizingProducer(4 * 1024 * 1024, sent), sends = [], i;
+            for (i = 0; i < 4; i++) { // 300 KB each, to 4 partitions: each batch well under batch.size
+                sends.push(p.send({ topic: 't', partition: i, message: { value: Buffer.alloc(300 * 1024) } }));
+            }
+            return promiseUtils.delay(20).then(function () {
+                sent.map(function (b) { return Object.keys(b).length; }).should.eql([3]); // the 4th waits: was 1.2 MB in one request
+                return Promise.all(sends);
+            });
+        });
+
+        it('should count batch.size per partition, as Java does, not across all of them', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 100, maxWait: 50 } });
+            var sent = [], v = Buffer.alloc(40), i, sends = [];
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'getTopicPartitions').returns(Promise.resolve([{ partitionId: 0, error: { code: 'NoError' } }]));
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                sent.push(requests.length);
+                return Promise.resolve(requests.map(function (r) { return { topic: r.topic, partition: r.partition, offset: 0 }; }));
+            });
+            for (i = 0; i < 12; i++) { // 480 bytes over 12 partitions: no partition's batch is full
+                sends.push(p.send({ topic: 't', partition: i, message: { value: v } }));
+            }
+            sends.push(p.send({ topic: 'u', message: { value: v } }), p.send({ topic: 'u', message: { value: v } })); // a topic's unassigned ones count together
+            return promiseUtils.delay(20).then(function () {
+                sent.should.eql([]); // was sent once 100 bytes were queued
+                sends.push(p.send({ topic: 't', partition: 3, message: { value: v } }));
+                sends.push(p.send({ topic: 'u', message: { value: Buffer.alloc(20) } })); // u reaches 100: sent now
+                return promiseUtils.delay(20);
+            }).then(function () {
+                sent.should.eql([16]);
+                return Promise.all(sends);
+            });
+        });
+
+        it('should keep the result order, and give sends sharing a partition its results', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 1024 * 1024, maxWait: 5 } });
+            function keys(r) { return r.map(function (x) { return x.topic + ':' + x.partition; }); }
+
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) { // one result per partition, reversed
+                var seen = {};
+                return Promise.resolve(requests.filter(function (r) {
+                    return !seen[r.topic + ':' + r.partition] && (seen[r.topic + ':' + r.partition] = true);
+                }).map(function (r) { return { topic: r.topic, partition: r.partition, offset: 0 }; }).reverse());
+            });
+
+            return Promise.all([
+                p.send([{ topic: 'a', partition: 0, message: { value: 'x' } }, { topic: 'b', partition: 1, message: { value: 'y' } }]),
+                p.send([{ topic: 'b', partition: 1, message: { value: 'z' } }, { topic: 'b', partition: 1, message: { value: 'w' } }]),
+                p.send({ topic: 'a', partition: 2, message: { value: 'v' } })
+            ]).then(function (r) {
+                keys(r[0]).should.eql(['b:1', 'a:0']); // the request's order, not the send's
+                keys(r[1]).should.eql(['b:1']);
+                keys(r[2]).should.eql(['a:2']);
+            });
+        });
+
         it('should not produce idempotently through a leader whose API versions are unknown', function () {
             var c = new Kafka.Producer({ clientId: 'producer-unit', idempotent: true }).client;
             c.producerId = 1;

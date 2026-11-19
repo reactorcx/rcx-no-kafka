@@ -45,6 +45,23 @@ describe('v0.11 Protocol Upgrade', function () {
             var b = crc32c(Buffer.from('kafka'));
             a.should.equal(b);
         });
+
+        it('should match a bit-at-a-time CRC-32C for every length and alignment', function () {
+            var big = Buffer.alloc(4096), i, n;
+            function bitwise(buf) {
+                var crc = -1, j, k;
+                for (j = 0; j < buf.length; j++) {
+                    crc ^= buf[j];
+                    for (k = 0; k < 8; k++) { crc = (crc >>> 1) ^ (0x82F63B78 & -(crc & 1)); }
+                }
+                return (crc ^ -1) >>> 0;
+            }
+            for (i = 0; i < big.length; i++) { big[i] = (i * 7919 + (i >> 3)) & 0xFF; }
+            for (n = 0; n <= 70; n++) { // short tails, and slices at odd offsets
+                crc32c(big.slice(n % 9, n % 9 + n)).should.equal(bitwise(big.slice(n % 9, n % 9 + n)));
+            }
+            crc32c(big.slice(3)).should.equal(bitwise(big.slice(3)));
+        });
     });
 
     //////////////////
@@ -127,45 +144,6 @@ describe('v0.11 Protocol Upgrade', function () {
             var buf = protocol.write().MessageAttributes({ codec: 7 }).result;
             var result = protocol.read(buf).MessageAttributes().result;
             result.codec.should.equal(7);
-        });
-    });
-
-    /////////////////////
-    // RecordHeader    //
-    /////////////////////
-
-    describe('RecordHeader', function () {
-        it('should round-trip a header with key and value', function () {
-            var buf = protocol.write().RecordHeader({
-                key: 'content-type',
-                value: Buffer.from('application/json')
-            }).result;
-
-            var result = protocol.read(buf).RecordHeader().result;
-            result.key.should.equal('content-type');
-            result.value.toString('utf8').should.equal('application/json');
-        });
-
-        it('should round-trip a header with empty value', function () {
-            var buf = protocol.write().RecordHeader({
-                key: 'trace-id',
-                value: null
-            }).result;
-
-            var result = protocol.read(buf).RecordHeader().result;
-            result.key.should.equal('trace-id');
-            should.equal(result.value, null);
-        });
-
-        it('should round-trip a header with empty key', function () {
-            var buf = protocol.write().RecordHeader({
-                key: '',
-                value: Buffer.from('val')
-            }).result;
-
-            var result = protocol.read(buf).RecordHeader().result;
-            result.key.should.equal('');
-            result.value.toString('utf8').should.equal('val');
         });
     });
 
@@ -257,6 +235,88 @@ describe('v0.11 Protocol Upgrade', function () {
             result.key.toString('utf8').should.equal('string-key');
             result.value.toString('utf8').should.equal('string-value');
         });
+
+        it('should write the bytes bin-protocol\'s varint primitives give, for every field shape', function () {
+            var keys = [null, undefined, '', 'k', 'ключ', Buffer.alloc(300, 1), 42];
+            var values = [null, Buffer.alloc(0), Buffer.alloc(200, 2), Buffer.alloc(20000, 3), 'v', 12345];
+            var deltas = [0, 1, -1, 63, 64, -65, 8191, 8192, 2147483647, -2147483648, 4294967296, -5e12, 1.5];
+            var headers = [undefined, [], [{ key: 'h1', value: 'x' }, { key: 'h2', value: null }, { value: Buffer.alloc(150, 4) }]];
+            var n, rec, expected;
+            // the body through the primitives, then its length in front
+            function reference(r) {
+                var body = protocol.write().Int8(r.attributes || 0).SVarint64(r.timestampDelta || 0).SVarint(r.offsetDelta || 0);
+                function field(v) {
+                    if (v === undefined || v === null) { body.SVarint(-1); } else {
+                        v = Buffer.isBuffer(v) ? v : Buffer.from(String(v), 'utf8');
+                        body.SVarint(v.length).raw(v);
+                    }
+                }
+                field(r.key);
+                field(r.value);
+                body.SVarint((r.headers || []).length);
+                (r.headers || []).forEach(function (h) { field(h.key || ''); field(h.value); });
+                body = Buffer.from(body.result);
+                return Buffer.concat([Buffer.from(protocol.write().SVarint(body.length).result), body]);
+            }
+            for (n = 0; n < 7 * 6 * 13; n++) {
+                rec = {
+                    attributes: 0, timestampDelta: deltas[n % 13], offsetDelta: n * 37,
+                    key: keys[n % 7], value: values[n % 6], headers: headers[n % 3]
+                };
+                expected = reference(rec);
+                Buffer.from(protocol.write().Record(rec).result).equals(expected).should.equal(true);
+            }
+        });
+
+        it('should read what bin-protocol\'s primitives read, and throw where they throw', function () {
+            var deltas = [0, -1, 8191, 2147483647, -2147483648, Math.pow(2, 48) - 1, Math.pow(2, 48), -Math.pow(2, 48), Math.pow(2, 60), -5e12];
+            var headers = [[], [{ key: '', value: '' }, { key: 'h', value: null }, { key: 'ключ', value: Buffer.alloc(150, 4) }]];
+            var n, buf, len, rec, expected;
+            // the old reader: the same fields through SVarint, SVarint64 and raw
+            function reference(b) {
+                var rd = protocol.read(b), r, i, h;
+                rd.SVarint('length').Int8('attributes').SVarint64('timestampDelta').SVarint('offsetDelta').SVarint('keyLength');
+                r = rd.result;
+                r.key = r.keyLength >= 0 ? rd.raw('key', r.keyLength).result.key : null;
+                r.valueLength = rd.SVarint('valueLength').result.valueLength;
+                r.value = r.valueLength >= 0 ? rd.raw('value', r.valueLength).result.value : null;
+                r.headerCount = rd.SVarint('headerCount').result.headerCount;
+                r.headers = [];
+                for (i = 0; i < r.headerCount; i++) {
+                    h = { keyLength: rd.SVarint('n').result.n };
+                    h.key = h.keyLength > 0 ? rd.raw('b', h.keyLength).result.b.toString('utf8') : '';
+                    h.valueLength = rd.SVarint('n').result.n;
+                    h.value = h.valueLength >= 0 ? rd.raw('b', h.valueLength).result.b : null;
+                    r.headers.push(h);
+                }
+                delete r.n;
+                delete r.b;
+                r.timestampDelta = r.timestampDelta.toNumber();
+                return r;
+            }
+            function direct(b) {
+                return protocol.read(b).Record().result;
+            }
+            function outcome(fn, b) {
+                try { return fn(b); } catch (e) { return e.constructor.name; }
+            }
+            for (n = 0; n < 40; n++) {
+                buf = Buffer.from(protocol.write().Record({
+                    attributes: 0, timestampDelta: deltas[n % 10], offsetDelta: n * 1001,
+                    key: [null, '', 'k', Buffer.alloc(200, 1)][n % 4], value: [Buffer.alloc(300, 2), null, ''][n % 3], headers: headers[n % 2]
+                }).result);
+                for (len = n < 10 ? 0 : buf.length; len <= buf.length; len++) { // every truncation, for each delta
+                    outcome(direct, buf.slice(0, len)).should.deep.equal(outcome(reference, buf.slice(0, len)));
+                }
+                rec = direct(buf);
+                expected = reference(buf);
+                buf.fill(0xEE); // copied, not sliced: a kept record must not hold the response alive
+                rec.should.deep.equal(expected);
+                [rec.key, rec.value].concat(rec.headers.map(function (h) { return h.value; })).forEach(function (b) {
+                    if (b && b.length) { b.buffer.byteLength.should.equal(b.length); } // not in the shared pool, beside others' data
+                });
+            }
+        });
     });
 
     /////////////////////
@@ -264,6 +324,25 @@ describe('v0.11 Protocol Upgrade', function () {
     /////////////////////
 
     describe('RecordBatch', function () {
+        it('should read each header field as bin-protocol\'s primitives do', function () {
+            var shapes = [
+                { baseOffset: 0, timestamp: 0 },
+                { baseOffset: 42, timestamp: 1500000000000, producerId: 7, producerEpoch: 3, baseSequence: 9, transactional: true },
+                { baseOffset: Math.pow(2, 40) + 5, timestamp: Math.pow(2, 45), producerId: Math.pow(2, 50), producerEpoch: 32767, baseSequence: 2147483647, codec: 0 }
+            ];
+            shapes.forEach(function (shape) {
+                var buf = Buffer.from(protocol.write().RecordBatch(Object.assign({ records: [{ value: 'a' }, { value: 'b' }] }, shape)).result);
+                var rd = protocol.read(buf), expected;
+                rd.KafkaOffset('baseOffset').Int32BE('batchLength').Int32BE('partitionLeaderEpoch').Int8('magic').UInt32BE('crc')
+                    .Int16BE('attributes').Int32BE('lastOffsetDelta').Int64BE('firstTimestamp').Int64BE('maxTimestamp')
+                    .Int64BE('producerId').Int16BE('producerEpoch').Int32BE('baseSequence').Int32BE('recordCount');
+                expected = rd.result;
+                ['firstTimestamp', 'maxTimestamp', 'producerId'].forEach(function (f) { expected[f] = expected[f].toNumber(); });
+                expected.codec = expected.attributes & 0x7;
+                protocol.read(buf).RecordBatch(null, buf.length).result[0].header.should.deep.equal(expected);
+            });
+        });
+
         it('should round-trip a batch with multiple records', function () {
             var timestamp = 1500000000000;
             var buf, batches, header, reader, rec0, rec1, rec2;

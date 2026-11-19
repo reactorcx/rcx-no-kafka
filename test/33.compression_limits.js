@@ -181,6 +181,18 @@ describe('Compression limits (unit)', function () {
         });
     });
 
+    it('should not size a zstd buffer from a declared length its input can\'t hold', function () {
+        var frame;
+        if (!zstd) { return this.skip(); }
+        frame = zstd.compress(Buffer.alloc(16 * 1024 * 1024)).subarray(0, 12); // declares 16 MB, then stops
+        return bytesAllocated(function () {
+            return compression.decompress(frame, 4).then(function () { throw new Error('decoded'); }, function (err) { return err; });
+        }).then(function (r) {
+            r.out.message.should.match(/Truncated/);
+            r.bytes.should.be.at.most(32768 * 12); // a block expands 4 bytes into 128 KB at most; was 16 MB
+        });
+    });
+
     it('should decode a zstd frame whose window fits a raised maxOutputSize', function () {
         var binding, cctx, out = Buffer.alloc(1 << 16), parts = [], r, src = Buffer.from('hello'), frame;
         if (!zstd) { return this.skip(); }
@@ -666,6 +678,22 @@ describe('Compression limits (unit)', function () {
             }).then(function (p) {
                 offsets(p).should.eql([0]);
                 should.not.exist(p.error);
+            });
+        });
+
+        it('should stop decoding a partition\'s batches once they inflate past maxOutputSize together', function () {
+            function gzipBatch(base) { // one record with a 1.5 KB value, under the cap alone
+                var records = Buffer.from(protocol.write().Record({ attributes: 0, timestampDelta: 0, offsetDelta: 0, key: null, value: Buffer.alloc(1536), headers: [] }).result);
+                return Buffer.from(protocol.write().RecordBatch({ baseOffset: base, codec: 1, compressedRecords: zlib.gzipSync(records), recordCount: 1 }).result);
+            }
+            compression.maxOutputSize = 2048;
+            return fetch(4, Buffer.concat([gzipBatch(0), smallBatch(1), gzipBatch(2), gzipBatch(3)])).then(function (p) {
+                offsets(p).should.eql([0, 1, 2]); // the cap was reached at 2: 3 waits for the next fetch
+                p.nextOffset.should.equal(3);
+                should.not.exist(p.error);
+                return fetch(4, gzipBatch(3));
+            }).then(function (p) {
+                offsets(p).should.eql([3]); // the first batch always decodes
             });
         });
     });
