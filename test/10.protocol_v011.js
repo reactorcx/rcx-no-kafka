@@ -312,6 +312,9 @@ describe('v0.11 Protocol Upgrade', function () {
                 expected = reference(buf);
                 buf.fill(0xEE); // copied, not sliced: a kept record must not hold the response alive
                 rec.should.deep.equal(expected);
+                [rec.key, rec.value].concat(rec.headers.map(function (h) { return h.value; })).forEach(function (b) {
+                    if (b && b.length) { b.buffer.byteLength.should.equal(b.length); } // not in the shared pool, beside others' data
+                });
             }
         });
     });

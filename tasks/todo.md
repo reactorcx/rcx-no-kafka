@@ -504,6 +504,16 @@ Review (security, maintainability, style subagents) after the ten items:
 - [x] Maintainability, documented: a ShareConsumer handler that releases records itself and
       resolves gets them back on the next, immediate fetch, as after Java's next `poll()`; the
       README says so.
+- [x] Security, fixed: the same mixed-round failure (845 handler runs in 3 s); decoded keys,
+      values and header values under 4 KB were views into Node's shared 8 KB pool (3.2's
+      `allocUnsafe`), so `value.buffer` showed unrelated pooled data and a kept value pinned the
+      slab: `allocUnsafeSlow`, as before 3.2 (10k records 6.4 -> 7.9 ms). Test: each decoded
+      buffer owns its memory. 340,023 mutated records and 240,120 batches decode as on phase 2.
+- [x] Security, backlog (not regressions; the README states the limits): the 3.11b budget is per
+      partition and partitions decode concurrently (a 49 KB response of 40 partitions inflated
+      80 x the cap); share fetches decode each batch on its own, up to the cap each; a hostile
+      broker's compressed control batches decode before the budget (brokers write them
+      uncompressed). A per-response budget would cover the first two.
 - [x] Style, fixed: a todo item number in a lib comment, long `idleTimeout` typings lines, the
       one-letter CRC table name, CHANGELOG entries longer than their neighbours.
 
