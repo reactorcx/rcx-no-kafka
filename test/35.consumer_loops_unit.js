@@ -95,6 +95,26 @@ describe('Consumer loops (unit)', function () {
                 c.subscriptions['t:0'].offset.should.equal(6);
             });
         });
+
+        it('should refresh a topic\'s metadata once per round, however many of its partitions moved', function () {
+            var c = new Kafka.SimpleConsumer({ clientId: 'unit-consumer', handlerConcurrency: 10 });
+            var results = [], i, p;
+            for (i = 0; i < 25; i++) {
+                c.subscriptions['t:' + i] = { topic: 't', partition: i, offset: 0, leader: 0, maxBytes: 1024, handler: noop };
+                results.push({ topic: 't', partition: i, error: errors.byName('NotLeaderForPartition') });
+            }
+            c.subscriptions['u:0'] = { topic: 'u', partition: 0, offset: 0, leader: 0, maxBytes: 1024, handler: noop };
+            results.push({ topic: 'u', partition: 0, error: errors.byName('LeaderNotAvailable') });
+            sinon.stub(c.client, 'fetchRequest').returns(Promise.resolve(results));
+            sinon.stub(c.client, 'updateMetadata').callsFake(function () { return Promise.resolve(); });
+            sinon.stub(c, 'subscribe').returns(Promise.resolve());
+            p = c._fetch();
+            c._closed = true;
+            return p.then(function () {
+                c.client.updateMetadata.args.should.eql([[['t']], [['u']]]); // was one per partition
+                c.subscribe.callCount.should.equal(26);
+            });
+        });
     });
 
     describe('heartbeat loop crash safety', function () {

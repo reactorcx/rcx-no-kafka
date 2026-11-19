@@ -430,10 +430,12 @@ Same output, no behaviour change (order of work):
       ~6 lines. Done: per-send overhead at 500 partitions 33.8 -> 3.3 us (256 KB batches) and
       21.0 -> 13.9 us (16 KB, the rest is 3.8's fragmentation); 12 partitions 2.1 -> 1.4 us. Test:
       result order and sends sharing a partition (passes before and after: same output).
-- [ ] 3.5 After a leadership change each wave of `handlerConcurrency` partitions starts its own
+- [x] 3.5 After a leadership change each wave of `handlerConcurrency` partitions starts its own
       metadata refresh (`base_consumer.js:149-151`, `_updateSubscription` `:169-186`): 100
       requests per round at 1,000 partitions (600 ms at 5 ms RTT). One refresh per topic per round,
-      ~5 lines. ShareConsumer already coalesces.
+      ~5 lines. ShareConsumer already coalesces. Done: 1,000 partitions after a move, 100 -> 1
+      request and 600 -> 8 ms a round; the refresh map lives for one `_fetch` round. Test: 25
+      partitions of one topic and one of another refresh once each (was 26).
 - [ ] 3.11a zstd sizes its output from the frame's declared length before reading any data
       (`compression.js:207`): 14,000 truncated 12-byte frames take 6.56 s per round. Bound it by
       what the input can expand to (`Math.min(declared, 32768 * src.length)`; an RLE block turns
