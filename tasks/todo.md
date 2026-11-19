@@ -471,11 +471,16 @@ Behaviour changes (all four approved 2026-11-18):
       ms, 13.7 -> 151 (with 3.6/3.7/3.12). Still value bytes only, as before. Test: 12 partitions
       under the limit wait for maxWait; one partition, or one topic's unassigned messages, at it
       send at once.
-- [ ] 3.11b The decompression cap is per batch with no total: 8 gzip batches of 127 MB in one
+- [x] 3.11b The decompression cap is per batch with no total: 8 gzip batches of 127 MB in one
       partition response hold 2.0 GB RSS (`client.js:2382, 2403` decode them with `Promise.all`).
       Decode one batch at a time and stop once a partition has decoded `maxOutputSize` (the first
       batch always decodes, so it progresses): 270 MB; valid data 9-14% slower. Later batches wait
-      for the next fetch, so after 3.1.
+      for the next fetch, so after 3.1. Done: 8 gzip batches of 127 MB: 2.0 GB -> 262 MB RSS;
+      14,000 truncated zstd frames 0.28 s -> 17 ms a round, 230 bombs 3.4 s -> 23 ms (decoding
+      stops at the first failure). Cost, measured: decoding one partition's 8 gzip batches (8 MB)
+      7.9 -> 11.0 ms (+39%, not the 9-14% estimated), as async gzip no longer runs batches in
+      parallel; sync decompression and single-batch partitions are unaffected. Test: four batches
+      over a 2 KB cap deliver three, the fourth on the next fetch.
 
 Deferred or dropped:
 - 3.9 promises per message in leader lookup (now 13-21, `producer.js:176-212`): 0.3-0.7 us per

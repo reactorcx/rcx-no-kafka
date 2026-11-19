@@ -680,5 +680,21 @@ describe('Compression limits (unit)', function () {
                 should.not.exist(p.error);
             });
         });
+
+        it('should stop decoding a partition\'s batches once they inflate past maxOutputSize together', function () {
+            function gzipBatch(base) { // one record with a 1.5 KB value, under the cap alone
+                var records = Buffer.from(protocol.write().Record({ attributes: 0, timestampDelta: 0, offsetDelta: 0, key: null, value: Buffer.alloc(1536), headers: [] }).result);
+                return Buffer.from(protocol.write().RecordBatch({ baseOffset: base, codec: 1, compressedRecords: zlib.gzipSync(records), recordCount: 1 }).result);
+            }
+            compression.maxOutputSize = 2048;
+            return fetch(4, Buffer.concat([gzipBatch(0), smallBatch(1), gzipBatch(2), gzipBatch(3)])).then(function (p) {
+                offsets(p).should.eql([0, 1, 2]); // the cap was reached at 2: 3 waits for the next fetch
+                p.nextOffset.should.equal(3);
+                should.not.exist(p.error);
+                return fetch(4, gzipBatch(3));
+            }).then(function (p) {
+                offsets(p).should.eql([3]); // the first batch always decodes
+            });
+        });
     });
 });

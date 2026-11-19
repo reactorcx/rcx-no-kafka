@@ -19,6 +19,7 @@
 - TLS `cert`, `key` and `ca` are each read as a file path unless they hold a PEM header line, so a file cert can go with an inline key
 
 ### Fixed
+- A Simple or Group consumer decodes a partition's batches one at a time and stops once they have inflated to `maxOutputSize` together (the cap was per batch: one partition's fetch of batches each under it could hold gigabytes); a truncated zstd frame no longer allocates the size it declares
 - Compressed legacy (magic 1) messages are delivered at their absolute offsets; their inner offsets were relative
 - `DefaultPartitioner` hashed a number key as that many zero bytes, and threw on negative, boolean and object keys
 - `HashCRC32Partitioner` sent every number key to partition 0 and threw on Buffer keys
