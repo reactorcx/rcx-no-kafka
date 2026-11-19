@@ -517,6 +517,13 @@ Review (security, maintainability, style subagents) after the ten items:
 - [x] Style, fixed: a todo item number in a lib comment, long `idleTimeout` typings lines, the
       one-letter CRC table name, CHANGELOG entries longer than their neighbours.
 
+Codex review (gpt-6.2-sol, xhigh, Fast), round 1:
+- [x] P2 3.8 counted a topic's explicit-partition and unassigned messages in separate buckets,
+      but both can join one partition's batch: with `batch.size` 640 KiB, four 270 KiB sends to a
+      one-partition topic made a 1.08 MB batch the broker rejects (phase 2 sent 810 KB + 270 KB).
+      A Phase 3 regression, ~8 lines: unassigned bytes now count against the topic's fullest
+      partition. Test: 60 explicit + 60 unassigned bytes at `batch.size` 100 send at once.
+
 Tests: behaviour items (3.1, 3.3, 3.5, 3.8, 3.11a/b, 3.12's own-results) get a broker-free test
 written first and seen failing. Output-identical rewrites (3.2, 3.4, 3.6, 3.7) get equivalence
 tests on fixed vectors and randomised inputs against the old implementation, which pass before and

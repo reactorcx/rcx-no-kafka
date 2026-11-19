@@ -1129,6 +1129,23 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should count a topic\'s unassigned messages against each of its partitions\' batches', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 100, maxWait: 50 } });
+            var sent = [], sends;
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'getTopicPartitions').returns(Promise.resolve([{ partitionId: 0, error: { code: 'NoError' } }]));
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
+                sent.push(requests.length);
+                return Promise.resolve(requests.map(function (r) { return { topic: r.topic, partition: r.partition, offset: 0 }; }));
+            });
+            // both may land in partition 0's batch: 120 bytes there, past batch.size
+            sends = [p.send({ topic: 't', partition: 0, message: { value: Buffer.alloc(60) } }), p.send({ topic: 't', message: { value: Buffer.alloc(60) } })];
+            return promiseUtils.delay(20).then(function () {
+                sent.should.eql([2]); // was held for maxWait, counted in separate buckets
+                return Promise.all(sends);
+            });
+        });
+
         it('should count batch.size per partition, as Java does, not across all of them', function () {
             var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 100, maxWait: 50 } });
             var sent = [], v = Buffer.alloc(40), i, sends = [];
