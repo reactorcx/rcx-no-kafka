@@ -45,6 +45,23 @@ describe('v0.11 Protocol Upgrade', function () {
             var b = crc32c(Buffer.from('kafka'));
             a.should.equal(b);
         });
+
+        it('should match a bit-at-a-time CRC-32C for every length and alignment', function () {
+            var big = Buffer.alloc(4096), i, n;
+            function bitwise(buf) {
+                var crc = -1, j, k;
+                for (j = 0; j < buf.length; j++) {
+                    crc ^= buf[j];
+                    for (k = 0; k < 8; k++) { crc = (crc >>> 1) ^ (0x82F63B78 & -(crc & 1)); }
+                }
+                return (crc ^ -1) >>> 0;
+            }
+            for (i = 0; i < big.length; i++) { big[i] = (i * 7919 + (i >> 3)) & 0xFF; }
+            for (n = 0; n <= 70; n++) { // short tails, and slices at odd offsets
+                crc32c(big.slice(n % 9, n % 9 + n)).should.equal(bitwise(big.slice(n % 9, n % 9 + n)));
+            }
+            crc32c(big.slice(3)).should.equal(bitwise(big.slice(3)));
+        });
     });
 
     //////////////////

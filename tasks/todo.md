@@ -402,10 +402,11 @@ audit items are still real; line numbers below are this branch's. The 2026-11-14
 git history (`git show 097c870:tasks/todo.md`).
 
 Same output, no behaviour change (order of work):
-- [ ] 3.6 CRC-32C is a byte-at-a-time loop (`lib/protocol/misc/crc32c.js`), 296 MB/s. It is 33 of
+- [x] 3.6 CRC-32C is a byte-at-a-time loop (`lib/protocol/misc/crc32c.js`), 296 MB/s. It is 33 of
       48 ms writing 10k x 1 KB, and 92% of verifying a 10.5 MB fetch (11% of a fetch round now,
       ~40% after 3.2). Slicing-by-8 with an `Int32Array` table: ~1,690 MB/s. ~25 lines. Node 18
-      has no CRC-32C built in.
+      has no CRC-32C built in. Done: 296 -> 1,680 MB/s; verifying 10.5 MB 40.0 -> 9.3 ms; a 100k x
+      100 B batch write 176 -> 137 ms. Test: every length 0-70 at odd offsets against a bitwise CRC.
 - [ ] 3.7 `Record.write` (`lib/protocol/common.js:541-595`) writes the body, then copies it back
       to fit the varint length: 1.46 us/record at 100 B. Computing the length first: 0.18 us;
       a 10k x 100 B batch 18.2 -> 5.6 ms. ~40 lines for 55; keep the Long path for a
