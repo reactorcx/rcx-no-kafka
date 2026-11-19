@@ -454,11 +454,14 @@ Behaviour changes (all four approved 2026-11-18):
       partition keeps the old pace for all (no metadata refresh per round). README, typings and
       CHANGELOG updated. Tests: delay 0 after a delivered round; 1000 after an idle, failed or
       errored one, for both loops.
-- [ ] 3.3 Partition order never rotates (`Object.keys(subscriptions)`, `base_consumer.js:49-67`)
+- [x] 3.3 Partition order never rotates (`Object.keys(subscriptions)`, `base_consumer.js:49-67`)
       and the request-level `maxBytes` equals the per-partition one (`client.js:1098` + 10): in a
       broker-fill model 4 backlogged partitions got 40 MB / 0 / 0 / 0 over 40 rounds. Rotate the
       starting partition each round, ~3 lines (Java moves a returned partition to the end). A
-      separate request-level limit is deferred (memory, PR #4).
+      separate request-level limit is deferred (memory, PR #4). Done: each broker's list starts
+      one further each round (`_fetchRound`); the model's 40 / 0 / 0 / 0 MB is now 10 MB each.
+      Topics go in first-seen order, not object key order (a numeric topic name went first).
+      Test: four partitions on one broker each go first in turn, with another broker's alongside.
 - [ ] 3.8 `batch.size` counts value bytes over the whole linger task (all topics and partitions,
       `producer.js:549-553`), so multi-partition sends fragment: 186 ms CPU per 10k 1 KB sends at
       12 partitions, 93 ms per partition. Count per topic:partition, as Java's `batch.size` is,

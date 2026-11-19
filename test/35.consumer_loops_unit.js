@@ -129,6 +129,23 @@ describe('Consumer loops (unit)', function () {
             });
         }
 
+        it('should start each fetch at the next partition, so a backlogged one can\'t take every response', function () {
+            var c = new Kafka.SimpleConsumer({ clientId: 'unit-consumer' }), firsts = [], i, p = Promise.resolve();
+            for (i = 0; i < 4; i++) {
+                c.subscriptions['t:' + i] = { topic: 't', partition: i, offset: 0, leader: 0, maxBytes: 1024, handler: noop };
+            }
+            c.subscriptions['u:0'] = { topic: 'u', partition: 0, offset: 0, leader: 1, maxBytes: 1024, handler: noop };
+            sinon.stub(c.client, 'fetchRequest').callsFake(function (data) {
+                firsts.push(data[0][0].partitions[0].partition + '/' + data[0][0].partitions.length);
+                return Promise.resolve([]);
+            });
+            c._closed = true; // one fetch per call
+            for (i = 0; i < 6; i++) { p = p.then(function () { return c._fetch(); }); }
+            return p.then(function () {
+                firsts.should.eql(['0/4', '1/4', '2/4', '3/4', '0/4', '1/4']); // each partition first in turn
+            });
+        });
+
         it('should fetch again at once after a round that delivered records', function () {
             return nextDelay(makeConsumer(noop)).then(function (d) { d.should.equal(0); });
         });

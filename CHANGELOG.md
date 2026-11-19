@@ -1,6 +1,7 @@
 ## Unreleased
 
 ### Changed
+- Each fetch starts at the next of a broker's partitions, so one backlogged partition no longer takes every response (as Java rotates them)
 - Consumers fetch again at once after a round whose handlers moved an offset forward, as Java's `poll()` does; `idleTimeout` now applies only after a round that delivered nothing, failed or hit an error (it capped a consumer at one response per second per broker)
 - Partitioners hash a key that is neither a Buffer nor a string as `String(key)`, the bytes sent — a number key moves partition (README shows how to keep the old mapping)
 - During a rolling upgrade old and new producers split a number key across two partitions; on compacted topics the old partition keeps its last value
