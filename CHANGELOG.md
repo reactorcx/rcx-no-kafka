@@ -1,7 +1,7 @@
 ## Unreleased
 
 ### Changed
-- `batch.size` counts the bytes queued per partition, as Java's does, not across all partitions; a request can hold `batch.size` per partition
+- `batch.size` counts the bytes queued per partition, as Java's does, not across all partitions; as in Java, a batch never grows past it and a request past 1 MiB (`max.request.size`) but for a single larger send
 - Each fetch starts at the next of a broker's partitions, so one backlogged partition no longer takes every response (as Java rotates them)
 - Consumers fetch again at once after a round whose handlers moved an offset forward, as Java's `poll()` does; `idleTimeout` applies only after an idle, failed or errored round
 - Partitioners hash a key that is neither a Buffer nor a string as `String(key)`, the bytes sent — a number key moves partition (README shows how to keep the old mapping)

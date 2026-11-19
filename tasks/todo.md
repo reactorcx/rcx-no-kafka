@@ -524,6 +524,20 @@ Codex review (gpt-6.2-sol, xhigh, Fast), round 1:
       A Phase 3 regression, ~8 lines: unassigned bytes now count against the topic's fullest
       partition. Test: 60 explicit + 60 unassigned bytes at `batch.size` 100 send at once.
 
+Codex round 2 (the last under the cap):
+- [x] P2 A partition's batch could pass `batch.size` by up to a record: other partitions' bytes no
+      longer flushed it early (`batch.size` 768 KiB: 600 + 600 KiB to one partition with 200 to
+      another made a 1.2 MiB batch the broker rejects).
+- [x] P2 Requests had no cap: 450 sends of 240 KiB over one broker's partitions made one
+      105.5 MiB request, past the broker's 100 MiB `socket.request.max.bytes`.
+      Decision (2026-11-18): add Java's two limits. A send that would take a batch past
+      `batch.size`, or the task past `MAX_REQUEST_BYTES` (1 MiB, Java's `max.request.size`
+      default), sends the queued task first; a lone larger send goes alone. ~25 lines
+      (`_countBytes`). Default 16 KB batching unchanged (151 records per partition batch at
+      100 B); at 256 KB `batch.size` requests stop at 1 MiB. Tests: rollover (two sends of 60
+      bytes to one partition at `batch.size` 100 go in separate requests), the cap (four 300 KB
+      sends: three, then one); round 1's test folded into the first.
+
 Tests: behaviour items (3.1, 3.3, 3.5, 3.8, 3.11a/b, 3.12's own-results) get a broker-free test
 written first and seen failing. Output-identical rewrites (3.2, 3.4, 3.6, 3.7) get equivalence
 tests on fixed vectors and randomised inputs against the old implementation, which pass before and

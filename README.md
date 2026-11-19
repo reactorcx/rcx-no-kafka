@@ -277,7 +277,7 @@ Other producer methods:
 * `compressionLevel` - compression level, defaults to -1 (codec default). Gzip: 0-9, Zstd: 1-22, LZ4: >= 0 enables high compression, Snappy: ignored
 * `rebootstrap` - boolean, re-resolve bootstrap servers when all known brokers are unavailable (KIP-899), defaults to `false`
 * `batch` - control batching (grouping) of requests
-  * `size` - group messages together until the values queued for one partition reach this many bytes (as Java's `batch.size`, per partition; a topic's messages without a partition count against each of its partitions, since any may take them), then send everything queued, defaults to 16384 bytes. A request can hold up to this much per partition. Set to 0 to disable batching.
+  * `size` - group messages together until the values queued for one partition reach this many bytes (as Java's `batch.size`, per partition; a topic's messages without a partition count against each of its partitions, since any may take them), then send everything queued, defaults to 16384 bytes. As in Java, a send that would take a partition's batch past this goes in the next request, as does one that would take a request past 1 MiB of values (Java's `max.request.size` default); a single larger send goes on its own. Set to 0 to disable batching.
   * `maxWait` - send grouped messages after this amount of milliseconds expire even if no partition's queued messages have reached `batch.size` yet, defaults to 10ms. Set to 0 to disable batching.
 * `asyncCompression` - boolean, use asynchronouse compression instead of synchronous, defaults to `true`
 * `connectionTimeout` - timeout for establishing connection to Kafka in milliseconds, defaults to 3000ms

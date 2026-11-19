@@ -1129,19 +1129,39 @@ describe('Producer (unit)', function () {
             });
         });
 
-        it('should count a topic\'s unassigned messages against each of its partitions\' batches', function () {
-            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 100, maxWait: 50 } });
-            var sent = [], sends;
+        // a producer whose produceRequest records each request's value bytes per partition
+        function sizingProducer(size, sent) {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: size, maxWait: 50 } });
             sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
             sinon.stub(p.client, 'getTopicPartitions').returns(Promise.resolve([{ partitionId: 0, error: { code: 'NoError' } }]));
             sinon.stub(p.client, 'produceRequest').callsFake(function (requests) {
-                sent.push(requests.length);
+                var bytes = {};
+                requests.forEach(function (r) { bytes[r.topic + ':' + r.partition] = (bytes[r.topic + ':' + r.partition] || 0) + r.message.value.length; });
+                sent.push(bytes);
                 return Promise.resolve(requests.map(function (r) { return { topic: r.topic, partition: r.partition, offset: 0 }; }));
             });
-            // both may land in partition 0's batch: 120 bytes there, past batch.size
-            sends = [p.send({ topic: 't', partition: 0, message: { value: Buffer.alloc(60) } }), p.send({ topic: 't', message: { value: Buffer.alloc(60) } })];
+            return p;
+        }
+
+        it('should send a partition\'s batch before a record would take it past batch.size, as Java does', function () {
+            var sent = [], p = sizingProducer(100, sent), sends;
+            function send(partition, n) { return p.send({ topic: 't', partition: partition, message: { value: Buffer.alloc(n) } }); }
+            sends = [send(0, 60), send(1, 20), send(0, 60)]; // was one batch of 120 bytes for t:0
+            sends.push(p.send({ topic: 't', message: { value: Buffer.alloc(50) } })); // may join t:0's 60: also rolls over
+            sends.push(send(1, 150)); // larger than batch.size: sent on its own
+            return Promise.all(sends).then(function () {
+                sent.should.have.length(4); // in any order across partitions: a partitioned one waits for its lookup
+                sent.should.have.deep.members([{ 't:0': 60, 't:1': 20 }, { 't:0': 60 }, { 't:0': 50 }, { 't:1': 150 }]);
+            });
+        });
+
+        it('should send a request before it would pass 1 MiB, as Java\'s max.request.size', function () {
+            var sent = [], p = sizingProducer(4 * 1024 * 1024, sent), sends = [], i;
+            for (i = 0; i < 4; i++) { // 300 KB each, to 4 partitions: each batch well under batch.size
+                sends.push(p.send({ topic: 't', partition: i, message: { value: Buffer.alloc(300 * 1024) } }));
+            }
             return promiseUtils.delay(20).then(function () {
-                sent.should.eql([2]); // was held for maxWait, counted in separate buckets
+                sent.map(function (b) { return Object.keys(b).length; }).should.eql([3]); // the 4th waits: was 1.2 MB in one request
                 return Promise.all(sends);
             });
         });
