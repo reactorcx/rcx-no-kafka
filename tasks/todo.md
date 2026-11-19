@@ -443,12 +443,17 @@ Same output, no behaviour change (order of work):
       0.28 s a round. Test: a 12-byte frame declaring 16 MB allocates under 384 KB (was 16 MB).
 
 Behaviour changes (all four approved 2026-11-18):
-- [ ] 3.1 The fetch loop sleeps `idleTimeout` (1 s) after every round, a full one too
+- [x] 3.1 The fetch loop sleeps `idleTimeout` (1 s) after every round, a full one too
       (`base_consumer.js:124-130`; ShareConsumer's copy `share_consumer.js:667-674`): 1.0 MB/s per
       broker at defaults, 28.9 MB/s without it. Skip the sleep after a round that advanced an
       offset with no partition error (ShareConsumer: delivered records, no error). Java's `poll()`
       never sleeps; the broker waits (`maxWaitTime`). Users see more throughput and CPU while
-      there's a backlog; idle consumers and failing handlers wait as today. ~8 lines.
+      there's a backlog; idle consumers and failing handlers wait as today. ~8 lines. Done: 1 MB
+      responses, stubbed broker, defaults: 1.0 -> 136 MB/s (with 3.2/3.4/3.6); a failing handler
+      still runs once a second. A round with any partition error waits, so a lasting error on one
+      partition keeps the old pace for all (no metadata refresh per round). README, typings and
+      CHANGELOG updated. Tests: delay 0 after a delivered round; 1000 after an idle, failed or
+      errored one, for both loops.
 - [ ] 3.3 Partition order never rotates (`Object.keys(subscriptions)`, `base_consumer.js:49-67`)
       and the request-level `maxBytes` equals the per-partition one (`client.js:1098` + 10): in a
       broker-fill model 4 backlogged partitions got 40 MB / 0 / 0 / 0 over 40 rounds. Rotate the

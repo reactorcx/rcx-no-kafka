@@ -384,7 +384,7 @@ consumer.fetchOffset([
 * `isolationLevel` - controls visibility of transactional messages. `0` (default) for `read_uncommitted`, `1` for `read_committed`. Requires Kafka 0.11+
 * `groupId` - group ID for comitting and fetching offsets. Defaults to 'no-kafka-group-v0'
 * `maxWaitTime` - maximum amount of time in milliseconds to block waiting if insufficient data is available at the time the fetch request is issued, defaults to 100ms
-* `idleTimeout` - timeout between fetch calls, defaults to 1000ms
+* `idleTimeout` - delay before the next fetch after a round that delivered nothing, failed in a handler or hit an error, defaults to 1000ms. After a round whose handlers moved an offset forward, the next fetch starts at once (the broker waits up to `maxWaitTime` when there is nothing new)
 * `minBytes` - minimum number of bytes to wait from Kafka before returning the fetch call, defaults to 1 byte
 * `maxBytes` - maximum size of messages in a fetch response, defaults to 1MB
 * `clientId` - ID of this client, defaults to 'no-kafka-client'
@@ -500,7 +500,7 @@ This is a client-side-only feature and works with any Kafka broker version suppo
 * `isolationLevel` - controls visibility of transactional messages. `0` (default) for `read_uncommitted`, `1` for `read_committed`. Requires Kafka 0.11+
 * `groupId` - group ID for comitting and fetching offsets. Defaults to 'no-kafka-group-v0.9'
 * `maxWaitTime` - maximum amount of time in milliseconds to block waiting if insufficient data is available at the time the fetch request is issued, defaults to 100ms
-* `idleTimeout` - timeout between fetch calls, defaults to 1000ms
+* `idleTimeout` - delay before the next fetch after a round that delivered nothing, failed in a handler or hit an error, defaults to 1000ms. After a round whose handlers moved an offset forward, the next fetch starts at once (the broker waits up to `maxWaitTime` when there is nothing new)
 * `minBytes` - minimum number of bytes to wait from Kafka before returning the fetch call, defaults to 1 byte
 * `maxBytes` - maximum size of messages in a fetch response
 * `clientId` - ID of this client, defaults to 'no-kafka-client'

@@ -115,6 +115,37 @@ describe('Consumer loops (unit)', function () {
                 c.subscribe.callCount.should.equal(26);
             });
         });
+
+        // the delay before the next fetch after one round: none while a handler moves an offset
+        // forward (as Java's poll()), idleTimeout after an idle, failed or errored round
+        function nextDelay(c) {
+            var timer = sinon.spy(global, 'setTimeout');
+            return c._fetch().finally(function () {
+                timer.restore();
+                c._closed = true;
+                clearTimeout(c._fetchTimeout);
+            }).then(function () {
+                return timer.args.filter(function (a) { return a[1] !== undefined && typeof a[0] === 'function'; }).pop()[1];
+            });
+        }
+
+        it('should fetch again at once after a round that delivered records', function () {
+            return nextDelay(makeConsumer(noop)).then(function (d) { d.should.equal(0); });
+        });
+
+        it('should wait idleTimeout after a round with nothing delivered, a failed handler or an error', function () {
+            var idle = makeConsumer(noop), failed = makeConsumer(function () { return Promise.reject(new Error('db down')); });
+            var errored = makeConsumer(noop);
+            var delays = [];
+            idle.client.fetchRequest.returns(Promise.resolve([{ topic: 't', partition: 0, messageSet: [], highwaterMarkOffset: 5 }]));
+            errored.client.fetchRequest.returns(Promise.resolve([{ topic: 't', partition: 0, error: errors.byName('NotLeaderForPartition') }]));
+            sinon.stub(errored, '_updateSubscription').returns(Promise.resolve());
+            function record(d) { delays.push(d); }
+            return nextDelay(idle).then(record).then(function () { return nextDelay(failed); }).then(record)
+            .then(function () { return nextDelay(errored); }).then(record).then(function () {
+                delays.should.eql([1000, 1000, 1000]);
+            });
+        });
     });
 
     describe('heartbeat loop crash safety', function () {
@@ -550,6 +581,35 @@ describe('Consumer loops (unit)', function () {
         }
 
         function record(offset) { return { offset: offset, message: { value: Buffer.from('v') } }; }
+
+        it('should fetch again at once after handled records, and wait idleTimeout otherwise', function () {
+            var delivered = { messageSet: [record(5)], acquiredRecords: [{ firstOffset: 5, lastOffset: 5, deliveryCount: 1 }] };
+            var cases = [
+                [delivered, noop, 0],
+                [delivered, function () { return Promise.reject(new Error('db down')); }, 1000], // released: redelivered
+                [{ messageSet: [], acquiredRecords: [] }, noop, 1000],
+                [{ error: errors.byName('NotLeaderForPartition'), messageSet: [] }, noop, 1000]
+            ];
+            return cases.reduce(function (p, c) {
+                return p.then(function () {
+                    var sc = makeShareConsumer(), timer;
+                    sc.client.logger = { logLevel: 0 };
+                    sinon.stub(sc, '_partitionError').returns(null);
+                    sinon.stub(sc, 'acknowledge').returns(Promise.resolve());
+                    timer = sinon.spy(global, 'setTimeout');
+                    sinon.stub(sc, '_buildFetchRequests').returns({ 0: [{ topicName: 't', partitions: [{ partition: 0 }] }] });
+                    sinon.stub(sc.client, 'shareFetchRequest').returns(Promise.resolve([Object.assign({ topic: 't', topicId: 'id-1', partition: 0, leader: '0' }, c[0])]));
+                    sc._handler = c[1];
+                    return sc._fetch().finally(function () {
+                        timer.restore();
+                        sc._closed = true;
+                        clearTimeout(sc._fetchTimeout);
+                    }).then(function () {
+                        timer.args.filter(function (a) { return a[1] !== undefined; }).pop()[1].should.equal(c[2]);
+                    });
+                });
+            }, Promise.resolve());
+        });
 
         it('should forget a partition that moved to another broker, and ignore the old broker\'s reply for it', function () {
             var sc = makeShareConsumer(), calls = [], handled = [], round = 0;
