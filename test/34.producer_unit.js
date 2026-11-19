@@ -1129,6 +1129,29 @@ describe('Producer (unit)', function () {
             });
         });
 
+        it('should keep the result order, and give sends sharing a partition its results', function () {
+            var p = new Kafka.Producer({ clientId: 'producer-unit', batch: { size: 1024 * 1024, maxWait: 5 } });
+            function keys(r) { return r.map(function (x) { return x.topic + ':' + x.partition; }); }
+
+            sinon.stub(p.client, 'findLeader').returns(Promise.resolve(0));
+            sinon.stub(p.client, 'produceRequest').callsFake(function (requests) { // one result per partition, reversed
+                var seen = {};
+                return Promise.resolve(requests.filter(function (r) {
+                    return !seen[r.topic + ':' + r.partition] && (seen[r.topic + ':' + r.partition] = true);
+                }).map(function (r) { return { topic: r.topic, partition: r.partition, offset: 0 }; }).reverse());
+            });
+
+            return Promise.all([
+                p.send([{ topic: 'a', partition: 0, message: { value: 'x' } }, { topic: 'b', partition: 1, message: { value: 'y' } }]),
+                p.send([{ topic: 'b', partition: 1, message: { value: 'z' } }, { topic: 'b', partition: 1, message: { value: 'w' } }]),
+                p.send({ topic: 'a', partition: 2, message: { value: 'v' } })
+            ]).then(function (r) {
+                keys(r[0]).should.eql(['b:1', 'a:0']); // the request's order, not the send's
+                keys(r[1]).should.eql(['b:1']);
+                keys(r[2]).should.eql(['a:2']);
+            });
+        });
+
         it('should not produce idempotently through a leader whose API versions are unknown', function () {
             var c = new Kafka.Producer({ clientId: 'producer-unit', idempotent: true }).client;
             c.producerId = 1;

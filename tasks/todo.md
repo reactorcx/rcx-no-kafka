@@ -425,9 +425,11 @@ Same output, no behaviour change (order of work):
       protocol isn't exported; client.js converted it). bin-protocol's per-call wrapper is ~2 ms
       of the 6.4 (3.10). Tests: 40 records at every truncation against the primitives (a broken
       64-bit path, empty header value or truncation check fails it); three header shapes.
-- [ ] 3.12 (new) Each `send()` filters the whole linger task's result (`lib/producer.js:566-570`,
+- [x] 3.12 (new) Each `send()` filters the whole linger task's result (`lib/producer.js:566-570`,
       Phase 1 item 1.13): 21 us per send at 500 partitions, 26% of CPU. Index it once per task,
-      ~6 lines.
+      ~6 lines. Done: per-send overhead at 500 partitions 33.8 -> 3.3 us (256 KB batches) and
+      21.0 -> 13.9 us (16 KB, the rest is 3.8's fragmentation); 12 partitions 2.1 -> 1.4 us. Test:
+      result order and sends sharing a partition (passes before and after: same output).
 - [ ] 3.5 After a leadership change each wave of `handlerConcurrency` partitions starts its own
       metadata refresh (`base_consumer.js:149-151`, `_updateSubscription` `:169-186`): 100
       requests per round at 1,000 partitions (600 ms at 5 ms RTT). One refresh per topic per round,
