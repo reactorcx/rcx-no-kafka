@@ -1076,3 +1076,24 @@ Acceptance bar: a finding is fixed only if it passes all five rules, else it is 
   4.2.0 broker 839 pass with `master`'s 10 failures (at bd42a2b; 3fac5da re-ran the consumer and
   share integration tests, 48 pass and the baseline failure); live recreation 10/10, acks at
   `end()` applied, revoked-partition acks applied.
+
+### Phase 3 (2026-11-18), branch `fix-audit-phase3` (stacked on PR #7)
+
+- Items 3.1-3.8, 3.11a/b and 3.12 done, one commit each; 3.9, 3.10 and the response-parse cost
+  deferred, two produce buffer copies dropped (see the plan). Plan re-checked first by two agents
+  with baselines; the four behaviour changes approved before work began.
+- Measured broker-free (node 18.20.8): a consumer at defaults 1.0 -> 136 MB/s (stubbed broker);
+  decoding 10k records 26 -> 7.9 ms; `send()` of 10k x 100 B 27-30 -> 11 ms, of 10k x 1 KB 60 ->
+  17 ms; CRC-32C 296 -> 1,680 MB/s; 1,000 moved partitions 100 metadata requests -> 1; one
+  partition's 8 large gzip batches 2.0 GB -> 262 MB RSS. Cost: one partition's 8 gzip batches
+  decode 39% slower (sequential), and keys/values in their own memory add 1.5 ms per 10k records.
+- Reviews: one regression from 3.1 (a failing handler retried at fetch rate beside a progressing
+  partition) and one from 3.2 (small values in Node's shared pool), both fixed; budget gaps
+  across partitions and in share fetches to the backlog. Codex: two rounds, three findings, all
+  in 3.8; fixed by Java's batch rollover and 1 MiB request cap (user's decision).
+- `lib/` against `fix-audit-phase2`: +320 / -204 lines.
+- Verification: unit tests and test/10 384 pass; eslint 0 errors (7 pre-existing warnings); tsc
+  passes; full suite on a fresh 4.2.0 broker 854 pass with `master`'s 10 failures. One earlier
+  full run also timed out `read_committed consumer should skip aborted records` (1 s of waiting
+  in a 2 s test, on a slow broker); it passed 5 of 5 alone, twice on fresh brokers, and in the
+  confirming run.
